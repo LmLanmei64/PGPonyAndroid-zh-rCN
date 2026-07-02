@@ -96,7 +96,9 @@ class CardSigningService private constructor() {
         } finally {
             armored.close()
         }
-        return out.toString(Charsets.UTF_8)
+        // ByteArrayOutputStream.toString(Charset) is API 33+; the String
+        // charset-name overload is API 1 and works on all supported devices.
+        return out.toString(Charsets.UTF_8.name())
     }
 
     /**

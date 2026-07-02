@@ -53,8 +53,8 @@ android {
         // and the Phase E polish (version display, More from NorseHorse,
         // Encrypt recipient dropdown). versionCode jumps to 200 to leave the
         // 1xx band for the 2.x dev line.
-        versionCode = 203
-        versionName = "3.0.3"
+        versionCode = 204
+        versionName = "3.0.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
