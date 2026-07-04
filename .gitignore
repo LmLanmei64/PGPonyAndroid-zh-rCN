@@ -1,3 +1,14 @@
 keystore.properties
 *.keystore
 *.jks
+
+.DS_Store
+*.bak
+*.aab
+*.apk
+signed.asc
+.exchange_fix_backups/
+.release_setup_backup_*/
+android_icons/
+A13_PROGRESS.md
+UPDATE_LOG_*.md

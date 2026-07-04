@@ -1,9 +1,0 @@
-# Bouncy Castle — keep all crypto classes
--keep class org.bouncycastle.** { *; }
--dontwarn org.bouncycastle.**
-
-# Keep PGPony crypto service
--keep class com.pgpony.android.crypto.** { *; }
-
-# Room
--keep class com.pgpony.android.data.** { *; }
