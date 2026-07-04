@@ -28,6 +28,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.*
+// 3.1.0 Phase 7 (B3) — card PIN cache section imports.
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -193,6 +204,15 @@ fun SettingsScreen(
                 checked = state.requireBiometricForSign,
                 onCheckedChange = { viewModel.setRequireBiometricForSign(it) }
             )
+            // ── 3.1.0 Phase 8 (E5 F-item): sign-by-default ──────────────
+            SignByDefaultToggle()
+            // ── 3.1.0 Phase 7 (B1/B2/B3): Remember Card PIN ─────────────
+            CardPinCacheSection()
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── 3.1.0 Phase 8 (E4 F-item): email send format ────────────
+            SectionHeader(stringResource(R.string.settings_section_email))
+            EmailFormatSection()
             Spacer(modifier = Modifier.height(16.dp))
             SectionHeader(stringResource(R.string.settings_section_pass_store))
             SettingsToggle(
@@ -912,6 +932,189 @@ private fun SettingsAction(
             null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+
+// ── 3.1.0 Phase 7 (B1/B2/B3): card PIN cache settings ──────────────────
+//
+// Toggle (default OFF), duration choice, LIVE countdown while a PIN is
+// held, and a manual Clear. The countdown reads
+// CardPinCache.remainingMs() on a 1-second ticker; because the cache
+// recomputes expiry from the CURRENT duration preference on every
+// read, changing the duration updates both the held PIN's lifetime and
+// the visible countdown immediately (the 7.1.x recompute F-item).
+@Composable
+private fun CardPinCacheSection() {
+    var enabled by remember {
+        mutableStateOf(com.pgpony.android.crypto.card.CardPinCache.isEnabled())
+    }
+    var durationSec by remember {
+        mutableStateOf(com.pgpony.android.crypto.card.CardPinCache.durationSec())
+    }
+    var remainingMs by remember {
+        mutableStateOf(com.pgpony.android.crypto.card.CardPinCache.remainingMs())
+    }
+    LaunchedEffect(enabled) {
+        while (enabled) {
+            remainingMs = com.pgpony.android.crypto.card.CardPinCache.remainingMs()
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
+    SettingsToggle(
+        title = stringResource(R.string.settings_card_pin_cache_title),
+        subtitle = stringResource(R.string.settings_card_pin_cache_subtitle),
+        icon = Icons.Filled.Contactless,
+        iconTint = Color(0xFF0EA5E9),
+        checked = enabled,
+        onCheckedChange = {
+            enabled = it
+            com.pgpony.android.crypto.card.CardPinCache.setEnabled(it)
+            remainingMs = com.pgpony.android.crypto.card.CardPinCache.remainingMs()
+        }
+    )
+    if (enabled) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Text(
+                stringResource(R.string.settings_card_pin_cache_duration_label),
+                style = MaterialTheme.typography.labelLarge
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            val choices = listOf(
+                60 to stringResource(R.string.settings_card_pin_cache_1min),
+                300 to stringResource(R.string.settings_card_pin_cache_5min),
+                900 to stringResource(R.string.settings_card_pin_cache_15min),
+                3600 to stringResource(R.string.settings_card_pin_cache_1hr)
+            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                choices.forEachIndexed { index, (secs, label) ->
+                    SegmentedButton(
+                        selected = durationSec == secs,
+                        onClick = {
+                            durationSec = secs
+                            com.pgpony.android.crypto.card.CardPinCache.setDurationSec(secs)
+                            // B2/B3: the boundary and the countdown both
+                            // honor the new duration on the next tick.
+                            remainingMs = com.pgpony.android.crypto.card.CardPinCache.remainingMs()
+                        },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = choices.size)
+                    ) {
+                        Text(label, maxLines = 1)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            if (remainingMs > 0) {
+                val totalSec = remainingMs / 1000
+                val mm = totalSec / 60
+                val ss = totalSec % 60
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(
+                            R.string.settings_card_pin_cache_countdown_format,
+                            String.format("%d:%02d", mm, ss)
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        com.pgpony.android.crypto.card.CardPinCache.clear()
+                        remainingMs = 0
+                    }) {
+                        Text(stringResource(R.string.settings_card_pin_cache_clear))
+                    }
+                }
+            } else {
+                Text(
+                    stringResource(R.string.settings_card_pin_cache_none_held),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+    }
+}
+
+
+// ── 3.1.0 Phase 8 (E5 F-item): sign-by-default toggle ──────────────────
+//
+// Distinct from the default SIGNER (the isDefault key drives which key
+// signs): this decides whether the Encrypt screen's "Also sign" toggle
+// starts ON for a fresh session. Applied once at
+// EncryptDecryptViewModel init, so flipping it off for one message
+// doesn't snap back.
+@Composable
+private fun SignByDefaultToggle() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember {
+        context.getSharedPreferences("pgpony_prefs", android.content.Context.MODE_PRIVATE)
+    }
+    var enabled by remember { mutableStateOf(prefs.getBoolean("sign_by_default", false)) }
+    SettingsToggle(
+        title = stringResource(R.string.settings_sign_by_default_title),
+        subtitle = stringResource(R.string.settings_sign_by_default_subtitle),
+        icon = Icons.Filled.Draw,
+        iconTint = Color(0xFF10B981),
+        checked = enabled,
+        onCheckedChange = {
+            enabled = it
+            prefs.edit().putBoolean("sign_by_default", it).apply()
+        }
+    )
+}
+
+// ── 3.1.0 Phase 8 (E4 F-item): email send format ───────────────────────
+//
+// How "Send as Email" packages the armored output: inline in the body
+// (PGP-aware desktop clients auto-decrypt), as a .asc attachment, or
+// both. "Send from" account selection is the mail client's own chooser
+// on Android — satisfied by the platform, nothing to configure here.
+@Composable
+private fun EmailFormatSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember {
+        context.getSharedPreferences("pgpony_prefs", android.content.Context.MODE_PRIVATE)
+    }
+    var format by remember {
+        mutableStateOf(prefs.getString("email_send_format", "inline") ?: "inline")
+    }
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Text(
+            stringResource(R.string.settings_email_format_label),
+            style = MaterialTheme.typography.labelLarge
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        val choices = listOf(
+            "inline" to stringResource(R.string.settings_email_format_inline),
+            "attachment" to stringResource(R.string.settings_email_format_attachment),
+            "both" to stringResource(R.string.settings_email_format_both)
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            choices.forEachIndexed { index, (value, label) ->
+                SegmentedButton(
+                    selected = format == value,
+                    onClick = {
+                        format = value
+                        prefs.edit().putString("email_send_format", value).apply()
+                    },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = choices.size)
+                ) {
+                    Text(label, maxLines = 1)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            stringResource(R.string.settings_email_format_subtitle),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

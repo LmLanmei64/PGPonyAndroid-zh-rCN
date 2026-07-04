@@ -51,12 +51,43 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- 3.1.0 Phase 1 Fix2 — receive PGP-typed FILE shares.
+                 MainActivity's only SEND filter was text/plain, so a
+                 .sig/.gpg/.asc shared under a PGP MIME (or the
+                 octet-stream many providers use) could only reach the
+                 Quick Action, which has no verify route. With these,
+                 the share sheet also offers the main app, whose
+                 handleSend → handleFileUri routing (Phase 1 + Fix1)
+                 sends detached signatures to the Verify-a-file sheet. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pgp-encrypted" />
+                <data android:mimeType="application/pgp-keys" />
+                <data android:mimeType="application/pgp-signature" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <!-- 3.1.0 Phase 6 (J5) — share two or more files of ANY type
+                 into PGPony to encrypt them together as one Bundle
+                 (mirrors iOS PGPonyAction's raised activation cap). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
             <!-- Receive .asc/.pgp/.gpg files for decrypt/import -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/pgp-encrypted" />
                 <data android:mimeType="application/pgp-keys" />
+                <!-- 3.1.0 Phase 1 Fix1 — .asc/.sig are commonly typed
+                     application/pgp-signature by providers; without this
+                     they can't be tap-opened, only shared. -->
+                <data android:mimeType="application/pgp-signature" />
+                <!-- 3.1.0 Phase 4 (J2) — encrypted .eml from desktop
+                     clients opens into the decrypt path. -->
+                <data android:mimeType="message/rfc822" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -66,6 +97,11 @@
                 <data android:pathPattern=".*\\.asc" />
                 <data android:pathPattern=".*\\.pgp" />
                 <data android:pathPattern=".*\\.gpg" />
+                <!-- 3.1.0 Phase 1 (C1) — detached signatures open into
+                     the Verify-a-file sheet -->
+                <data android:pathPattern=".*\\.sig" />
+                <!-- 3.1.0 Phase 4 (J2) -->
+                <data android:pathPattern=".*\\.eml" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -75,6 +111,11 @@
                 <data android:pathPattern=".*\\.asc" />
                 <data android:pathPattern=".*\\.pgp" />
                 <data android:pathPattern=".*\\.gpg" />
+                <!-- 3.1.0 Phase 1 (C1) — detached signatures open into
+                     the Verify-a-file sheet -->
+                <data android:pathPattern=".*\\.sig" />
+                <!-- 3.1.0 Phase 4 (J2) -->
+                <data android:pathPattern=".*\\.eml" />
             </intent-filter>
         </activity>
 
@@ -169,6 +210,13 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/pgp-encrypted" />
                 <data android:mimeType="application/pgp-keys" />
+                <!-- 3.1.0 Phase 1 Fix1 — .asc/.sig are commonly typed
+                     application/pgp-signature by providers; without this
+                     they can't be tap-opened, only shared. -->
+                <data android:mimeType="application/pgp-signature" />
+                <!-- 3.1.0 Phase 4 (J2) — encrypted .eml from desktop
+                     clients opens into the decrypt path. -->
+                <data android:mimeType="message/rfc822" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -178,6 +226,10 @@
                 <data android:pathPattern=".*\\.asc" />
                 <data android:pathPattern=".*\\.pgp" />
                 <data android:pathPattern=".*\\.gpg" />
+                <!-- 3.1.0 Phase 1 (C1) -->
+                <data android:pathPattern=".*\\.sig" />
+                <!-- 3.1.0 Phase 4 (J2) -->
+                <data android:pathPattern=".*\\.eml" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -187,6 +239,10 @@
                 <data android:pathPattern=".*\\.asc" />
                 <data android:pathPattern=".*\\.pgp" />
                 <data android:pathPattern=".*\\.gpg" />
+                <!-- 3.1.0 Phase 1 (C1) -->
+                <data android:pathPattern=".*\\.sig" />
+                <!-- 3.1.0 Phase 4 (J2) -->
+                <data android:pathPattern=".*\\.eml" />
             </intent-filter>
         </activity>
         <!--

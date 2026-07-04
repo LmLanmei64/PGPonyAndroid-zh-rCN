@@ -263,6 +263,60 @@ fun EncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
                 Text(stringResource(R.string.common_button_share))
             }
 
+            // ── 3.1.0 Phase 8 (E4, origin: Dong): Send as Email ─────────
+            //
+            // ACTION_SEND typed message/rfc822 so the chooser surfaces
+            // mail apps; the account is whatever the user picks in their
+            // mail client (the iOS 7.1.x "send from correct account" item
+            // is satisfied by the platform here). The Settings send-format
+            // choice (June-29 F-item) picks the payload:
+            //   inline     → armored block in the body (EXTRA_TEXT) so a
+            //                PGP-aware desktop client auto-decrypts it
+            //   attachment → .asc via the A7 Fix3 FileProvider pattern
+            //   both       → body + attachment
+            OutlinedButton(
+                onClick = {
+                    try {
+                        val fmt = context.getSharedPreferences(
+                            "pgpony_prefs", android.content.Context.MODE_PRIVATE
+                        ).getString("email_send_format", "inline") ?: "inline"
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "message/rfc822"
+                            if (fmt != "attachment") putExtra(Intent.EXTRA_TEXT, output)
+                            if (fmt != "inline") {
+                                val exportsDir = java.io.File(context.cacheDir, "exports")
+                                    .apply { mkdirs() }
+                                val attachName = when {
+                                    detached -> "signature.asc"
+                                    signOnly -> "signed-message.asc"
+                                    else -> "message.asc"
+                                }
+                                val outFile = java.io.File(exportsDir, attachName)
+                                outFile.writeBytes(output.toByteArray(Charsets.UTF_8))
+                                val uri = androidx.core.content.FileProvider.getUriForFile(
+                                    context, "${context.packageName}.fileprovider", outFile
+                                )
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                        }
+                        context.startActivity(
+                            Intent.createChooser(
+                                intent,
+                                context.getString(R.string.result_send_email_button)
+                            )
+                        )
+                    } catch (_: Exception) {
+                        // No mail app / share sheet unavailable — non-fatal.
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.Email, null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.result_send_email_button))
+            }
+
             // ── Save as file (SAF) ───────────────────────────────────
             // Reuses MainActivity.startDocumentCreator (same picker the
             // FILE-mode sheet uses). Suggested name + MIME adapt to the

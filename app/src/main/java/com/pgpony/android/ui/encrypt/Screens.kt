@@ -37,6 +37,7 @@ import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -91,7 +92,10 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
     // results are reported back to the VM via onCardSign* hooks.
     val cardActivity = encryptContext as? MainActivity
     var showCardSignPin by remember { mutableStateOf(false) }
-    var cardSignPin by remember { mutableStateOf("") }
+    // 3.1.0 Phase 7 (B1): prefill from the PIN cache when enabled and
+    // unexpired; the dialog still shows (the NFC tap is needed anyway)
+    // but the PIN isn't re-typed.
+    var cardSignPin by remember { mutableStateOf(com.pgpony.android.crypto.card.CardPinCache.retrieve() ?: "") }
     var cardSignWaiting by remember { mutableStateOf(false) }
 
     // Refresh keys every time screen appears
@@ -143,27 +147,46 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
             // segmented button labels are localized. EncryptMode's
             // displayName field is now unused by the UI (enum keeps it
             // for compatibility with any future non-UI code).
+            // 3.1.0 Phase 5 Fix3 (origin: NorseHorse device testing): with
+            // five modes, fillMaxWidth divides the row equally and the
+            // longest label ("Password") wraps to two lines, breaking the
+            // segment height. Intrinsic sizing + horizontalScroll keeps
+            // every label single-line: on typical widths all five fit
+            // without scrolling; longer locales scroll instead of wrapping.
+            // 3.1.0 Phase 6 Fix1 (origin: NorseHorse device testing): five
+            // segments overflow the row. Structural fix, and iOS parity —
+            // iOS has FOUR modes; password is an "Encrypt with" choice,
+            // which Android's Text mode now gets too (File already had it
+            // from C4). The PASSWORD enum entry and PasswordModeBody stay
+            // in source (additive rule; the body composable is reused by
+            // the Text toggle) but the segment is no longer rendered.
+            val visibleModes = EncryptMode.entries.filter { it != EncryptMode.PASSWORD }
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                EncryptMode.entries.forEachIndexed { index, mode ->
+                visibleModes.forEachIndexed { index, mode ->
                     val modeLabel = when (mode) {
                         EncryptMode.TEXT -> stringResource(R.string.encrypt_mode_text)
                         EncryptMode.SIGN -> stringResource(R.string.encrypt_mode_sign)
                         EncryptMode.FILE -> stringResource(R.string.encrypt_mode_file)
                         EncryptMode.PASSWORD -> stringResource(R.string.encrypt_mode_password)
+                        // 3.1.0 Phase 5 (J3)
+                        EncryptMode.BUNDLE -> stringResource(R.string.encrypt_mode_bundle)
                     }
                     SegmentedButton(
                         selected = state.mode == mode,
                         onClick = { viewModel.setMode(mode) },
                         shape = SegmentedButtonDefaults.itemShape(
                             index = index,
-                            count = EncryptMode.entries.size
+                            // 3.1.0 Phase 6 Fix1: count follows the VISIBLE
+                            // modes, not the enum.
+                            count = visibleModes.size
                         ),
                         // Phase A10b: FILE mode is now functional; the
                         // disabled-state placeholder is gone. All three
                         // modes are tappable.
                         enabled = true
                     ) {
-                        Text(modeLabel)
+                        // 3.1.0 Phase 5 Fix3: never wrap a segment label.
+                        Text(modeLabel, maxLines = 1)
                     }
                 }
             }
@@ -176,7 +199,9 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
             // we conditionally hide it. The composable definition
             // stays inside this branch in source for additive-only
             // compatibility; only the rendered call site is gated.
-            if (state.mode != EncryptMode.FILE) {
+            // 3.1.0 Phase 5 (J3): BUNDLE has its own body field inside
+            // BundleModeBody, so the shared field hides there too.
+            if (state.mode != EncryptMode.FILE && state.mode != EncryptMode.BUNDLE) {
                 OutlinedTextField(
                     value = state.inputText,
                     onValueChange = { viewModel.updateEncryptInput(it) },
@@ -220,6 +245,8 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                 EncryptMode.FILE -> FileSection(state = state, viewModel = viewModel)
                 // Phase A1: passphrase-only (`gpg -c`) — no recipient picker.
                 EncryptMode.PASSWORD -> PasswordModeBody(state = state, viewModel = viewModel)
+                // 3.1.0 Phase 5 (J3): Bundle compose.
+                EncryptMode.BUNDLE -> BundleModeBody(state = state, viewModel = viewModel)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -256,6 +283,11 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                             }
                         }
                         EncryptMode.TEXT -> {
+                            // 3.1.0 Phase 6 Fix1: Text + Password method is
+                            // the old fifth-segment path.
+                            if (state.fileEncryptMethod == FileEncryptMethod.PASSWORD) {
+                                viewModel.encryptWithPassword()
+                            } else {
                             // Encrypt-and-sign with a card key needs an NFC
                             // tap mid-encrypt → route to the PIN dialog (the
                             // confirm handler branches on mode). Plain encrypt
@@ -270,8 +302,14 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                             } else {
                                 viewModel.encrypt()
                             }
+                            }
                         }
                         EncryptMode.FILE -> {
+                            // 3.1.0 Phase 2 (C4): password method is keyless —
+                            // no recipients, no signing, no card path.
+                            if (state.fileEncryptMethod == FileEncryptMethod.PASSWORD) {
+                                viewModel.encryptFileWithPassword()
+                            } else {
                             // File encrypt-and-sign with a card key also taps
                             // mid-encrypt → same PIN dialog. Otherwise the VM
                             // file path (software key or no signing).
@@ -282,11 +320,15 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                             } else {
                                 viewModel.encryptFile()
                             }
+                            }
                         }
                         // Phase A1: symmetric / passphrase-only. No recipients,
                         // no signing key, no card — straight to the VM, which
                         // validates the passphrase + confirm.
                         EncryptMode.PASSWORD -> viewModel.encryptWithPassword()
+                        // 3.1.0 Phase 5 (J3): Bundle — software signing only
+                        // (card path deliberately excluded from Bundle v1).
+                        EncryptMode.BUNDLE -> viewModel.encryptBundle()
                       }
                     }
                     // HW Phase 3 / "fingerprint to sign" — gate SOFTWARE
@@ -303,6 +345,17 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                     // we don't force an extra step on people who didn't ask).
                     val willSoftwareSign = when (state.mode) {
                         EncryptMode.SIGN -> state.signingKey?.isCardBacked != true
+                        // 3.1.0 Phase 6 Fix1: Text + Password never signs.
+                        EncryptMode.TEXT ->
+                            state.fileEncryptMethod == FileEncryptMethod.RECIPIENTS &&
+                                state.signMessage && state.signingKey != null &&
+                                state.signingKey?.isCardBacked != true
+                        // 3.1.0 Phase 2 (C4): password file encrypt never
+                        // signs — don't pop the biometric sign gate for it.
+                        EncryptMode.FILE ->
+                            state.fileEncryptMethod == FileEncryptMethod.RECIPIENTS &&
+                                state.signMessage && state.signingKey != null &&
+                                state.signingKey?.isCardBacked != true
                         else -> state.signMessage && state.signingKey != null &&
                             state.signingKey?.isCardBacked != true
                     }
@@ -311,14 +364,18 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                     val willCardSign = when (state.mode) {
                         EncryptMode.SIGN -> state.signingKey?.isCardBacked == true &&
                             !viewModel.signInputIsBlank()
-                        EncryptMode.TEXT -> state.signMessage &&
+                        EncryptMode.TEXT -> state.fileEncryptMethod == FileEncryptMethod.RECIPIENTS &&
+                            state.signMessage &&
                             state.signingKey?.isCardBacked == true &&
                             state.selectedRecipients.isNotEmpty() && state.inputText.isNotBlank()
-                        EncryptMode.FILE -> state.signMessage &&
+                        EncryptMode.FILE -> state.fileEncryptMethod == FileEncryptMethod.RECIPIENTS &&
+                            state.signMessage &&
                             state.signingKey?.isCardBacked == true &&
                             state.selectedRecipients.isNotEmpty() && state.selectedFileBytes != null
                         // Phase A1: password mode never signs with a card.
                         EncryptMode.PASSWORD -> false
+                        // 3.1.0 Phase 5 (J3): Bundle v1 never card-signs.
+                        EncryptMode.BUNDLE -> false
                     }
                     val signPrefs = encryptContext.getSharedPreferences(
                         "pgpony_prefs", android.content.Context.MODE_PRIVATE
@@ -340,8 +397,18 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.isProcessing && when (state.mode) {
-                    EncryptMode.FILE -> state.selectedFileBytes != null
-                        && state.selectedRecipients.isNotEmpty()
+                    // 3.1.0 Phase 2 (C4): password method needs only a file;
+                    // the VM validates the passphrase + confirm on tap.
+                    EncryptMode.FILE ->
+                        if (state.fileEncryptMethod == FileEncryptMethod.PASSWORD)
+                            state.selectedFileBytes != null
+                        else
+                            state.selectedFileBytes != null
+                                && state.selectedRecipients.isNotEmpty()
+                    // 3.1.0 Phase 5 (J3): a Bundle needs recipients and
+                    // something to send (body or at least one attachment).
+                    EncryptMode.BUNDLE -> state.selectedRecipients.isNotEmpty()
+                        && (state.bundleBody.isNotBlank() || state.bundleAttachments.isNotEmpty())
                     else -> true
                 }
             ) {
@@ -500,7 +567,10 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                                 session.select()
                                 val fp = session.getApplicationRelatedData().sigFingerprint
                                     ?: throw OpenPgpCardException.Malformed(cardNoSigKeyMsg)
-                                val pubRing = PGPonyApp.instance.keyRepository.loadPublicKeyRing(fp)
+                                // 3.1.0 Phase 7 Fix1: card slot fps are subkeys on
+                                // offline-primary layouts — tolerant loader.
+                                val pubRing = PGPonyApp.instance.keyRepository
+                                    .loadPublicKeyRingByCardFingerprint(fp)
                                     ?: throw OpenPgpCardException.Malformed(cardPairFirstMsg)
                                 if (fileBytes == null) throw OpenPgpCardException.Malformed(cardNoFileMsg)
                                 val recipientRings = recipientFps.mapNotNull {
@@ -514,7 +584,11 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                                     recipientPublicKeys = recipientRings,
                                     cardSession = session,
                                     cardPin = pin.toByteArray(Charsets.UTF_8),
-                                    cardSigningPublicKey = pubRing.publicKey,
+                                    // 3.1.0 Phase 7 (A3): the card signs with its
+                                    // [S]-slot key — a SUBKEY on offline-primary
+                                    // layouts; the primary claims the wrong issuer.
+                                    cardSigningPublicKey =
+                                        CardSigningService.shared.signingPublicKey(pubRing, fp),
                                     filename = fileName,
                                     armor = false
                                 )
@@ -532,7 +606,10 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                                 session.select()
                                 val fp = session.getApplicationRelatedData().sigFingerprint
                                     ?: throw OpenPgpCardException.Malformed(cardNoSigKeyMsg)
-                                val pubRing = PGPonyApp.instance.keyRepository.loadPublicKeyRing(fp)
+                                // 3.1.0 Phase 7 Fix1: card slot fps are subkeys on
+                                // offline-primary layouts — tolerant loader.
+                                val pubRing = PGPonyApp.instance.keyRepository
+                                    .loadPublicKeyRingByCardFingerprint(fp)
                                     ?: throw OpenPgpCardException.Malformed(cardPairFirstMsg)
                                 if (encryptAndSign) {
                                     val recipientRings = recipientFps.mapNotNull {
@@ -546,19 +623,29 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                                         recipientPublicKeys = recipientRings,
                                         cardSession = session,
                                         cardPin = pin.toByteArray(Charsets.UTF_8),
-                                        cardSigningPublicKey = pubRing.publicKey,
+                                        // 3.1.0 Phase 7 (A3): the card signs with its
+                                    // [S]-slot key — a SUBKEY on offline-primary
+                                    // layouts; the primary claims the wrong issuer.
+                                    cardSigningPublicKey =
+                                        CardSigningService.shared.signingPublicKey(pubRing, fp),
                                         armor = true
                                     )
                                     String(out, Charsets.UTF_8)
                                 } else if (state.detachedSignature) {
                                     val sig = CardSigningService.shared.signDetached(
-                                        session, pubRing.publicKey, pin.toByteArray(Charsets.UTF_8),
+                                        // 3.1.0 Phase 7 (A3): [S]-slot key.
+                                        session,
+                                        CardSigningService.shared.signingPublicKey(pubRing, fp),
+                                        pin.toByteArray(Charsets.UTF_8),
                                         msg.toByteArray(Charsets.UTF_8)
                                     )
                                     String(sig, Charsets.UTF_8)
                                 } else {
                                     CardSigningService.shared.signClear(
-                                        session, pubRing.publicKey, pin.toByteArray(Charsets.UTF_8), msg
+                                        // 3.1.0 Phase 7 (A3): [S]-slot key.
+                                        session,
+                                        CardSigningService.shared.signingPublicKey(pubRing, fp),
+                                        pin.toByteArray(Charsets.UTF_8), msg
                                     )
                                 }
                             }) { result ->
@@ -624,6 +711,13 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
         EncryptionResultScreen(
             state = state,
             onDismiss = { viewModel.dismissEncryptResult() }
+        )
+    }
+    // 3.1.0 Phase 5 (J4): Bundle output sheet (.eml / .asc / inline).
+    if (state.showBundleResultSheet && state.encryptedBundleArmored != null) {
+        BundleEncryptionResultScreen(
+            state = state,
+            onDismiss = { viewModel.dismissBundleResult() }
         )
     }
     if (state.showFileEncryptResultSheet && state.encryptedFileBytes != null) {
@@ -1003,6 +1097,43 @@ private fun AsciiArmorToggleRow(
 
 @Composable
 private fun EncryptModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewModel) {
+    // ── 3.1.0 Phase 6 Fix1: "Encrypt with" toggle in TEXT mode ─────────
+    //
+    // Same shape as the C4 File-mode toggle, sharing the SAME
+    // fileEncryptMethod state — "encrypt with recipients vs a password"
+    // is one preference, not a per-mode one, so the choice follows the
+    // user between Text and File. PASSWORD renders the Phase A1
+    // password fields (PasswordModeBody, reused verbatim) and the
+    // primary action routes to encryptWithPassword(), i.e. exactly the
+    // old fifth-segment behavior, reachable without the fifth segment.
+    Text(
+        stringResource(R.string.encrypt_file_method_label),
+        style = MaterialTheme.typography.labelLarge
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        SegmentedButton(
+            selected = state.fileEncryptMethod == FileEncryptMethod.RECIPIENTS,
+            onClick = { viewModel.setFileEncryptMethod(FileEncryptMethod.RECIPIENTS) },
+            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+        ) {
+            Text(stringResource(R.string.encrypt_file_method_recipients), maxLines = 1)
+        }
+        SegmentedButton(
+            selected = state.fileEncryptMethod == FileEncryptMethod.PASSWORD,
+            onClick = { viewModel.setFileEncryptMethod(FileEncryptMethod.PASSWORD) },
+            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+        ) {
+            Text(stringResource(R.string.encrypt_file_method_password), maxLines = 1)
+        }
+    }
+    Spacer(modifier = Modifier.height(16.dp))
+
+    if (state.fileEncryptMethod == FileEncryptMethod.PASSWORD) {
+        PasswordModeBody(state = state, viewModel = viewModel)
+        return
+    }
+
     // Phase A10d: inline Checkbox-row list (still preserved as
     // LegacyInlineRecipientList for the additive-edit rule) is
     // replaced by the polished card. Same data flow — toggleRecipient
@@ -1378,6 +1509,180 @@ private fun PasswordModeBody(state: EncryptUiState, viewModel: EncryptDecryptVie
     }
 }
 
+// ── 3.1.0 Phase 5 (J3): Bundle compose body ────────────────────────────
+//
+// A message body plus multiple attachments, encrypted together as one
+// PGP/MIME entity (iOS EncryptView composeSection). Attachment picking
+// routes through MainActivity.startMultiDocumentPicker (A10a Fix1
+// pattern — same reason every other picker here avoids Compose's
+// rememberLauncherForActivityResult). "Add photos" and "Add files" are
+// the same document picker with different MIME filters; the dedicated
+// system photo picker is a possible later refinement (deviation from
+// iOS PhotosPicker, noted in the phase log). Recipients + software
+// signing reuse the FileSection composition.
+@Composable
+private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewModel) {
+    val context = LocalContext.current
+    val activity = context.findEncryptMainActivity()
+
+    val addFromPicker: (Array<String>) -> Unit = { mimes ->
+        activity?.startMultiDocumentPicker(mimes) { uris ->
+            for (uri in uris) {
+                try {
+                    val (name, _) = queryDocumentMetadata(context, uri)
+                    val bytes = context.contentResolver.openInputStream(uri)?.use {
+                        it.readBytes()
+                    } ?: continue
+                    if (bytes.isEmpty()) continue
+                    val resolvedName = name
+                        ?: uri.lastPathSegment?.substringAfterLast('/')
+                        ?: "attachment"
+                    val mime = context.contentResolver.getType(uri)
+                        ?: "application/octet-stream"
+                    viewModel.addBundleAttachment(resolvedName, mime, bytes)
+                } catch (_: Exception) {
+                    // Unreadable selection (revoked grant, cloud stub):
+                    // skip it; the rest of the batch still lands.
+                }
+            }
+        }
+    }
+
+    // 1) Body editor
+    OutlinedTextField(
+        value = state.bundleBody,
+        onValueChange = { viewModel.updateBundleBody(it) },
+        label = { Text(stringResource(R.string.encrypt_bundle_body_label)) },
+        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+        maxLines = 10
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+
+    // 2) Attachment pickers
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            // 3.1.0 Phase 5 Fix2: the SYSTEM photo picker (real library
+            // grid), not the documents UI. The read/append logic is the
+            // same callback shape as addFromPicker.
+            onClick = {
+                activity?.startPhotoPicker { uris ->
+                    for (uri in uris) {
+                        try {
+                            val (name, _) = queryDocumentMetadata(context, uri)
+                            val bytes = context.contentResolver.openInputStream(uri)?.use {
+                                it.readBytes()
+                            } ?: continue
+                            if (bytes.isEmpty()) continue
+                            val resolvedName = name
+                                ?: uri.lastPathSegment?.substringAfterLast('/')
+                                ?: "photo"
+                            val mime = context.contentResolver.getType(uri)
+                                ?: "image/*"
+                            viewModel.addBundleAttachment(resolvedName, mime, bytes)
+                        } catch (_: Exception) {
+                            // Skip unreadable selections; the rest land.
+                        }
+                    }
+                }
+            },
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(stringResource(R.string.encrypt_bundle_add_photos))
+        }
+        OutlinedButton(
+            onClick = { addFromPicker(arrayOf("*/*")) },
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(stringResource(R.string.encrypt_bundle_add_files))
+        }
+    }
+
+    // 3) Attachment list
+    if (state.bundleAttachments.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            stringResource(R.string.encrypt_bundle_attachments_format, state.bundleAttachments.size),
+            style = MaterialTheme.typography.labelLarge
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        state.bundleAttachments.forEachIndexed { index, att ->
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        if (att.contentType.startsWith("image/")) Icons.Filled.Image
+                        else Icons.Filled.Description,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            att.filename,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                        Text(
+                            formatFileSize(att.data.size.toLong()),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = { viewModel.removeBundleAttachment(index) }) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.encrypt_bundle_remove),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // 4) Recipients + software sign toggle — same composition as FileSection.
+    RecipientPickerCard(state = state, viewModel = viewModel)
+    Spacer(modifier = Modifier.height(16.dp))
+    val bundleSigningKey = state.signingKey
+    if (bundleSigningKey != null && bundleSigningKey.isCardBacked != true) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Switch(
+                checked = state.signMessage,
+                onCheckedChange = { viewModel.toggleSign(it) }
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.encrypt_also_sign_file_title),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    stringResource(
+                        R.string.encrypt_also_sign_subtitle_format,
+                        bundleSigningKey.userName.ifBlank { bundleSigningKey.userEmail }
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun FileSection(state: EncryptUiState, viewModel: EncryptDecryptViewModel) {
     val context = LocalContext.current
@@ -1511,6 +1816,89 @@ private fun FileSection(state: EncryptUiState, viewModel: EncryptDecryptViewMode
 
     Spacer(modifier = Modifier.height(16.dp))
 
+    // ── 3.1.0 Phase 2 (C4, origin Wenzel): "Encrypt with" toggle ───────
+    //
+    // iOS 7.1.x parity (FileEncryptMethod in EncryptView.swift): the file
+    // flow chooses between Recipients (public keys, the existing path)
+    // and Password (`gpg -c`). Password mode hides recipients and
+    // signing entirely — it is keyless by design.
+    Text(
+        stringResource(R.string.encrypt_file_method_label),
+        style = MaterialTheme.typography.labelLarge
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        SegmentedButton(
+            selected = state.fileEncryptMethod == FileEncryptMethod.RECIPIENTS,
+            onClick = { viewModel.setFileEncryptMethod(FileEncryptMethod.RECIPIENTS) },
+            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+        ) {
+            Text(stringResource(R.string.encrypt_file_method_recipients))
+        }
+        SegmentedButton(
+            selected = state.fileEncryptMethod == FileEncryptMethod.PASSWORD,
+            onClick = { viewModel.setFileEncryptMethod(FileEncryptMethod.PASSWORD) },
+            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+        ) {
+            Text(stringResource(R.string.encrypt_file_method_password))
+        }
+    }
+    Spacer(modifier = Modifier.height(16.dp))
+
+    if (state.fileEncryptMethod == FileEncryptMethod.PASSWORD) {
+        // ── 3.1.0 Phase 2 (C4): password fields + unrecoverable warning.
+        // Same state fields and layout as PasswordModeBody (Phase A1) —
+        // the two surfaces are never on screen together.
+        val transformation =
+            if (state.passwordVisible) VisualTransformation.None else PasswordVisualTransformation()
+        Text(
+            stringResource(R.string.encrypt_password_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = state.passwordPassphrase,
+            onValueChange = { viewModel.updatePasswordPassphrase(it) },
+            label = { Text(stringResource(R.string.encrypt_password_passphrase_label)) },
+            singleLine = true,
+            visualTransformation = transformation,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = state.passwordConfirm,
+            onValueChange = { viewModel.updatePasswordConfirm(it) },
+            label = { Text(stringResource(R.string.encrypt_password_confirm_label)) },
+            singleLine = true,
+            visualTransformation = transformation,
+            isError = state.passwordConfirm.isNotEmpty() &&
+                state.passwordConfirm != state.passwordPassphrase,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        FilledTonalButton(
+            onClick = { viewModel.togglePasswordVisible() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                stringResource(
+                    if (state.passwordVisible) R.string.encrypt_password_hide
+                    else R.string.encrypt_password_show
+                ),
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            stringResource(R.string.encrypt_password_unrecoverable),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+
+    if (state.fileEncryptMethod == FileEncryptMethod.RECIPIENTS) {
     // 2) Recipient picker — Phase A10d: extracted to shared
     // RecipientPickerCard composable (search field, selected chips,
     // Select All / Clear buttons). The legacy inline Checkbox-row
@@ -1569,6 +1957,9 @@ private fun FileSection(state: EncryptUiState, viewModel: EncryptDecryptViewMode
                 )
             }
         }
+    }
+    // 3.1.0 Phase 2 (C4): end of the RECIPIENTS-only block (recipient
+    // picker + sign toggle). Password mode renders neither.
     }
 }
 
@@ -1690,12 +2081,16 @@ private fun SignPassphraseDialog(
         // encrypt has no signing-key unlock step); arm present for
         // exhaustiveness only.
         EncryptMode.PASSWORD -> stringResource(R.string.encrypt_action_encrypt)
+        // 3.1.0 Phase 5 (J3)
+        EncryptMode.BUNDLE -> stringResource(R.string.encrypt_action_sign_and_encrypt)
     }
     val bodyText = stringResource(R.string.encrypt_passphrase_intro) + when (state.mode) {
         EncryptMode.SIGN -> stringResource(R.string.encrypt_passphrase_intro_sign)
         EncryptMode.FILE -> stringResource(R.string.encrypt_passphrase_intro_file)
         EncryptMode.TEXT -> stringResource(R.string.encrypt_passphrase_intro_text)
         EncryptMode.PASSWORD -> stringResource(R.string.encrypt_passphrase_intro_text)
+        // 3.1.0 Phase 5 (J3)
+        EncryptMode.BUNDLE -> stringResource(R.string.encrypt_passphrase_intro_text)
     }
     val withoutSigningLabel = when (state.mode) {
         EncryptMode.FILE -> stringResource(R.string.encrypt_passphrase_skip_signing_file)
@@ -1805,6 +2200,8 @@ private fun SignPassphraseDialog(
                             EncryptMode.TEXT -> viewModel.encrypt(passphrase = state.signPassphrase)
                             EncryptMode.FILE -> viewModel.encryptFile(passphrase = state.signPassphrase)
                             EncryptMode.PASSWORD -> {} // no signing-key unlock in symmetric mode
+                            // 3.1.0 Phase 5 (J3)
+                            EncryptMode.BUNDLE -> viewModel.encryptBundle(passphrase = state.signPassphrase)
                         }
                     }
                 ) {
@@ -1996,6 +2393,8 @@ private fun LegacySignPassphraseDialog(
                     EncryptMode.TEXT -> viewModel.encrypt(passphrase = state.signPassphrase)
                     EncryptMode.FILE -> viewModel.encryptFile(passphrase = state.signPassphrase)
                     EncryptMode.PASSWORD -> {} // no signing-key unlock in symmetric mode
+                    // 3.1.0 Phase 5 (J3)
+                    EncryptMode.BUNDLE -> viewModel.encryptBundle(passphrase = state.signPassphrase)
                 }
             }) {
                 Text(
@@ -2483,7 +2882,8 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
     // a PIN field and Decrypt runs an NFC operation instead of the software
     // path. Strings captured here because the NFC lambda runs on a binder
     // thread and can't call stringResource.
-    var cardDecryptPin by remember { mutableStateOf("") }
+    // 3.1.0 Phase 7 (B1): prefill from the PIN cache (see cardSignPin).
+    var cardDecryptPin by remember { mutableStateOf(com.pgpony.android.crypto.card.CardPinCache.retrieve() ?: "") }
     var cardDecryptWaiting by remember { mutableStateOf(false) }
     // Phase AU-1 — controls the searchable "Decrypt With" key picker sheet.
     var showDecryptKeyPicker by remember { mutableStateOf(false) }
@@ -2795,7 +3195,10 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                                 val fp = cardFp
                                     ?: session.getApplicationRelatedData().sigFingerprint
                                     ?: throw OpenPgpCardException.Malformed(cardDecNoKeyMsg)
-                                val pubRing = PGPonyApp.instance.keyRepository.loadPublicKeyRing(fp)
+                                // 3.1.0 Phase 7 Fix1: card slot fps are subkeys on
+                                // offline-primary layouts — tolerant loader.
+                                val pubRing = PGPonyApp.instance.keyRepository
+                                    .loadPublicKeyRingByCardFingerprint(fp)
                                     ?: throw OpenPgpCardException.Malformed(cardDecPairFirstMsg)
                                 if (fileBytes == null) throw OpenPgpCardException.Malformed(cardDecNoKeyMsg)
                                 CardDecryptService.shared.decryptBytes(
@@ -2816,7 +3219,10 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                                 val fp = cardFp
                                     ?: session.getApplicationRelatedData().sigFingerprint
                                     ?: throw OpenPgpCardException.Malformed(cardDecNoKeyMsg)
-                                val pubRing = PGPonyApp.instance.keyRepository.loadPublicKeyRing(fp)
+                                // 3.1.0 Phase 7 Fix1: card slot fps are subkeys on
+                                // offline-primary layouts — tolerant loader.
+                                val pubRing = PGPonyApp.instance.keyRepository
+                                    .loadPublicKeyRingByCardFingerprint(fp)
                                     ?: throw OpenPgpCardException.Malformed(cardDecPairFirstMsg)
                                 CardDecryptService.shared.decrypt(
                                     session, pubRing, pin.toByteArray(Charsets.UTF_8), msg,
@@ -2993,6 +3399,14 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
     // gesture, dismiss action clears the decrypted bytes from state
     // so plaintext doesn't linger in memory longer than the user
     // chose to keep it open.
+    // 3.1.0 Phase 4 (J1): structured PGP/MIME result — body + attachments.
+    if (state.showStructuredResultSheet) {
+        com.pgpony.android.ui.decrypt.StructuredDecryptionResultScreen(
+            body = state.mimeBody,
+            attachments = state.mimeAttachments,
+            onDismiss = { viewModel.dismissStructuredResult() }
+        )
+    }
     if (state.showFileDecryptResultSheet && state.decryptedFileBytes != null) {
         FileDecryptionResultScreen(
             state = state,

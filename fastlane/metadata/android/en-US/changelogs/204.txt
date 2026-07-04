@@ -1,3 +1,0 @@
-Fixed a crash when creating an inline (clear-signed) signature on Android 12 and earlier. Inline signing now works across all supported Android versions.
-
-Refreshed the app icon.

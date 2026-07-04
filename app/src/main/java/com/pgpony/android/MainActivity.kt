@@ -121,6 +121,10 @@ import com.pgpony.android.ui.keyring.KeyringViewModel
 import com.pgpony.android.ui.encrypt.EncryptScreen
 import com.pgpony.android.ui.encrypt.DecryptScreen
 import com.pgpony.android.ui.encrypt.EncryptDecryptViewModel
+// 3.1.0 Phase 1 (C1/C3) — mode enums for routing opened/shared files
+// straight into file-mode Encrypt / Decrypt.
+import com.pgpony.android.ui.encrypt.EncryptMode
+import com.pgpony.android.ui.encrypt.DecryptMode
 import com.pgpony.android.ui.exchange.ExchangeScreen
 import com.pgpony.android.ui.exchange.ExchangeViewModel
 import com.pgpony.android.ui.contacts.ContactsScreen
@@ -196,6 +200,13 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     // showing the callback is lost — the user just re-taps Browse to
     // re-issue the request. Acceptable for a one-shot file-pick flow.
     private var pendingDocumentPickerCallback: ((android.net.Uri?) -> Unit)? = null
+
+    // 3.1.0 Phase 5 (J3) — multi-file picker callback for Bundle
+    // attachment picking. Same A10a Fix1 pattern as the single picker.
+    private var pendingMultiDocumentPickerCallback: ((List<android.net.Uri>) -> Unit)? = null
+
+    // 3.1.0 Phase 5 Fix2 — photo-picker callback (Bundle "Add photos").
+    private var pendingPhotoPickerCallback: ((List<android.net.Uri>) -> Unit)? = null
 
     // ── Phase A10b: Document creator helper ───────────────────────────
     //
@@ -295,6 +306,12 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
         /** A10b: small request code for ACTION_CREATE_DOCUMENT. */
         private const val REQ_DOCUMENT_CREATOR = 1003
+
+        // 3.1.0 Phase 5 (J3) — Bundle multi-attachment picking.
+        private const val REQ_MULTI_DOCUMENT_PICKER = 1004
+
+        // 3.1.0 Phase 5 Fix2 — system photo picker for Bundle photos.
+        private const val REQ_PHOTO_PICKER = 1005
     }
 
     /**
@@ -413,6 +430,116 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 pendingDocumentCreatorCallback = null
                 cb?.invoke(uri)
             }
+            // 3.1.0 Phase 5 (J3): multi-pick returns either clipData (2+
+            // selections) or data (a single selection despite
+            // ALLOW_MULTIPLE — the DocumentsUI contract).
+            REQ_MULTI_DOCUMENT_PICKER -> {
+                suppressAutoLock = false
+                val uris = mutableListOf<android.net.Uri>()
+                if (resultCode == RESULT_OK) {
+                    val clip = data?.clipData
+                    if (clip != null) {
+                        for (i in 0 until clip.itemCount) {
+                            clip.getItemAt(i)?.uri?.let { uris.add(it) }
+                        }
+                    } else {
+                        data?.data?.let { uris.add(it) }
+                    }
+                }
+                val cb = pendingMultiDocumentPickerCallback
+                pendingMultiDocumentPickerCallback = null
+                cb?.invoke(uris)
+            }
+            // 3.1.0 Phase 5 Fix2 — same clipData/single-data shape as the
+            // document multi-pick.
+            REQ_PHOTO_PICKER -> {
+                suppressAutoLock = false
+                val uris = mutableListOf<android.net.Uri>()
+                if (resultCode == RESULT_OK) {
+                    val clip = data?.clipData
+                    if (clip != null) {
+                        for (i in 0 until clip.itemCount) {
+                            clip.getItemAt(i)?.uri?.let { uris.add(it) }
+                        }
+                    } else {
+                        data?.data?.let { uris.add(it) }
+                    }
+                }
+                val cb = pendingPhotoPickerCallback
+                pendingPhotoPickerCallback = null
+                cb?.invoke(uris)
+            }
+        }
+    }
+
+    /**
+     * 3.1.0 Phase 5 Fix2: open the SYSTEM PHOTO PICKER
+     * (MediaStore.ACTION_PICK_IMAGES — the real photo-library grid, with
+     * a proper dismiss, native on 13+ and backported to 11/12 via Play
+     * services) for Bundle "Add photos". Falls back to the documents
+     * picker filtered to media types when the photo picker is
+     * unavailable (very old devices, some forks). Same pending-callback
+     * pattern as every other picker here; an empty list means cancelled.
+     */
+    fun startPhotoPicker(callback: (List<android.net.Uri>) -> Unit) {
+        val maxItems = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            minOf(20, android.provider.MediaStore.getPickImagesMaxLimit())
+        } else {
+            20
+        }
+        val intent = Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).apply {
+            putExtra(android.provider.MediaStore.EXTRA_PICK_IMAGES_MAX, maxItems)
+        }
+        try {
+            pendingPhotoPickerCallback = callback
+            suppressAutoLock = true
+            ActivityCompat.startActivityForResult(
+                this,
+                intent,
+                REQ_PHOTO_PICKER,
+                null
+            )
+        } catch (e: android.content.ActivityNotFoundException) {
+            suppressAutoLock = false
+            pendingPhotoPickerCallback = null
+            // Fallback: documents UI filtered to media — the pre-Fix2
+            // behavior, still functional everywhere.
+            startMultiDocumentPicker(arrayOf("image/*", "video/*"), callback)
+        }
+    }
+
+    /**
+     * 3.1.0 Phase 5 (J3): open the system document picker allowing
+     * MULTIPLE selections, for Bundle attachments. Same
+     * FragmentActivity workaround as startDocumentPicker; results
+     * dispatch through REQ_MULTI_DOCUMENT_PICKER above. An empty list
+     * means cancelled or nothing chosen.
+     */
+    fun startMultiDocumentPicker(
+        mimeTypes: Array<String>,
+        callback: (List<android.net.Uri>) -> Unit
+    ) {
+        pendingMultiDocumentPickerCallback = callback
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = if (mimeTypes.size == 1) mimeTypes[0] else "*/*"
+            if (mimeTypes.size > 1) {
+                putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+            }
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        try {
+            suppressAutoLock = true
+            ActivityCompat.startActivityForResult(
+                this,
+                intent,
+                REQ_MULTI_DOCUMENT_PICKER,
+                null
+            )
+        } catch (e: android.content.ActivityNotFoundException) {
+            suppressAutoLock = false
+            pendingMultiDocumentPickerCallback = null
+            callback(emptyList())
         }
     }
 
@@ -703,8 +830,72 @@ fun PGPonyMainScreen(
                 pendingAction.value = IntentAction.None
             }
             is IntentAction.DecryptFile -> {
-                val b64 = android.util.Base64.encodeToString(action.data, android.util.Base64.NO_WRAP)
-                encDecVm.updateDecryptInput("(Binary PGP file: ${action.filename ?: "unknown"})\n$b64")
+                // ── 3.1.0 Phase 1 (C1/C3) — pre-3.1.0 handler, superseded.
+                // The old path base64-encoded the binary into the TEXT
+                // editor, which (a) produced input the decrypt path could
+                // never parse (a "(Binary PGP file: …)" prefix + base64 is
+                // not an OpenPGP message) and (b) rendered a giant string
+                // for large files — Diego's freeze, the exact anti-pattern
+                // C3 removes. Kept for reference:
+                //
+                // val b64 = android.util.Base64.encodeToString(action.data, android.util.Base64.NO_WRAP)
+                // encDecVm.updateDecryptInput("(Binary PGP file: ${action.filename ?: "unknown"})\n$b64")
+                //
+                // New path: land on the Decrypt tab's FILE mode with the
+                // file card populated — the same surface as picking the
+                // file manually, so card detection, the password-message
+                // note, and the passphrase prompt all work unchanged.
+                encDecVm.setDecryptMode(DecryptMode.FILE)
+                encDecVm.setFileToDecrypt(
+                    name = action.filename ?: "encrypted_file",
+                    size = action.data.size.toLong(),
+                    bytes = action.data
+                )
+                navController.navigate(Screen.Decrypt.route) {
+                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                }
+                pendingAction.value = IntentAction.None
+            }
+            is IntentAction.EncryptFile -> {
+                // 3.1.0 Phase 1 (C1) — any non-PGP file opened/shared into
+                // the app lands on the Encrypt tab's FILE mode with the
+                // file preloaded (iOS "everything else opens to Encrypt
+                // with recipients ready" parity — the default-recipient
+                // preselection already runs in the Encrypt screen).
+                encDecVm.setMode(EncryptMode.FILE)
+                encDecVm.setFileToEncrypt(
+                    name = action.filename ?: "shared_file",
+                    size = action.data.size.toLong(),
+                    bytes = action.data
+                )
+                navController.navigate(Screen.Encrypt.route) {
+                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                }
+                pendingAction.value = IntentAction.None
+            }
+            is IntentAction.ComposeBundle -> {
+                // 3.1.0 Phase 6 (J5): multi-file share lands pre-loaded in
+                // Bundle mode; the user adds an optional note, picks
+                // recipients, and encrypts (J3/J4 UI unchanged).
+                encDecVm.startBundleFromShare(action.attachments)
+                navController.navigate(Screen.Encrypt.route) {
+                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                }
+                pendingAction.value = IntentAction.None
+            }
+            is IntentAction.VerifyDetachedSignature -> {
+                // 3.1.0 Phase 1 (C1) — a standalone detached signature
+                // opens the Verify-a-file sheet with the signature side
+                // preloaded; the user picks the original file. Open the
+                // sheet FIRST (it resets both slots), then set the sig.
+                encDecVm.openVerifyFileSheet()
+                encDecVm.setVerifyFileSignature(
+                    name = action.filename ?: "signature.asc",
+                    bytes = action.data
+                )
                 navController.navigate(Screen.Decrypt.route) {
                     popUpTo(navController.graph.startDestinationId) { saveState = true }
                     launchSingleTop = true

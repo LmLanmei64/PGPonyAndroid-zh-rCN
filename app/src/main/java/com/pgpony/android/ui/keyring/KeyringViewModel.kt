@@ -467,6 +467,85 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
      * [sourceFilename] is the user-visible filename for File-method
      * imports, null otherwise.
      */
+    /**
+     * 3.1.0 Phase 8 Fix1 — byte-level entry for FILE imports. Splits
+     * the failure modes that previously all collapsed into "No key
+     * data":
+     *   • bytes == null (the read itself failed — virtual/cloud doc,
+     *     revoked grant) → a dedicated "couldn't read the file" error,
+     *     because the file may be perfectly fine once saved locally.
+     *   • binary OpenPGP keyrings (gpg --export without --armor) →
+     *     wrapped through ArmoredOutputStream (BC picks the correct
+     *     BEGIN header from the packet tag) and fed to the normal
+     *     armored preview, so .gpg/.pgp key files import like .asc.
+     *   • armored text → straight to previewArmoredKey, as before.
+     */
+    fun previewKeyBytes(
+        bytes: ByteArray?,
+        sourceFilename: String? = null,
+        declaredSize: Long? = null
+    ) {
+        if (bytes == null) {
+            _state.value = _state.value.copy(
+                errorMessage = PGPonyApp.instance.getString(R.string.keyring_error_file_read)
+            )
+            return
+        }
+        val asText = bytes.toString(Charsets.UTF_8)
+        if (asText.contains("-----BEGIN PGP")) {
+            previewArmoredKey(asText, sourceFilename = sourceFilename)
+            return
+        }
+        val armored = try {
+            val bos = java.io.ByteArrayOutputStream()
+            org.bouncycastle.bcpg.ArmoredOutputStream(bos).use { it.write(bytes) }
+            bos.toString("UTF-8")
+        } catch (_: Exception) {
+            null
+        }
+        // 3.1.0 Phase 8 Fix2 — DIAGNOSTIC: a valid armored .asc that
+        // pastes fine still failed by file, so whatever reached this
+        // point was NOT the file's content. When the binary-wrap path
+        // is about to run (no BEGIN marker in what we read), first
+        // check whether BC can actually read the bytes as a keyring;
+        // if it can't, surface WHAT was read (size + printable head)
+        // instead of a generic parse error, so the device shows us
+        // whether the provider served an error page, truncation, or
+        // something else entirely.
+        val bcReadable = try {
+            val objIn = org.bouncycastle.openpgp.PGPUtil.getDecoderStream(
+                java.io.ByteArrayInputStream(bytes)
+            )
+            org.bouncycastle.openpgp.PGPObjectFactory(
+                objIn, org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator()
+            ).nextObject() != null
+        } catch (_: Exception) {
+            false
+        }
+        if (!bcReadable) {
+            val head = asText.take(48)
+                .map { if (it.code in 32..126) it else '·' }
+                .joinToString("")
+            // 3.1.0 Phase 8 Fix3: name the file and the declared size so a
+            // lying provider identifies itself in one screenshot.
+            _state.value = _state.value.copy(
+                errorMessage = PGPonyApp.instance.getString(
+                    R.string.keyring_error_parse_diag2,
+                    sourceFilename ?: "?",
+                    bytes.size,
+                    declaredSize?.toString() ?: "?",
+                    head
+                )
+            )
+            return
+        }
+        if (armored != null) {
+            previewArmoredKey(armored, sourceFilename = sourceFilename)
+        } else {
+            previewArmoredKey("")
+        }
+    }
+
     fun previewArmoredKey(
         armoredText: String,
         source: KeyLookupSource? = null,

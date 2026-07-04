@@ -100,8 +100,20 @@ class CardDecryptService private constructor() {
             // unprotected packet (isIntegrityProtected() == false), and validate
             // SEIPDv1's MDC / confirm SEIPDv2's AEAD tag via verify(). Without
             // this a tampered message would pass as a clean card decrypt.
-            val protected = pked.isIntegrityProtected()
-            val intact = protected && try { pked.verify() } catch (ie: PGPException) { false }
+// 3.1.0 Phase 7 Fix2 (origin: Token2 test, gpg 2.5 message):
+            // GnuPG with AEAD-capable keys emits the LibrePGP "tag 20"
+            // OCB packet. BC's isIntegrityProtected() is tag-18-only
+            // (false for tag 20) and its verify() THROWS for tag 20 —
+            // but AEAD authenticates every chunk during the stream
+            // read; a tampered message throws before reaching this
+            // gate. So: tag 20 counts as protected, and skips the
+            // MDC-oriented verify(). SEIPDv2 (isAEAD + tag 18) keeps
+            // using verify(), which BC short-circuits to true.
+            val aead = pked.isAEAD()
+            val protected = pked.isIntegrityProtected() || aead
+            val intact = protected && try {
+                if (aead && !pked.isIntegrityProtected()) true else pked.verify()
+            } catch (ie: PGPException) { false }
             if (!intact) {
                 throw OpenPgpCardException.Malformed(
                     if (!protected) "Message has no integrity protection and was rejected."

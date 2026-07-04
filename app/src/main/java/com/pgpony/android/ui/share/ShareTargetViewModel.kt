@@ -122,6 +122,11 @@ data class ShareTargetUiState(
     val encryptedFileName: String? = null,
     // Phase A2 (decrypt side): recovered binary file (DecryptFileResult phase).
     val decryptedFileBytes: ByteArray? = null,
+    // 3.1.0 Phase 6 (J6) — set when the decrypted content was PGP/MIME
+    // WITH attachments: the Quick Action shows the body plus this note;
+    // the full attachment view lives in the main app (iOS
+    // ExtensionDecryptView parity).
+    val mimeAttachmentNote: String? = null,
     val decryptedFileName: String? = null,
     val signerName: String? = null,           // populated by decrypt signature info
     val signerKeyId: String? = null,
@@ -360,7 +365,8 @@ class ShareTargetViewModel(
                     plaintextBytes = c.data
                     literalFilename = c.filename
                     produceFileResult = true
-                    outputName = "${c.filename ?: "shared_file"}.pgp"
+                    // 3.1.0 Phase 1 (C2) — .gpg for binary output (was .pgp).
+                    outputName = "${c.filename ?: "shared_file"}.gpg"
                 } else {
                     // Parsed as armored text (e.g. a shared .asc note) — keep the
                     // text path.
@@ -527,7 +533,11 @@ class ShareTargetViewModel(
                 }
                 val result = withContext(Dispatchers.Default) {
                     PGPCryptoService.shared.decryptArmored(
-                        armoredMessage = armored,
+                        // 3.1.0 Phase 6 (J6/J2): a shared .eml carries the
+                        // RFC 3156 envelope — unwrap to the armored payload;
+                        // plain armored input passes through unchanged.
+                        armoredMessage = com.pgpony.android.crypto.mime.MimeParser
+                            .pgpMimeEncryptedPayload(armored) ?: armored,
                         secretKeyRings = tryRings,
                         passphrase = current.passphrase.ifEmpty { null },
                         verificationKeys = null,
@@ -585,7 +595,9 @@ class ShareTargetViewModel(
                 }
                 val result = withContext(Dispatchers.Default) {
                     PGPCryptoService.shared.decrypt(
-                        encryptedData = data,
+                        // 3.1.0 Phase 6 (J6/J2): an .eml opened as bytes — unwrap the
+                        // envelope when present.
+                        encryptedData = unwrapEnvelopeBytes(data),
                         secretKeyRings = tryRings,
                         passphrase = current.passphrase.ifEmpty { null },
                         verificationKeys = null,
@@ -618,6 +630,39 @@ class ShareTargetViewModel(
         result: com.pgpony.android.crypto.DecryptResult,
         sourceFilename: String?,
     ) {
+        // 3.1.0 Phase 6 (J6): PGP/MIME content routes to a readable TEXT
+        // result — the body, plus an attachment-count note when the
+        // bundle carries files (saving/previewing attachments lives in
+        // the main app, iOS ExtensionDecryptView parity). Non-MIME keeps
+        // the existing text/file split untouched.
+        val mime = try {
+            com.pgpony.android.crypto.mime.MimeParser.parse(result.data)
+        } catch (_: Exception) {
+            null
+        }
+        if (mime != null) {
+            val signerNameMime = result.signerKeyID?.let { keyId ->
+                _state.value.availableRecipients.firstOrNull { k ->
+                    k.longKeyId.equals(keyId, ignoreCase = true)
+                }?.userID
+            }
+            _state.update {
+                it.copy(
+                    phase = ShareTargetPhase.DecryptResult,
+                    outputText = mime.body ?: "",
+                    mimeAttachmentNote = if (mime.hasAttachments) {
+                        PGPonyApp.instance.getString(
+                            R.string.share_target_mime_attachments_note_format,
+                            mime.attachments.size
+                        )
+                    } else null,
+                    signatureVerified = result.signatureVerified,
+                    signerKeyId = result.signerKeyID,
+                    signerName = signerNameMime,
+                )
+            }
+            return
+        }
         val literalName = result.filename?.takeIf { it.isNotBlank() }
         val isFile = literalName != null ||
             (result.plaintext.isEmpty() && result.data.isNotEmpty())
@@ -653,6 +698,28 @@ class ShareTargetViewModel(
         }
     }
 
+    /**
+     * 3.1.0 Phase 6 (J6/J2) — byte-level envelope unwrap for the
+     * Quick Action binary path; mirrors the main VM's
+     * effectiveDecryptFileBytes.
+     */
+    private fun unwrapEnvelopeBytes(bytes: ByteArray): ByteArray {
+        val head = try {
+            String(bytes, 0, minOf(bytes.size, 8192), Charsets.UTF_8)
+        } catch (_: Exception) {
+            return bytes
+        }
+        if (!head.contains("multipart/encrypted", ignoreCase = true)) return bytes
+        val text = try {
+            String(bytes, Charsets.UTF_8)
+        } catch (_: Exception) {
+            return bytes
+        }
+        val armored = com.pgpony.android.crypto.mime.MimeParser
+            .pgpMimeEncryptedPayload(text) ?: return bytes
+        return armored.toByteArray(Charsets.UTF_8)
+    }
+
     private fun stripPgpExtension(name: String): String =
         name.removeSuffix(".pgp").removeSuffix(".gpg").removeSuffix(".asc")
 
@@ -672,6 +739,7 @@ class ShareTargetViewModel(
                 encryptedFileBytes = null,
                 encryptedFileName = null,
                 decryptedFileBytes = null,
+                mimeAttachmentNote = null,
                 decryptedFileName = null,
             )
         }

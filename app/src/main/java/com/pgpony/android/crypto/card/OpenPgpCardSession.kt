@@ -249,15 +249,27 @@ class OpenPgpCardSession(private val transport: CardTransport) {
      * before each signature.
      */
     fun verify(pinReference: Int, pin: ByteArray) {
-        transmit(
-            CommandApdu(
-                cla = 0x00,
-                ins = OpenPgpCard.INS_VERIFY,
-                p1 = 0x00,
-                p2 = pinReference,
-                data = pin
+        // 3.1.0 Phase 7 (B1): this is the single chokepoint every card
+        // operation's PIN passes through, so the cache integrates here —
+        // a successful USER-PIN verify refreshes the cache, a wrong PIN
+        // clears it. PW3 (admin) is deliberately never cached.
+        try {
+            transmit(
+                CommandApdu(
+                    cla = 0x00,
+                    ins = OpenPgpCard.INS_VERIFY,
+                    p1 = 0x00,
+                    p2 = pinReference,
+                    data = pin
+                )
             )
-        )
+        } catch (e: OpenPgpCardException.WrongPin) {
+            CardPinCache.clear()
+            throw e
+        }
+        if (pinReference == OpenPgpCard.PW1_SIGN || pinReference == OpenPgpCard.PW1_OTHER) {
+            CardPinCache.remember(String(pin, Charsets.UTF_8))
+        }
     }
 
     /**

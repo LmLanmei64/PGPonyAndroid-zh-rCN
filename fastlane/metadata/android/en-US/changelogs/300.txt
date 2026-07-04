@@ -1,0 +1,5 @@
+PGP/MIME support: decrypt messages with attachments, compose encrypted bundles (.eml/.asc), share multiple files in at once.
+
+Hardware keys: remember your card PIN for a chosen duration; full offline-primary support (subkey-only cards link, sign, and verify correctly).
+
+Also: accepts GnuPG AEAD messages, Send as Email with inline/attachment choice, sign-by-default, four-mode Encrypt screen, more reliable file key import.

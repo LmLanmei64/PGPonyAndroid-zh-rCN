@@ -48,6 +48,26 @@ private fun ArmoredOutputStream.stripVersion(): ArmoredOutputStream = apply {
 
 class CardSigningService private constructor() {
 
+    /**
+     * 3.1.0 Phase 7 (A3): the public key whose ID goes into a
+     * card-made signature. The card signs with the key in its [S]
+     * slot; when that's a SUBKEY (offline-primary layouts), signing
+     * metadata built from ring.publicKey (the primary) yields
+     * signatures that claim the wrong issuer and fail verification.
+     * Pick the ring key matching [cardSigFingerprint]; fall back to
+     * the primary (classic all-on-card layouts, or no stored slot fp).
+     */
+    fun signingPublicKey(
+        ring: org.bouncycastle.openpgp.PGPPublicKeyRing,
+        cardSigFingerprint: String?
+    ): org.bouncycastle.openpgp.PGPPublicKey {
+        val wanted = cardSigFingerprint?.uppercase() ?: return ring.publicKey
+        return ring.publicKeys.asSequence().firstOrNull {
+            org.bouncycastle.util.encoders.Hex.toHexString(it.fingerprint)
+                .uppercase() == wanted
+        } ?: ring.publicKey
+    }
+
     companion object {
         val shared = CardSigningService()
     }

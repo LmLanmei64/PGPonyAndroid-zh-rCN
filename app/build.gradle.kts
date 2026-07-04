@@ -53,8 +53,17 @@ android {
         // and the Phase E polish (version display, More from NorseHorse,
         // Encrypt recipient dropdown). versionCode jumps to 200 to leave the
         // 1xx band for the 2.x dev line.
-        versionCode = 204
-        versionName = "3.0.4"
+        // v3.1.0 — iOS 7.1.x parity release. PGP/MIME multipart both
+        // directions (structured decrypt with attachments, Bundle compose
+        // with .eml/.asc output), multi-file share-in, four-mode Encrypt
+        // row with the Encrypt-with toggle in Text mode, card PIN cache
+        // with live countdown, offline-primary hardware-key fixes
+        // (link matching, subkey issuer signing, tolerant ring lookups),
+        // GnuPG AEAD "tag 20" message acceptance, Send as Email with
+        // format choice, sign-by-default, and hardened document reads.
+        // versionCode moves to the 3xx band for the 3.1 line.
+        versionCode = 300
+        versionName = "3.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

@@ -156,7 +156,9 @@ fun ShareTargetScreen(
                                 vm.onCardDecryptStarted()
                                 val started = cardActivity.startCardOperation({ session ->
                                     session.select()
-                                    val pubRing = PGPonyApp.instance.keyRepository.loadPublicKeyRing(cardFp)
+                                    // 3.1.0 Phase 7 Fix1: tolerant loader (offline-primary cards).
+                                    val pubRing = PGPonyApp.instance.keyRepository
+                                        .loadPublicKeyRingByCardFingerprint(cardFp)
                                         ?: throw OpenPgpCardException.Malformed(cardPairFirstMsg)
                                     CardDecryptService.shared.decryptBytes(
                                         session, pubRing, pin.toByteArray(Charsets.UTF_8), bytes
@@ -189,7 +191,8 @@ fun ShareTargetScreen(
                         shareFile(
                             context,
                             state.encryptedFileBytes ?: ByteArray(0),
-                            state.encryptedFileName ?: "encrypted.pgp",
+                            // 3.1.0 Phase 1 (C2) — .gpg fallback (was .pgp).
+                            state.encryptedFileName ?: "encrypted.gpg",
                         )
                     },
                     onDone = onDismiss,
@@ -593,7 +596,8 @@ private fun ShareEncryptFileResultContent(
     onShare: () -> Unit,
     onDone: () -> Unit,
 ) {
-    val name = state.encryptedFileName ?: "encrypted.pgp"
+    // 3.1.0 Phase 1 (C2) — .gpg fallback (was .pgp).
+    val name = state.encryptedFileName ?: "encrypted.gpg"
     val size = state.encryptedFileBytes?.size ?: 0
     Text(
         text = stringResource(R.string.share_target_encrypt_file_result_subtitle),
@@ -748,6 +752,15 @@ private fun ShareDecryptResultContent(
         else MaterialTheme.colorScheme.onSurfaceVariant,
     )
     ShareCipherPreview(text = state.outputText, monospace = false)
+    // 3.1.0 Phase 6 (J6): PGP/MIME bundle — attachment-count note; the
+    // full attachment view (save/preview) lives in the main app.
+    state.mimeAttachmentNote?.let { note ->
+        Text(
+            text = note,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     ShareResultActionRow(onCopy = onCopy, onShare = onShare, onDone = onDone)
 }
 

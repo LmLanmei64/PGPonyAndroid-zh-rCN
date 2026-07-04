@@ -342,6 +342,57 @@ class KeyRepository(
         return importArmoredKey(armored)
     }
 
+    /**
+     * 3.1.0 Phase 7 Fix1 (origin: Token2 offline-primary device test):
+     * load a public key ring given ANY fingerprint a card can hand us —
+     * the primary, a stored card slot fingerprint, or a subkey buried
+     * in a stored ring. Card flows derive lookup fingerprints from the
+     * card's slots, which are SUBKEYS on offline-primary layouts, so
+     * the plain primary-keyed loadPublicKeyRing() missed and every
+     * card flow (encrypt+sign, decrypt, share-in decrypt) reported
+     * "pair this card first" despite a correct A1 link. Resolution
+     * order: direct primary hit → entity whose stored card slot
+     * fingerprints match → ring-subkey scan (covers keys imported as
+     * plain public keys, never card-linked).
+     *
+     * NOT for the main thread (runBlocking over the DAO) — card
+     * operation lambdas run on the NFC reader thread, which is the
+     * intended caller.
+     */
+    fun loadPublicKeyRingByCardFingerprint(fp: String): org.bouncycastle.openpgp.PGPPublicKeyRing? {
+        loadPublicKeyRing(fp)?.let { return it }
+        val entity = kotlinx.coroutines.runBlocking {
+            getAllKeys().firstOrNull {
+                it.cardSigFingerprint.equals(fp, ignoreCase = true) ||
+                    it.cardDecFingerprint.equals(fp, ignoreCase = true) ||
+                    it.cardAuthFingerprint.equals(fp, ignoreCase = true)
+            } ?: findEntityBySubkeyFingerprint(listOf(fp))
+        }
+        return entity?.let { loadPublicKeyRing(it.fingerprint) }
+    }
+
+    /**
+     * 3.1.0 Phase 7 (A1): find the stored key entity whose public key
+     * ring contains ANY of [fingerprints] — primary or subkey. Used to
+     * link a hardware key onto an offline-primary keyring where the
+     * card's slot fingerprints are all subkeys. Linear over the keyring
+     * (import-time only; keyrings are small).
+     */
+    private suspend fun findEntityBySubkeyFingerprint(
+        fingerprints: List<String>
+    ): PGPKeyEntity? {
+        if (fingerprints.isEmpty()) return null
+        val wanted = fingerprints.map { it.uppercase() }.toSet()
+        for (entity in getAllKeys()) {
+            val ring = loadPublicKeyRing(entity.fingerprint) ?: continue
+            val ringFps = ring.publicKeys.asSequence().map {
+                org.bouncycastle.util.encoders.Hex.toHexString(it.fingerprint).uppercase()
+            }
+            if (ringFps.any { it in wanted }) return entity
+        }
+        return null
+    }
+
     private suspend fun importCardKeyInternal(cardInfo: CardInfo): PGPKeyEntity {
         val primaryFp = cardInfo.primaryFingerprint
             ?: throw KeyRepoError.StorageFailed(
@@ -353,7 +404,18 @@ class KeyRepository(
         val authFp = cardInfo.fingerprintFor(com.pgpony.android.crypto.card.CardSlot.AUTHENTICATION)
 
         // Link path — fold card identity onto an existing keyring row.
+        //
+        // 3.1.0 Phase 7 (A1): primaryFp here is derived from the card's
+        // SIGNATURE-slot fingerprint. For offline-primary layouts (the
+        // primary key stays in a vault; only subkeys live on the card)
+        // that slot holds a SUBKEY fingerprint, so the primary-fp lookup
+        // below misses and a duplicate card-contact row used to be
+        // created next to the real keyring entry. The fallback scan
+        // matches ANY card slot fingerprint against each stored ring's
+        // full key set (primary + subkeys) and links onto the owning
+        // entity, keeping ITS primary fingerprint.
         val existing = dao.getByFingerprint(primaryFp)
+            ?: findEntityBySubkeyFingerprint(listOfNotNull(sigFp, decFp, authFp))
         if (existing != null) {
             val linked = existing.copy(
                 isCardBacked = true,

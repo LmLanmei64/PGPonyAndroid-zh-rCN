@@ -56,7 +56,8 @@ fun CardDecryptScreen(onBack: () -> Unit) {
     val nfcEnabled = remember { activity?.isNfcEnabled() == true }
 
     var ciphertext by remember { mutableStateOf("") }
-    var pin by remember { mutableStateOf("") }
+    // 3.1.0 Phase 7 (B1): prefill from the PIN cache when enabled.
+    var pin by remember { mutableStateOf(com.pgpony.android.crypto.card.CardPinCache.retrieve() ?: "") }
     val state = remember { mutableStateOf<DecState>(DecState.Form) }
 
     val formValid = ciphertext.isNotBlank() && pin.isNotEmpty()
@@ -71,7 +72,10 @@ fun CardDecryptScreen(onBack: () -> Unit) {
             val ard = session.getApplicationRelatedData()
             val primaryFp = ard.sigFingerprint ?: ard.decFingerprint
                 ?: throw OpenPgpCardException.Malformed("This card has no keys.")
-            val pubRing = PGPonyApp.instance.keyRepository.loadPublicKeyRing(primaryFp)
+            // 3.1.0 Phase 7 Fix1: this fingerprint is card-derived and is a
+            // SUBKEY on offline-primary layouts — tolerant loader.
+            val pubRing = PGPonyApp.instance.keyRepository
+                .loadPublicKeyRingByCardFingerprint(primaryFp)
                 ?: throw OpenPgpCardException.Malformed(
                     "Pair this card's public key into your keyring first, then try again."
                 )

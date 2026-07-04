@@ -68,10 +68,50 @@ class ShareTargetActivity : AppCompatActivity() {
         ShareTargetViewModel.factory(PGPonyApp.instance.keyRepository)
     }
 
+    // ── 3.1.0 Phase 1 Fix3 — detached-signature forward ────────────────
+    //
+    // The Quick Action has no verify flow, so a shared/opened detached
+    // signature (armored or binary) dead-ended here: the picker offered
+    // Encrypt/Decrypt, neither of which makes sense for a signature.
+    // Instead of growing a verify phase in this activity, forward the
+    // signature to MainActivity's Verify-a-file sheet — the same route
+    // the main app's own intent handling uses — and finish. Signature
+    // bytes ride as an extra (they're tiny; FORWARD_SIZE_LIMIT guards
+    // the degenerate case, which falls through to the normal picker
+    // rather than risking a TransactionTooLargeException).
+    //
+    // Returns true when the content was forwarded and this activity
+    // should not render.
+    private fun forwardDetachedSignatureIfNeeded(content: ShareIntentContent): Boolean {
+        val file = content as? ShareIntentContent.PgpFile ?: return false
+        if (!file.looksLikeDetachedSignature) return false
+        if (file.data.size > IntentHandler.FORWARD_SIZE_LIMIT) return false
+        val forward = android.content.Intent(this, com.pgpony.android.MainActivity::class.java).apply {
+            action = IntentHandler.ACTION_VERIFY_DETACHED
+            putExtra(IntentHandler.EXTRA_SIGNATURE_BYTES, file.data)
+            putExtra(IntentHandler.EXTRA_SIGNATURE_NAME, file.filename)
+            // CLEAR_TOP + SINGLE_TOP: deliver to an existing MainActivity
+            // via onNewIntent instead of stacking a second instance in
+            // this activity's (affinity-less) task; NEW_TASK sends it to
+            // the main app's own task when none is running.
+            addFlags(
+                android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                    android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+        startActivity(forward)
+        finish()
+        return true
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val content = IntentHandler.classifyShareIntent(intent, contentResolver)
+        // 3.1.0 Phase 1 Fix3 — detached signatures go to the main app's
+        // verify sheet; skip rendering entirely when forwarded.
+        if (forwardDetachedSignatureIfNeeded(content)) return
         vm.initialize(content)
 
         setContent {
@@ -96,6 +136,8 @@ class ShareTargetActivity : AppCompatActivity() {
         // any in-flight state from a prior share is discarded.
         setIntent(intent)
         val content = IntentHandler.classifyShareIntent(intent, contentResolver)
+        // 3.1.0 Phase 1 Fix3 — same forward as onCreate.
+        if (forwardDetachedSignatureIfNeeded(content)) return
         vm.goBackToActionPicker()
         vm.initialize(content)
     }

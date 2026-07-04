@@ -11,8 +11,12 @@
 //   5. Save to Files button + Share button + Done
 //
 // Save flow: tapping Save opens ACTION_CREATE_DOCUMENT via
-// MainActivity.startDocumentCreator (A10b helper), suggests
-// "<originalName>.pgp" as the filename and "application/pgp-encrypted"
+// MainActivity.startDocumentCreator (A10b helper) with an
+// application/octet-stream MIME (3.1.0 Phase 2 Fix1 — SAF appends the
+// canonical extension of typed MIMEs, which produced .gpg.pgp), suggests
+// "<originalName>.gpg" as the filename (3.1.0 Phase 1, C2: binary
+// output is named .gpg, matching iOS 7.1.0 and the gpg convention;
+// previously ".pgp") and "application/pgp-encrypted"
 // as the MIME, then writes the encrypted bytes to the returned URI.
 // Share flow: writes a temp file to the app cache directory, then
 // shares via FileProvider — the FileProvider authority is the one
@@ -58,7 +62,9 @@ fun FileEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
     val activity = context.findFileResultMainActivity()
     val signed = state.signMessage && state.signingKey != null
     val origName = state.selectedFileName ?: "file"
-    val encryptedName = "$origName.pgp"
+    // 3.1.0 Phase 1 (C2) — binary ciphertext is a real .gpg file, matching
+    // iOS 7.1.0 and what gpg itself produces (was "$origName.pgp").
+    val encryptedName = "$origName.gpg"
     val encryptedBytes = state.encryptedFileBytes ?: ByteArray(0)
 
     // Save-status banner state. Same one-shot UI flair pattern as the
@@ -96,6 +102,17 @@ stringResource(R.string.file_enc_result_title),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // 3.1.0 Phase 2 (C4): a password-encrypted file has no
+                // recipients and is never signed — show the "Password
+                // protected" badge instead (iOS
+                // FileEncryptionResultView.passwordProtected parity).
+                if (state.fileEncryptedWithPassword) {
+                    FileStatusBadge(
+                        icon = Icons.Filled.Lock,
+                        label = stringResource(R.string.file_enc_result_badge_password),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                } else {
                 val count = state.selectedRecipients.size
                 FileStatusBadge(
                     icon = Icons.Filled.Person,
@@ -108,6 +125,7 @@ stringResource(R.string.file_enc_result_title),
                         label = stringResource(R.string.file_enc_result_badge_signed),
                         tint = Color(0xFF22C55E)
                     )
+                }
                 }
             }
 
@@ -145,7 +163,9 @@ stringResource(R.string.file_enc_result_title),
             }
 
             // ── 4. Recipients list ───────────────────────────────────
-            if (state.selectedRecipients.isNotEmpty()) {
+            // 3.1.0 Phase 2 (C4): recipients list is meaningless for a
+            // password-encrypted file — hide it.
+            if (!state.fileEncryptedWithPassword && state.selectedRecipients.isNotEmpty()) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.Start
@@ -192,7 +212,16 @@ stringResource(R.string.file_enc_result_badge_can_decrypt),
             Button(
                 onClick = {
                     activity?.startDocumentCreator(
-                        mimeType = "application/pgp-encrypted",
+                        // 3.1.0 Phase 2 Fix1 — octet-stream, NOT
+                        // application/pgp-encrypted: SAF's document creator
+                        // appends the MIME's canonical extension (.pgp) to
+                        // any name that doesn't already end in it, turning
+                        // the C2 "<name>.gpg" suggestion into
+                        // "<name>.gpg.pgp" on disk. octet-stream has no
+                        // canonical extension, so the suggested name is
+                        // kept verbatim. The text-result and file-decrypt
+                        // sheets already save this way for the same reason.
+                        mimeType = "application/octet-stream",
                         suggestedName = encryptedName
                     ) { uri ->
                         if (uri == null) {

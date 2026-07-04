@@ -1255,4 +1255,60 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="language_picker_footer">La plupart des écrans sont mis à jour immédiatement. Redémarrez PGPony si du texte reste dans la langue précédente.</string>
     <string name="onboarding_slide_language_title">Langue</string>
     <string name="onboarding_slide_language_body">Choisissez la langue que vous souhaitez utiliser.\n\nVous pouvez la modifier à tout moment dans les Paramètres.</string>
+    <!-- 3.1.0 Phase 2 (C4) — file password encryption + import read error -->
+    <string name="encrypt_file_method_label">Chiffrer avec</string>
+    <string name="encrypt_file_method_recipients">Destinataires</string>
+    <string name="encrypt_file_method_password">Mot de passe</string>
+    <string name="encrypt_password_unrecoverable">Si vous oubliez la phrase secrète, le fichier ne pourra pas être récupéré. Il n\'existe ni sauvegarde ni réinitialisation.</string>
+    <string name="file_enc_result_badge_password">Protégé par mot de passe</string>
+    <string name="keyring_error_file_read_failed">Impossible de lire le fichier. Vérifiez qu\'il est téléchargé et disponible, puis réessayez.</string>
+    <!-- 3.1.0 Phase 4 (J1) — structured PGP/MIME decrypt result -->
+    <string name="structured_result_title">Message déchiffré</string>
+    <string name="structured_result_attachments_format">Pièces jointes (%1$d)</string>
+    <string name="structured_result_share_all">Tout partager</string>
+    <!-- 3.1.0 Phase 5 (J3/J4) — Bundle compose + outputs -->
+    <string name="encrypt_mode_bundle">Paquet</string>
+    <string name="encrypt_bundle_body_label">Message</string>
+    <string name="encrypt_bundle_add_photos">Ajouter des photos</string>
+    <string name="encrypt_bundle_add_files">Ajouter des fichiers</string>
+    <string name="encrypt_bundle_attachments_format">Pièces jointes (%1$d)</string>
+    <string name="encrypt_bundle_remove">Retirer la pièce jointe</string>
+    <string name="encdec_error_bundle_empty">Ajoutez un message ou au moins une pièce jointe</string>
+    <string name="bundle_result_title">Paquet chiffré</string>
+    <string name="bundle_result_subtitle_format">%1$d pièces jointes · %2$d destinataires</string>
+    <string name="bundle_result_share_eml">Partager en e-mail (.eml)</string>
+    <string name="bundle_result_share_asc">Partager le .asc chiffré</string>
+    <string name="bundle_result_copy_inline">Copier le bloc inline</string>
+    <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
+    <string name="bundle_result_save_eml">Enregistrer le .eml dans Fichiers</string>
+    <string name="bundle_result_save_asc">Enregistrer le .asc dans Fichiers</string>
+    <!-- 3.1.0 Phase 6 (J6) — Quick Action PGP/MIME note -->
+    <string name="share_target_mime_attachments_note_format">Contient %1$d pièces jointes — ouvrez le message dans PGPony pour les afficher et les enregistrer.</string>
+    <!-- 3.1.0 Phase 7 (B1/B2/B3) — Remember Card PIN -->
+    <string name="settings_card_pin_cache_title">Mémoriser le PIN de la carte</string>
+    <string name="settings_card_pin_cache_subtitle">Garde le PIN utilisateur en mémoire pendant la durée choisie. Jamais écrit sur le disque ; un PIN erroné ou la fermeture de l\'app l\'efface.</string>
+    <string name="settings_card_pin_cache_duration_label">Mémoriser pendant</string>
+    <string name="settings_card_pin_cache_1min">1 min</string>
+    <string name="settings_card_pin_cache_5min">5 min</string>
+    <string name="settings_card_pin_cache_15min">15 min</string>
+    <string name="settings_card_pin_cache_1hr">1 heure</string>
+    <string name="settings_card_pin_cache_countdown_format">PIN mémorisé — effacé dans %1$s</string>
+    <string name="settings_card_pin_cache_none_held">Aucun PIN n\'est mémorisé actuellement.</string>
+    <string name="settings_card_pin_cache_clear">Effacer maintenant</string>
+    <!-- 3.1.0 Phase 8 (E4/E5) — email send + sign by default -->
+    <string name="result_send_email_button">Envoyer par e-mail</string>
+    <string name="settings_sign_by_default_title">Signer par défaut</string>
+    <string name="settings_sign_by_default_subtitle">Commencer les nouveaux messages avec \"Signer aussi\" activé, avec votre clé de signature par défaut.</string>
+    <string name="settings_section_email">E-mail</string>
+    <string name="settings_email_format_label">Format d\'envoi</string>
+    <string name="settings_email_format_inline">Intégré</string>
+    <string name="settings_email_format_attachment">Pièce jointe</string>
+    <string name="settings_email_format_both">Les deux</string>
+    <string name="settings_email_format_subtitle">Intégré place le bloc chiffré dans le corps du message pour que les clients compatibles PGP le déchiffrent automatiquement ; Pièce jointe envoie un fichier .asc.</string>
+    <!-- 3.1.0 Phase 8 Fix1 — file import read error -->
+    <string name="keyring_error_file_read">Impossible de lire ce fichier. Enregistrez-le en local (app Fichiers) puis réessayez l\'import.</string>
+    <!-- 3.1.0 Phase 8 Fix2 — file import diagnostic -->
+    <string name="keyring_error_parse_diag">Couldn\'t read a key from the file — got %1$d bytes starting with \"%2$s\"</string>
+    <!-- 3.1.0 Phase 8 Fix3 — richer file import diagnostic -->
+    <string name="keyring_error_parse_diag2">Couldn\'t read a key from \"%1$s\" — got %2$d bytes (file reports %3$s), starting with \"%4$s\"</string>
 </resources>

@@ -1048,8 +1048,20 @@ class PGPCryptoService private constructor() {
             // remapping below leaves it untouched. The plaintext is never
             // returned when this fails.
             integrityObj?.let { io ->
-                val protected = io.isIntegrityProtected()
-                val intact = protected && try { io.verify() } catch (ie: PGPException) { false }
+// 3.1.0 Phase 7 Fix2 (origin: Token2 test, gpg 2.5 message):
+                // GnuPG with AEAD-capable keys emits the LibrePGP "tag 20"
+                // OCB packet. BC's isIntegrityProtected() is tag-18-only
+                // (false for tag 20) and its verify() THROWS for tag 20 —
+                // but AEAD authenticates every chunk during the stream
+                // read; a tampered message throws before reaching this
+                // gate. So: tag 20 counts as protected, and skips the
+                // MDC-oriented verify(). SEIPDv2 (isAEAD + tag 18) keeps
+                // using verify(), which BC short-circuits to true.
+                val aead = io.isAEAD()
+                val protected = io.isIntegrityProtected() || aead
+                val intact = protected && try {
+                    if (aead && !io.isIntegrityProtected()) true else io.verify()
+                } catch (ie: PGPException) { false }
                 if (!intact) {
                     throw PGPCryptoError.IntegrityCheckFailed(
                         if (!protected) "Message has no integrity protection and was rejected"

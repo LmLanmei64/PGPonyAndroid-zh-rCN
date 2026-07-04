@@ -55,7 +55,8 @@ fun CardSignScreen(onBack: () -> Unit) {
     val nfcEnabled = remember { activity?.isNfcEnabled() == true }
 
     var message by remember { mutableStateOf("") }
-    var pin by remember { mutableStateOf("") }
+    // 3.1.0 Phase 7 (B1): prefill from the PIN cache when enabled.
+    var pin by remember { mutableStateOf(com.pgpony.android.crypto.card.CardPinCache.retrieve() ?: "") }
     val state = remember { mutableStateOf<SignState>(SignState.Form) }
 
     val formValid = message.isNotBlank() && pin.isNotEmpty()
@@ -72,11 +73,33 @@ fun CardSignScreen(onBack: () -> Unit) {
             val ard = session.getApplicationRelatedData()
             val fp = ard.sigFingerprint
                 ?: throw OpenPgpCardException.Malformed("This card has no signature key.")
-            val pubRing = PGPonyApp.instance.keyRepository.loadPublicKeyRing(fp)
+            // 3.1.0 Phase 7 (A1/A3): the SIG-slot fingerprint is a SUBKEY
+            // on offline-primary layouts, so loading the ring by fp
+            // directly fails even when the key IS paired. Resolve the
+            // owning entity by stored card-sig fingerprint or primary fp
+            // (linear over the keyring, import-sized). runBlocking is
+            // safe here: startCardOperation lambdas run on the NFC
+            // reader thread, never the main thread.
+            val repo = PGPonyApp.instance.keyRepository
+            val entity = kotlinx.coroutines.runBlocking {
+                repo.getAllKeys().firstOrNull {
+                    it.cardSigFingerprint.equals(fp, ignoreCase = true) ||
+                        it.fingerprint.equals(fp, ignoreCase = true)
+                }
+            }
+            val pubRing = (entity?.let { repo.loadPublicKeyRing(it.fingerprint) })
+                ?: repo.loadPublicKeyRing(fp)
                 ?: throw OpenPgpCardException.Malformed(
                     "Pair this card's public key into your keyring first (import the matching public key), then try again."
                 )
-            CardSigningService.shared.signClear(session, pubRing.publicKey, pinBytes, msg)
+            // 3.1.0 Phase 7 (A3): sign metadata carries the [S]-slot key,
+            // not the ring primary.
+            CardSigningService.shared.signClear(
+                session,
+                CardSigningService.shared.signingPublicKey(pubRing, fp),
+                pinBytes,
+                msg
+            )
         }) { result ->
             result
                 .onSuccess { state.value = SignState.Result(it) }

@@ -61,6 +61,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+// 3.1.0 Phase 4 (J1/J2) — PGP/MIME core (Phase 3 J-core modules).
+import com.pgpony.android.crypto.mime.MimeParser
+import com.pgpony.android.crypto.mime.MimeAttachment
 
 // ── Mode picker (Phase A2) ─────────────────────────────────────────────
 //
@@ -76,7 +79,23 @@ enum class EncryptMode(val displayName: String) {
     // Phase A1: symmetric / passphrase-only encryption (`gpg -c`). No
     // recipient keypair — the message is sealed to a passphrase via
     // PGPCryptoService.encryptSymmetric.
-    PASSWORD("Password")
+    PASSWORD("Password"),
+    // 3.1.0 Phase 5 (J3): PGP/MIME compose — a message body plus
+    // multiple attachments encrypted together (iOS EncryptMode.message,
+    // labelled "Bundle").
+    BUNDLE("Bundle")
+}
+
+// ── 3.1.0 Phase 2 (C4, origin Wenzel): file-mode encrypt method ────────
+//
+// iOS 7.1.x parity: the File encrypt flow gets an "Encrypt with" toggle
+// (iOS FileEncryptMethod in Views/Encrypt/EncryptView.swift). RECIPIENTS
+// is the existing public-key path; PASSWORD seals the file to a
+// passphrase (`gpg -c`) via PGPCryptoService.encryptSymmetric — keyless,
+// so recipients, signing, and the hardware-key path are all skipped.
+enum class FileEncryptMethod {
+    RECIPIENTS,
+    PASSWORD
 }
 
 /**
@@ -164,6 +183,20 @@ data class EncryptUiState(
     val passwordPassphrase: String = "",
     val passwordConfirm: String = "",
     val passwordVisible: Boolean = false,
+    // ── 3.1.0 Phase 2 (C4): file-mode "Encrypt with" toggle ────────────
+    //
+    // PASSWORD reuses the Phase A1 passphrase/confirm/visible fields
+    // above (they're mode-scoped inputs, and the two password surfaces
+    // are never on screen together). fileEncryptedWithPassword tells the
+    // file result sheet to show the "Password protected" badge instead
+    // of the recipient count.
+    val fileEncryptMethod: FileEncryptMethod = FileEncryptMethod.RECIPIENTS,
+    val fileEncryptedWithPassword: Boolean = false,
+    // ── 3.1.0 Phase 5 (J3/J4): Bundle compose ──────────────────────────
+    val bundleBody: String = "",
+    val bundleAttachments: List<MimeAttachment> = emptyList(),
+    val encryptedBundleArmored: String? = null,
+    val showBundleResultSheet: Boolean = false,
     // ── Phase A5: "Sign a file" (detached signature, software key) ─────
     //
     // Sign a file on its own (no encryption) → standalone detached signature
@@ -207,6 +240,15 @@ data class DecryptUiState(
     // tab then hides the key picker and shows a "Password-encrypted" note +
     // the passphrase field, since no keypair applies.
     val isPasswordMessage: Boolean = false,
+    // ── 3.1.0 Phase 4 (J1): structured PGP/MIME decrypt result ─────────
+    //
+    // Set when the decrypted plaintext parses as multipart/mixed WITH
+    // attachments: the structured sheet shows mimeBody on top and one
+    // row per attachment. Body-only MIME renders as plain text via
+    // outputText; non-MIME keeps the existing result paths untouched.
+    val mimeBody: String? = null,
+    val mimeAttachments: List<MimeAttachment> = emptyList(),
+    val showStructuredResultSheet: Boolean = false,
     val decryptedFilename: String? = null,
     // Phase A3: full verification result for the 4-state banner. Populated
     // by both the clear-signed verify path AND the encrypted-and-signed
@@ -308,6 +350,15 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
     init {
         loadKeys()
+        // 3.1.0 Phase 8 (E5 F-item): sign-by-default. Applied ONCE at
+        // creation — the user can still flip the toggle off for a given
+        // message without it snapping back (loadKeys re-runs on tab
+        // return and must not reassert the preference). encrypt() already
+        // guards the signing leg with signingKey != null, so a true here
+        // with an empty keyring is inert until a signing key exists.
+        if (appPrefs.getBoolean("sign_by_default", false)) {
+            _encryptState.value = _encryptState.value.copy(signMessage = true)
+        }
     }
 
     private fun loadKeys() {
@@ -813,6 +864,9 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 _encryptState.value = _encryptState.value.copy(
                     encryptedFileBytes = encrypted,
                     isProcessing = false,
+                    // 3.1.0 Phase 2 (C4): recipient encrypt resets the
+                    // password badge on the result sheet.
+                    fileEncryptedWithPassword = false,
                     showFileEncryptResultSheet = true
                 )
                 _events.tryEmit(Event.EncryptSuccess)
@@ -906,15 +960,235 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         }
     }
 
+    // ── 3.1.0 Phase 2 (C4): file-mode password encryption ──────────────
+
+    /** Switch the File flow between recipient and password encryption. */
+    fun setFileEncryptMethod(m: FileEncryptMethod) {
+        _encryptState.value = _encryptState.value.copy(
+            fileEncryptMethod = m,
+            errorMessage = null
+        )
+    }
+
+    /**
+     * 3.1.0 Phase 2 (C4, origin Wenzel): encrypt the picked file to a
+     * passphrase only (`gpg -c`), producing a binary .gpg. Mirrors iOS
+     * FileEncryptMethod.password: keyless — no recipients, no signing,
+     * no hardware-key path. Validates a picked file, a non-empty
+     * passphrase, and a matching confirm; on success the ciphertext
+     * lands in encryptedFileBytes (same surface as recipient file
+     * encrypt, so the C2 .gpg naming and the save/share flows are
+     * reused) and the passphrase fields are cleared. The symmetric
+     * core (SEIPDv1 + Argon2id S2K by default) already shipped in
+     * Phase A1; this is the missing encrypt-side entry point.
+     */
+    fun encryptFileWithPassword() {
+        val s = _encryptState.value
+        val bytes = s.selectedFileBytes
+        if (bytes == null) {
+            _encryptState.value = s.copy(errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_no_file_to_encrypt))
+            return
+        }
+        if (s.passwordPassphrase.isEmpty()) {
+            _encryptState.value = s.copy(errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_password_required))
+            return
+        }
+        if (s.passwordPassphrase != s.passwordConfirm) {
+            _encryptState.value = s.copy(errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_password_mismatch))
+            return
+        }
+
+        viewModelScope.launch {
+            _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
+            try {
+                // Off the main thread: Argon2id key derivation (64 MiB,
+                // 3 passes) takes real time by design.
+                val encrypted = withContext(Dispatchers.Default) {
+                    crypto.encryptSymmetric(
+                        data = bytes,
+                        passphrase = s.passwordPassphrase,
+                        filename = s.selectedFileName,
+                        armor = false
+                    )
+                }
+                _encryptState.value = _encryptState.value.copy(
+                    encryptedFileBytes = encrypted,
+                    isProcessing = false,
+                    fileEncryptedWithPassword = true,
+                    // Clear the secret from state once it has done its job.
+                    passwordPassphrase = "",
+                    passwordConfirm = "",
+                    passwordVisible = false,
+                    showFileEncryptResultSheet = true
+                )
+                _events.tryEmit(Event.EncryptSuccess)
+            } catch (e: Exception) {
+                _encryptState.value = _encryptState.value.copy(
+                    isProcessing = false,
+                    errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                )
+            }
+        }
+    }
+
     /**
      * Phase A10b: dismiss the text/sign result sheet. The outputText
      * in state stays so the inline result block in Screens.kt keeps
      * showing it after dismissal — the sheet is a one-shot "you just
      * encrypted something" celebration, not the authoritative copy
      * surface.
+     *
+     * 3.1.0 Phase 5 (privacy, iOS 7.1.x parity): closing any encrypt
+     * result now clears the inputs — message text, picked file, bundle
+     * body and attachments — so nothing lingers between sessions.
      */
     fun dismissEncryptResult() {
-        _encryptState.value = _encryptState.value.copy(showEncryptResultSheet = false)
+        _encryptState.value = _encryptState.value.copy(
+            showEncryptResultSheet = false
+        )
+        clearEncryptInputsForPrivacy()
+    }
+
+    // ── 3.1.0 Phase 5 (J3/J4): Bundle compose ──────────────────────────
+
+    fun updateBundleBody(text: String) {
+        _encryptState.value = _encryptState.value.copy(bundleBody = text, errorMessage = null)
+    }
+
+    fun addBundleAttachment(filename: String, contentType: String, bytes: ByteArray) {
+        _encryptState.value = _encryptState.value.copy(
+            bundleAttachments = _encryptState.value.bundleAttachments +
+                MimeAttachment(filename, contentType, bytes),
+            errorMessage = null
+        )
+    }
+
+    /**
+     * 3.1.0 Phase 6 (J5): seed the Bundle compose from a multi-file
+     * share. REPLACES any prior bundle contents (a share is a fresh
+     * intent, not an append to a draft) and switches to BUNDLE mode.
+     */
+    fun startBundleFromShare(attachments: List<MimeAttachment>) {
+        _encryptState.value = _encryptState.value.copy(
+            mode = EncryptMode.BUNDLE,
+            bundleBody = "",
+            bundleAttachments = attachments,
+            outputText = "",
+            errorMessage = null
+        )
+    }
+
+    fun removeBundleAttachment(index: Int) {
+        val current = _encryptState.value.bundleAttachments
+        if (index !in current.indices) return
+        _encryptState.value = _encryptState.value.copy(
+            bundleAttachments = current.filterIndexed { i, _ -> i != index }
+        )
+    }
+
+    /**
+     * 3.1.0 Phase 5 (J3): encrypt the composed Bundle. Assembles
+     * `multipart/mixed` with MimeBuilder, encrypts to the selected
+     * recipients (optional SOFTWARE signing; the card path is
+     * deliberately out of Bundle v1 — an NFC tap mid-compose adds
+     * failure modes the feature doesn't need yet), and lands the
+     * armored result for the J4 output sheet (.eml / .asc / inline).
+     */
+    fun encryptBundle(passphrase: String? = null) {
+        val s = _encryptState.value
+        if (s.selectedRecipients.isEmpty()) {
+            _encryptState.value = s.copy(errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_no_recipients))
+            return
+        }
+        if (s.bundleBody.isBlank() && s.bundleAttachments.isEmpty()) {
+            _encryptState.value = s.copy(errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_bundle_empty))
+            return
+        }
+        DefaultRecipientPrefs.recordLastUsed(appPrefs, s.selectedRecipients.firstOrNull()?.fingerprint)
+        viewModelScope.launch {
+            _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
+            try {
+                val recipientRings = s.selectedRecipients.mapNotNull {
+                    repo.loadPublicKeyRing(it.fingerprint)
+                }
+                val signingRing = if (
+                    s.signMessage && s.signingKey != null && s.signingKey.isCardBacked != true
+                ) {
+                    repo.loadSecretKeyRing(s.signingKey.fingerprint)
+                } else null
+
+                val encrypted = withContext(Dispatchers.Default) {
+                    val mime = com.pgpony.android.crypto.mime.MimeBuilder.buildMixed(
+                        body = s.bundleBody.takeIf { it.isNotBlank() },
+                        attachments = s.bundleAttachments
+                    )
+                    crypto.encrypt(
+                        data = mime,
+                        recipientPublicKeys = recipientRings,
+                        signingSecretKey = signingRing,
+                        passphrase = passphrase,
+                        filename = null,
+                        armor = true
+                    )
+                }
+                _encryptState.value = _encryptState.value.copy(
+                    encryptedBundleArmored = String(encrypted, Charsets.UTF_8),
+                    isProcessing = false,
+                    showBundleResultSheet = true
+                )
+                _events.tryEmit(Event.EncryptSuccess)
+            } catch (e: SigningError.PassphraseRequired) {
+                _encryptState.value = _encryptState.value.copy(
+                    isProcessing = false,
+                    showSignPassphraseDialog = true,
+                    signPassphrase = "",
+                    errorMessage = null
+                )
+            } catch (e: SigningError.InvalidPassphrase) {
+                _encryptState.value = _encryptState.value.copy(
+                    isProcessing = false,
+                    showSignPassphraseDialog = true,
+                    signPassphrase = "",
+                    errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase_retry)
+                )
+            } catch (e: Exception) {
+                _encryptState.value = _encryptState.value.copy(
+                    isProcessing = false,
+                    errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                )
+            }
+        }
+    }
+
+    /** 3.1.0 Phase 5 (J4): dismiss the Bundle result. Clears the armored
+     *  output and, per the privacy behavior, the composed inputs. */
+    fun dismissBundleResult() {
+        _encryptState.value = _encryptState.value.copy(
+            showBundleResultSheet = false,
+            encryptedBundleArmored = null
+        )
+        clearEncryptInputsForPrivacy()
+    }
+
+    /**
+     * 3.1.0 Phase 5 (privacy, iOS 7.1.x parity): "the Encrypt screen now
+     * clears your message, files, and attachments automatically after
+     * you close the result, so nothing lingers between sessions." One
+     * place, called from every encrypt-result dismissal.
+     */
+    private fun clearEncryptInputsForPrivacy() {
+        _encryptState.value = _encryptState.value.copy(
+            inputText = "",
+            outputText = "",
+            selectedFileName = null,
+            selectedFileSize = null,
+            selectedFileBytes = null,
+            bundleBody = "",
+            bundleAttachments = emptyList(),
+            passwordPassphrase = "",
+            passwordConfirm = "",
+            passwordVisible = false
+        )
     }
 
     /**
@@ -928,6 +1202,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             showFileEncryptResultSheet = false,
             encryptedFileBytes = null
         )
+        // 3.1.0 Phase 5 (privacy): see clearEncryptInputsForPrivacy.
+        clearEncryptInputsForPrivacy()
     }
 
     // ── Decrypt ────────────────────────────────────────────────────────
@@ -977,7 +1253,11 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 // Phase A1: one inspection yields both the public-key recipient
                 // IDs (for card/software matching) and whether the message is
                 // password-encrypted (SKESK, `gpg -c`).
-                val info = crypto.inspectEncryptedMessage(text.toByteArray(Charsets.UTF_8))
+                // 3.1.0 Phase 4 (J2): inspect the unwrapped payload so
+                // card/password detection works on pasted .eml too.
+                val info = crypto.inspectEncryptedMessage(
+                    effectiveDecryptInput(text).toByteArray(Charsets.UTF_8)
+                )
                 isPassword = info.isSymmetricOnly
                 val recipientIds = info.publicKeyIDs
                 if (recipientIds.isNotEmpty()) {
@@ -1046,13 +1326,20 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
     fun onCardDecryptSuccess(result: com.pgpony.android.crypto.card.CardDecryptResult) {
         val plaintext = result.data.toString(Charsets.UTF_8)
+        // 3.1.0 Phase 4 (J1): same content routing as the software path —
+        // the card is just a different session-key source.
+        val cardMime = mimeRouteWithAttachments(result.data)
+        val cardBodyOnly = if (cardMime == null) mimeBodyOnly(result.data) else null
         // Show the recovered text immediately; verification (a suspend
         // keyring lookup for the signer's identity) resolves a beat later
         // and fills in the banner.
         _decryptState.value = _decryptState.value.copy(
             isProcessing = false,
-            outputText = plaintext,
+            outputText = cardBodyOnly ?: plaintext,
             outputData = result.data,
+            mimeBody = cardMime?.body,
+            mimeAttachments = cardMime?.attachments ?: emptyList(),
+            showStructuredResultSheet = cardMime != null,
             verificationResult = null,
             signatureVerified = result.signatureVerified,
             signerKeyID = result.signerKeyID,
@@ -1261,7 +1548,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 }
 
                 val result = crypto.decryptArmored(
-                    armoredMessage = s.inputText,
+                    // 3.1.0 Phase 4 (J2): unwrap an RFC 3156 envelope
+                    // (pasted .eml) before dearmor; plain input passes
+                    // through unchanged.
+                    armoredMessage = effectiveDecryptInput(s.inputText),
                     secretKeyRings = secretRings,
                     passphrase = s.passphrase.ifBlank { null },
                     verificationKeys = verifyRings
@@ -1269,15 +1559,24 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
                 val verResult = buildVerificationResultForEncrypted(result)
 
+                // 3.1.0 Phase 4 (J1): content-based routing. Attachments →
+                // structured sheet; body-only MIME → readable body as the
+                // text result; non-MIME → unchanged.
+                val mime = mimeRouteWithAttachments(result.data)
+                val bodyOnly = if (mime == null) mimeBodyOnly(result.data) else null
+
                 _decryptState.value = _decryptState.value.copy(
-                    outputText = result.plaintext,
+                    outputText = bodyOnly ?: result.plaintext,
                     outputData = result.data,
                     isProcessing = false,
                     signatureVerified = result.signatureVerified,
                     signerKeyID = result.signerKeyID,
                     decryptedFilename = result.filename,
                     showPassphraseDialog = false,
-                    verificationResult = verResult
+                    verificationResult = verResult,
+                    mimeBody = mime?.body,
+                    mimeAttachments = mime?.attachments ?: emptyList(),
+                    showStructuredResultSheet = mime != null
                 )
                 _events.tryEmit(Event.DecryptSuccess)
                 recordDecryptUsage(s.selectedKeyFingerprint)
@@ -1461,11 +1760,17 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             ?: stripped
             ?: s.selectedFileName?.let { "decrypted_$it" }
             ?: "decrypted_output"
+        // 3.1.0 Phase 4 (J1): attachments → structured sheet, matching
+        // the software file path.
+        val cardFileMime = mimeRouteWithAttachments(bytes)
         _decryptState.value = s.copy(
             isProcessing = false,
             decryptedFileBytes = bytes,
             decryptedOutputFilename = outName,
-            showFileDecryptResultSheet = true,
+            mimeBody = cardFileMime?.body,
+            mimeAttachments = cardFileMime?.attachments ?: emptyList(),
+            showStructuredResultSheet = cardFileMime != null,
+            showFileDecryptResultSheet = cardFileMime == null,
             verificationResult = null,
             signatureVerified = result.signatureVerified,
             signerKeyID = result.signerKeyID,
@@ -1568,7 +1873,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 }
 
                 val result = crypto.decrypt(
-                    encryptedData = bytes,
+                    // 3.1.0 Phase 4 (J2): an encrypted .eml opened as a
+                    // file carries the RFC 3156 envelope — unwrap to the
+                    // armored payload; binary/plain files pass through.
+                    encryptedData = effectiveDecryptFileBytes(bytes),
                     secretKeyRings = secretRings,
                     passphrase = s.passphrase.ifBlank { null },
                     verificationKeys = verifyRings
@@ -1589,6 +1897,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     ?: s.selectedFileName?.let { "decrypted_$it" }
                     ?: "decrypted_output"
 
+                // 3.1.0 Phase 4 (J1): content-based routing for file decrypt.
+                val fileMime = mimeRouteWithAttachments(result.data)
                 _decryptState.value = _decryptState.value.copy(
                     outputText = result.plaintext,
                     outputData = result.data,
@@ -1600,7 +1910,13 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     verificationResult = verResult,
                     decryptedFileBytes = result.data,
                     decryptedOutputFilename = outName,
-                    showFileDecryptResultSheet = true
+                    // 3.1.0 Phase 4 (J1): a decrypted multipart/mixed with
+                    // attachments opens the structured sheet instead of
+                    // the single-file result.
+                    mimeBody = fileMime?.body,
+                    mimeAttachments = fileMime?.attachments ?: emptyList(),
+                    showStructuredResultSheet = fileMime != null,
+                    showFileDecryptResultSheet = fileMime == null
                 )
                 _events.tryEmit(Event.DecryptSuccess)
                 recordDecryptUsage(s.selectedKeyFingerprint)
@@ -1622,6 +1938,81 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 )
             }
         }
+    }
+
+    // ── 3.1.0 Phase 4 (J2): RFC 3156 envelope unwrap at decrypt entry ──
+
+    /**
+     * If [raw] is an RFC 3156 `multipart/encrypted` entity (an .eml
+     * pasted, opened, or shared in — with or without leading email
+     * headers), return the armored PGP MESSAGE inside it; otherwise
+     * return [raw] unchanged. Called before dearmor at every decrypt
+     * entry, mirroring iOS MIMEParser.pgpMIMEEncryptedPayload(in:). A
+     * bare armored block is NOT an envelope and passes through as-is.
+     */
+    private fun effectiveDecryptInput(raw: String): String =
+        MimeParser.pgpMimeEncryptedPayload(raw) ?: raw
+
+    /**
+     * 3.1.0 Phase 4 (J2) — file-mode variant: an encrypted .eml opened
+     * as a FILE is text carrying the envelope. Unwrap to the armored
+     * bytes when present; otherwise return [bytes] unchanged (binary
+     * ciphertext, plain armored files).
+     */
+    private fun effectiveDecryptFileBytes(bytes: ByteArray): ByteArray {
+        val head = try {
+            String(bytes, 0, minOf(bytes.size, 8192), Charsets.UTF_8)
+        } catch (_: Exception) {
+            return bytes
+        }
+        if (!head.contains("multipart/encrypted", ignoreCase = true)) return bytes
+        val text = try {
+            String(bytes, Charsets.UTF_8)
+        } catch (_: Exception) {
+            return bytes
+        }
+        val armored = MimeParser.pgpMimeEncryptedPayload(text) ?: return bytes
+        return armored.toByteArray(Charsets.UTF_8)
+    }
+
+    // ── 3.1.0 Phase 4 (J1): content-based routing after decrypt ────────
+
+    /**
+     * Parse decrypted plaintext as MIME and return the message when it
+     * carries attachments (→ structured sheet). Body-only and non-MIME
+     * return null (existing text/file result paths). Mirrors iOS
+     * DecryptView.routeDecrypted.
+     */
+    private fun mimeRouteWithAttachments(data: ByteArray?): com.pgpony.android.crypto.mime.MimeMessage? {
+        val bytes = data ?: return null
+        return try {
+            MimeParser.parse(bytes)?.takeIf { it.hasAttachments }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Body-only MIME: return the body text so the plain result shows
+     * readable content instead of raw MIME; null when not applicable.
+     */
+    private fun mimeBodyOnly(data: ByteArray?): String? {
+        val bytes = data ?: return null
+        return try {
+            MimeParser.parse(bytes)?.takeIf { !it.hasAttachments }?.body
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** 3.1.0 Phase 4 (J1): dismiss the structured result sheet. Clears
+     *  the decrypted attachment bytes — same hygiene as the file sheet. */
+    fun dismissStructuredResult() {
+        _decryptState.value = _decryptState.value.copy(
+            showStructuredResultSheet = false,
+            mimeBody = null,
+            mimeAttachments = emptyList()
+        )
     }
 
     /**

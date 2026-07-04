@@ -1255,4 +1255,60 @@ Optional kannst du die App hinter deinem Fingerabdruck oder Gesicht sperren, um 
     <string name="language_picker_footer">Die meisten Bildschirme aktualisieren sich sofort. Starte PGPony neu, falls Texte noch in der vorigen Sprache angezeigt werden.</string>
     <string name="onboarding_slide_language_title">Sprache</string>
     <string name="onboarding_slide_language_body">Wähle die Sprache, die du verwenden möchtest.\n\nDu kannst sie jederzeit in den Einstellungen ändern.</string>
+    <!-- 3.1.0 Phase 2 (C4) — file password encryption + import read error -->
+    <string name="encrypt_file_method_label">Verschlüsseln mit</string>
+    <string name="encrypt_file_method_recipients">Empfängern</string>
+    <string name="encrypt_file_method_password">Passwort</string>
+    <string name="encrypt_password_unrecoverable">Wenn du die Passphrase vergisst, kann die Datei nicht wiederhergestellt werden. Es gibt kein Backup und kein Zurücksetzen.</string>
+    <string name="file_enc_result_badge_password">Passwortgeschützt</string>
+    <string name="keyring_error_file_read_failed">Datei konnte nicht gelesen werden. Prüfe, ob sie heruntergeladen und verfügbar ist, und versuche es erneut.</string>
+    <!-- 3.1.0 Phase 4 (J1) — structured PGP/MIME decrypt result -->
+    <string name="structured_result_title">Entschlüsselte Nachricht</string>
+    <string name="structured_result_attachments_format">Anhänge (%1$d)</string>
+    <string name="structured_result_share_all">Alle teilen</string>
+    <!-- 3.1.0 Phase 5 (J3/J4) — Bundle compose + outputs -->
+    <string name="encrypt_mode_bundle">Bündel</string>
+    <string name="encrypt_bundle_body_label">Nachricht</string>
+    <string name="encrypt_bundle_add_photos">Fotos hinzufügen</string>
+    <string name="encrypt_bundle_add_files">Dateien hinzufügen</string>
+    <string name="encrypt_bundle_attachments_format">Anhänge (%1$d)</string>
+    <string name="encrypt_bundle_remove">Anhang entfernen</string>
+    <string name="encdec_error_bundle_empty">Füge eine Nachricht oder mindestens einen Anhang hinzu</string>
+    <string name="bundle_result_title">Bündel verschlüsselt</string>
+    <string name="bundle_result_subtitle_format">%1$d Anhänge · %2$d Empfänger</string>
+    <string name="bundle_result_share_eml">Als E-Mail teilen (.eml)</string>
+    <string name="bundle_result_share_asc">Verschlüsselte .asc teilen</string>
+    <string name="bundle_result_copy_inline">Inline-Block kopieren</string>
+    <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
+    <string name="bundle_result_save_eml">.eml in Dateien speichern</string>
+    <string name="bundle_result_save_asc">.asc in Dateien speichern</string>
+    <!-- 3.1.0 Phase 6 (J6) — Quick Action PGP/MIME note -->
+    <string name="share_target_mime_attachments_note_format">Enthält %1$d Anhänge — öffne die Nachricht in PGPony, um sie anzusehen und zu speichern.</string>
+    <!-- 3.1.0 Phase 7 (B1/B2/B3) — Remember Card PIN -->
+    <string name="settings_card_pin_cache_title">Karten-PIN merken</string>
+    <string name="settings_card_pin_cache_subtitle">Benutzer-PIN für eine gewählte Dauer im Speicher behalten. Wird nie auf der Festplatte gespeichert; falsche PIN oder Beenden der App löscht sie.</string>
+    <string name="settings_card_pin_cache_duration_label">Merken für</string>
+    <string name="settings_card_pin_cache_1min">1 Min.</string>
+    <string name="settings_card_pin_cache_5min">5 Min.</string>
+    <string name="settings_card_pin_cache_15min">15 Min.</string>
+    <string name="settings_card_pin_cache_1hr">1 Std.</string>
+    <string name="settings_card_pin_cache_countdown_format">PIN gemerkt — wird gelöscht in %1$s</string>
+    <string name="settings_card_pin_cache_none_held">Derzeit ist keine PIN gemerkt.</string>
+    <string name="settings_card_pin_cache_clear">Jetzt löschen</string>
+    <!-- 3.1.0 Phase 8 (E4/E5) — email send + sign by default -->
+    <string name="result_send_email_button">Als E-Mail senden</string>
+    <string name="settings_sign_by_default_title">Standardmäßig signieren</string>
+    <string name="settings_sign_by_default_subtitle">Neue Nachrichten mit aktiviertem \"Auch signieren\" beginnen, mit dem Standard-Signaturschlüssel.</string>
+    <string name="settings_section_email">E-Mail</string>
+    <string name="settings_email_format_label">Sendeformat</string>
+    <string name="settings_email_format_inline">Inline</string>
+    <string name="settings_email_format_attachment">Anhang</string>
+    <string name="settings_email_format_both">Beides</string>
+    <string name="settings_email_format_subtitle">Inline fügt den verschlüsselten Block in den E-Mail-Text ein, sodass PGP-fähige Programme ihn automatisch entschlüsseln; Anhang sendet eine .asc-Datei.</string>
+    <!-- 3.1.0 Phase 8 Fix1 — file import read error -->
+    <string name="keyring_error_file_read">Datei konnte nicht gelesen werden. Speichern Sie sie lokal (Dateien-App) und importieren Sie erneut.</string>
+    <!-- 3.1.0 Phase 8 Fix2 — file import diagnostic -->
+    <string name="keyring_error_parse_diag">Couldn\'t read a key from the file — got %1$d bytes starting with \"%2$s\"</string>
+    <!-- 3.1.0 Phase 8 Fix3 — richer file import diagnostic -->
+    <string name="keyring_error_parse_diag2">Couldn\'t read a key from \"%1$s\" — got %2$d bytes (file reports %3$s), starting with \"%4$s\"</string>
 </resources>

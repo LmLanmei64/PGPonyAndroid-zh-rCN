@@ -332,21 +332,20 @@ private fun FileSection(state: KeyringUiState, viewModel: KeyringViewModel) {
             if (uri != null) {
                 val filename = uri.lastPathSegment?.substringAfterLast('/')
                     ?: uri.toString().substringAfterLast('/')
-                val text = try {
-                    context.contentResolver.openInputStream(uri)?.use {
-                        it.readBytes().toString(Charsets.UTF_8)
-                    } ?: ""
-                } catch (e: Exception) {
-                    ""
-                }
-                if (text.isNotBlank()) {
-                    viewModel.previewArmoredKey(text, sourceFilename = filename)
-                } else {
-                    // The error message routing is via previewArmoredKey
-                    // when text is blank — call it with the empty string
-                    // to consistently set "No key data" via that path.
-                    viewModel.previewArmoredKey("")
-                }
+                // 3.1.0 Phase 8 Fix1: robust byte read (virtual/cloud
+                // docs stream via typed asset descriptors only) and a
+                // byte-level preview entry that distinguishes "the read
+                // failed" from "no key data", and accepts binary
+                // keyrings (gpg --export without --armor).
+                // 3.1.0 Phase 8 Fix3: detailed read — declared size and
+                // provider display name ride along for validation + diag.
+                val detailed = com.pgpony.android.intent.DocumentBytes
+                    .readDetailed(context.contentResolver, uri)
+                viewModel.previewKeyBytes(
+                    detailed.bytes,
+                    sourceFilename = detailed.displayName ?: filename,
+                    declaredSize = detailed.declaredSize
+                )
             }
             // uri == null means the user cancelled or there was no
             // DocumentsUI activity. Cancel is silent (matches iOS);
