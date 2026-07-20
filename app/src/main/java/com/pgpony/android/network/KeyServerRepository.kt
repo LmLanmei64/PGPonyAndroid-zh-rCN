@@ -31,6 +31,9 @@
 package com.pgpony.android.network
 
 import android.util.Log
+import com.pgpony.android.PGPonyApp
+import com.pgpony.android.keyserver.KeyServerDirectory
+import com.pgpony.android.keyserver.MultiKeyServerService
 import io.ktor.client.*
 import io.ktor.client.engine.android.*
 import io.ktor.client.request.*
@@ -87,12 +90,10 @@ class KeyServerRepository {
         val shared = KeyServerRepository()
     }
 
-    private val client = HttpClient(Android) {
-        engine {
-            connectTimeout = 15_000
-            socketTimeout = 15_000
-        }
-    }
+    // 4.0.0 Phase 6 — route through the shared proxy-aware client
+    // (Tor/Orbot when enabled; direct otherwise). Replaces the private
+    // per-service HttpClient so proxy config applies uniformly.
+    private val client get() = com.pgpony.android.network.HttpClientFactory.client()
 
     /**
      * Search for a public key by email address. Tries Web Key
@@ -133,17 +134,66 @@ class KeyServerRepository {
             return it
         }
 
-        // Hagrid fallback. The pre-A8 implementation lived here under
-        // searchByEmail; same logic, just renamed and wrapped.
+        // Phase 6: consult the configured keyserver directory before the
+        // openpgp.org fallback — first-party (keys.pgpony.app) FIRST, then
+        // any other lookup-enabled servers in directory order. This finds
+        // v6/PQC keys that keys.openpgp.org won't serve, and rides the
+        // onion when Tor is on. keys.openpgp.org is handled by the Hagrid
+        // step below, so it's skipped here to avoid a double round-trip.
+        for (server in directoryLookupServers()) {
+            val hit = runCatching {
+                MultiKeyServerService.shared.searchByEmail(server, email)
+            }.getOrNull()
+            if (!hit.isNullOrBlank()) {
+                Log.d(LOG_TAG, "findByEmail($email) → hit via ${server.label}")
+                return KeyLookupResult(armoredKey = hit, source = KeyLookupSource.KEYSERVER)
+            }
+        }
+
+        // Hagrid fallback (keys.openpgp.org) — always the final source so
+        // "keep openpgp" holds even if it's disabled in the directory.
         val hagrid = hagridSearchByEmail(email)
         return if (hagrid != null) {
-            Log.d(LOG_TAG, "findByEmail($email) → hit via keys.openpgp.org (Hagrid, after WKD miss)")
+            Log.d(LOG_TAG, "findByEmail($email) → hit via keys.openpgp.org (Hagrid)")
             KeyLookupResult(armoredKey = hagrid, source = KeyLookupSource.HAGRID)
         } else {
-            Log.d(LOG_TAG, "findByEmail($email) → miss on all sources (WKD advanced+direct, Hagrid)")
+            Log.d(LOG_TAG, "findByEmail($email) → miss on all sources (WKD, directory, Hagrid)")
             null
         }
     }
+
+    /**
+     * Unified fingerprint lookup mirroring [findByEmail]'s source order:
+     * configured directory servers (keys.pgpony.app first) → keys.openpgp.org.
+     * WKD is email-only so it isn't part of this path.
+     */
+    suspend fun findByFingerprint(fingerprint: String): KeyLookupResult? {
+        for (server in directoryLookupServers()) {
+            val hit = runCatching {
+                MultiKeyServerService.shared.fetchByFingerprint(server, fingerprint)
+            }.getOrNull()
+            if (!hit.isNullOrBlank()) {
+                Log.d(LOG_TAG, "findByFingerprint → hit via ${server.label}")
+                return KeyLookupResult(armoredKey = hit, source = KeyLookupSource.KEYSERVER)
+            }
+        }
+        val hagrid = searchByFingerprint(fingerprint)
+        return if (hagrid != null) {
+            KeyLookupResult(armoredKey = hagrid, source = KeyLookupSource.HAGRID)
+        } else null
+    }
+
+    /**
+     * Lookup-enabled directory servers with keys.openpgp.org removed
+     * (handled separately as the final fallback) and the first-party
+     * server sorted to the front. Empty if the directory can't be read.
+     */
+    private suspend fun directoryLookupServers() =
+        runCatching {
+            KeyServerDirectory.get(PGPonyApp.instance).readOnce()
+        }.getOrDefault(emptyList())
+            .filter { it.lookupEnabled && it.id != KeyServerDirectory.ID_OPENPGP }
+            .sortedByDescending { it.isFirstParty }
 
     /**
      * Hagrid (keys.openpgp.org) by-email lookup.
@@ -187,6 +237,25 @@ class KeyServerRepository {
         } catch (e: Exception) {
             null
         }
+    }
+
+    /**
+     * 4.0.0 Phase 2 (iOS v7.1.1 F5) — fetch a key's armored material by
+     * fingerprint, distinguishing "not published" from "couldn't reach
+     * the server". Returns the armored key on 200, null on any other
+     * HTTP status (Hagrid 404s unpublished fingerprints), and THROWS on
+     * transport failure (no network, DNS, TLS, timeout) so the refresh
+     * flow reports an actual error instead of a false "not found".
+     * [searchByFingerprint] above keeps its swallow-everything contract
+     * — KS1's check row and the import search treat null as "no result"
+     * and stay unchanged.
+     */
+    suspend fun fetchByFingerprint(fingerprint: String): String? = withContext(Dispatchers.IO) {
+        val fp = fingerprint.uppercase().replace(" ", "")
+        val response = client.get("$BASE_URL/vks/v1/by-fingerprint/$fp") {
+            accept(ContentType.Application.OctetStream)
+        }
+        if (response.status == HttpStatusCode.OK) response.bodyAsText() else null
     }
 
     /**

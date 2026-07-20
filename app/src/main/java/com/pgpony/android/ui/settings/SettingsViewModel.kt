@@ -85,6 +85,19 @@ data class SettingsUiState(
     // via ArmorCommentStore (DataStore); survives app restart.
     val armorCommentInclude: Boolean = true,
     val armorCommentText: String = ArmorCommentDefaults.DEFAULT_COMMENT,
+    // 4.0.0 Phase 9b (iOS 7.1.x parity) — independent toggle for the
+    // Comment header on user-facing public key exports (copy / share /
+    // save). Default ON, matching iOS. Persisted via ArmorCommentStore
+    // (DataStore) alongside the message toggle; keyserver uploads and
+    // QR codes stay comment-free regardless.
+    val armorCommentPubkeyInclude: Boolean = true,
+    // 4.0.0 Phase 9b (iOS v7.1.1 parity) — whether closing an
+    // encryption result wipes the composed inputs (message, files,
+    // bundle body + attachments, passwords). Default ON preserves the
+    // 3.1.0 Phase 5 always-on behavior existing installs have today.
+    // Persisted to SharedPreferences key "clear_inputs_after_encrypt";
+    // EncryptDecryptViewModel reads it live at each result dismissal.
+    val clearInputsAfterEncrypt: Boolean = true,
     // ── Phase A4: default / remembered recipient ────────────────────────
     val defaultRecipientMode: DefaultRecipientMode = DefaultRecipientMode.NONE,
     /** Fingerprint of the pinned recipient (PINNED mode). */
@@ -122,11 +135,16 @@ class SettingsViewModel(
     // refreshed inside the store on every write.
     private fun observeArmorComment() {
         viewModelScope.launch {
-            combine(armorStore.includeFlow, armorStore.textFlow) { include, text ->
-                include to text
-            }.collect { (include, text) ->
+            combine(
+                armorStore.includeFlow,
+                armorStore.pubkeyIncludeFlow,
+                armorStore.textFlow
+            ) { include, pubkeyInclude, text ->
+                Triple(include, pubkeyInclude, text)
+            }.collect { (include, pubkeyInclude, text) ->
                 _state.value = _state.value.copy(
                     armorCommentInclude = include,
+                    armorCommentPubkeyInclude = pubkeyInclude,
                     armorCommentText = text
                 )
             }
@@ -138,9 +156,25 @@ class SettingsViewModel(
         viewModelScope.launch { armorStore.setInclude(enabled) }
     }
 
+    /** 4.0.0 Phase 9b — toggle the Comment header on user-facing public
+     *  key exports (copy / share / save). */
+    fun setArmorCommentPubkeyInclude(enabled: Boolean) {
+        _state.value = _state.value.copy(armorCommentPubkeyInclude = enabled)
+        viewModelScope.launch { armorStore.setPubkeyInclude(enabled) }
+    }
+
     fun setArmorCommentText(text: String) {
         _state.value = _state.value.copy(armorCommentText = text)
         viewModelScope.launch { armorStore.setText(text) }
+    }
+
+    /** 4.0.0 Phase 9b (iOS v7.1.1 parity) — toggle the auto-wipe of
+     *  composed inputs when an encryption result is closed. Read live
+     *  by EncryptDecryptViewModel at each dismissal, so the change
+     *  applies to the very next result close. */
+    fun setClearInputsAfterEncrypt(enabled: Boolean) {
+        prefs.edit().putBoolean("clear_inputs_after_encrypt", enabled).apply()
+        _state.value = _state.value.copy(clearInputsAfterEncrypt = enabled)
     }
 
     private fun loadPreferences() {
@@ -152,6 +186,9 @@ class SettingsViewModel(
             requireBiometricForPassStore = prefs.getBoolean("biometric_pass_store", true),
             clipboardAutoClear = prefs.getBoolean("clipboard_auto_clear", true),
             clipboardClearSeconds = prefs.getInt("clipboard_clear_seconds", 60),
+            // 4.0.0 Phase 9b — auto-wipe toggle; default ON preserves the
+            // 3.1.0 always-on behavior.
+            clearInputsAfterEncrypt = prefs.getBoolean("clear_inputs_after_encrypt", true),
             isPro = prefs.getBoolean("pgpony_is_pro", false),
             // ── Phase A12: theme + reminders persisted prefs ────
             selectedTheme = AppTheme.fromStorage(prefs.getString("selected_theme", null)),

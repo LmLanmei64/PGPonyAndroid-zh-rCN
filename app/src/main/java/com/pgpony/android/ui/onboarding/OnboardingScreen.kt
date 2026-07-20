@@ -41,7 +41,9 @@ import kotlinx.coroutines.launch
 fun OnboardingScreen(
     prefs: SharedPreferences,
     keyringVm: KeyringViewModel,
-    onComplete: () -> Unit
+    onComplete: () -> Unit,
+    onImportExisting: () -> Unit = {},
+    onRestoreBackup: () -> Unit = {}
 ) {
     val slides = OnboardingSlides.all
     val pagerState = rememberPagerState(pageCount = { slides.size })
@@ -97,7 +99,9 @@ fun OnboardingScreen(
                     slide = slides[pageIndex],
                     prefs = prefs,
                     keyringVm = keyringVm,
-                    onAdvance = { advanceToNext() }
+                    onAdvance = { advanceToNext() },
+                    onImportExisting = onImportExisting,
+                    onRestoreBackup = onRestoreBackup
                 )
             }
 

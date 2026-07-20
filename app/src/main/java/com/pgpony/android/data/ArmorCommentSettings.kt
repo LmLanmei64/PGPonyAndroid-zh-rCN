@@ -28,10 +28,14 @@
 //      LanguageState.current "observable global seeded at startup"
 //      pattern already used in this codebase.
 //
-// SCOPE NOTE: this setting only affects message-style armored output
-// (encrypt, sign, encrypt-and-sign). Exported public/secret keys are
-// deliberately kept comment-free — see the clean-armor helpers in
-// PGPCryptoService.kt. The export path never reads this setting.
+// SCOPE NOTE: the message toggle affects message-style armored output
+// (encrypt, sign, encrypt-and-sign). 4.0.0 Phase 9b adds a SECOND,
+// independent toggle for exported public keys (iOS 7.1.x parity):
+// user-facing copy / share / save of a public key reads
+// ArmorCommentHeader.pubkeyCurrent via the ForSharing export path in
+// PGPCryptoService. Keyserver uploads, QR codes, and internal armored
+// caches stay comment-free through the clean-armor helpers — the
+// pubkey toggle never touches those.
 
 package com.pgpony.android.data
 
@@ -148,6 +152,17 @@ object ArmorCommentHeader {
      */
     @Volatile
     var current: String? = ArmorCommentDefaults.DEFAULT_COMMENT
+
+    /**
+     * 4.0.0 Phase 9b (iOS 7.1.x parity) — the validated Comment value
+     * for user-facing PUBLIC KEY exports (copy / share / save), or null
+     * for "no Comment header". Independent toggle, same text as the
+     * message comment. Seeded to the default (toggle defaults ON,
+     * matching iOS). Read only by the ForSharing export path — clean
+     * exports (keyserver, QR, caches) never consult it.
+     */
+    @Volatile
+    var pubkeyCurrent: String? = ArmorCommentDefaults.DEFAULT_COMMENT
 }
 
 // ── DataStore wrapper ──────────────────────────────────────────────────
@@ -162,6 +177,11 @@ class ArmorCommentStore private constructor(context: Context) {
         prefs[KEY_INCLUDE] ?: true
     }
 
+    /** 4.0.0 Phase 9b — pubkey-export toggle state. Default ON (iOS parity). */
+    val pubkeyIncludeFlow: Flow<Boolean> = ds.data.map { prefs ->
+        prefs[KEY_PUBKEY_INCLUDE] ?: true
+    }
+
     /** Raw (un-sanitized) custom string. Default = the default comment. */
     val textFlow: Flow<String> = ds.data.map { prefs ->
         prefs[KEY_TEXT] ?: ArmorCommentDefaults.DEFAULT_COMMENT
@@ -170,6 +190,13 @@ class ArmorCommentStore private constructor(context: Context) {
     /** Persist the toggle and immediately refresh the crypto cache. */
     suspend fun setInclude(enabled: Boolean) {
         ds.edit { it[KEY_INCLUDE] = enabled }
+        recache()
+    }
+
+    /** 4.0.0 Phase 9b — persist the pubkey-export toggle and refresh
+     *  the crypto caches. */
+    suspend fun setPubkeyInclude(enabled: Boolean) {
+        ds.edit { it[KEY_PUBKEY_INCLUDE] = enabled }
         recache()
     }
 
@@ -187,33 +214,44 @@ class ArmorCommentStore private constructor(context: Context) {
     }
 
     /**
-     * Re-read persisted values and push the validated result into the
-     * synchronous cache. Called right after a write so the crypto layer
-     * sees the change without waiting for the Flow collector.
+     * Re-read persisted values and push the validated results into the
+     * synchronous caches. Called right after a write so the crypto layer
+     * sees the change without waiting for the Flow collector. 4.0.0
+     * Phase 9b: refreshes BOTH the message cache and the pubkey-export
+     * cache — they share the text, differ on the toggle.
      */
     private suspend fun recache() {
-        val (include, text) = snapshot()
+        val prefs = ds.data.first()
+        val include = prefs[KEY_INCLUDE] ?: true
+        val pubkeyInclude = prefs[KEY_PUBKEY_INCLUDE] ?: true
+        val text = prefs[KEY_TEXT] ?: ArmorCommentDefaults.DEFAULT_COMMENT
         ArmorCommentHeader.current = ArmorCommentValidator.validate(include, text)
+        ArmorCommentHeader.pubkeyCurrent = ArmorCommentValidator.validate(pubkeyInclude, text)
     }
 
     /**
-     * Start mirroring DataStore into ArmorCommentHeader.current. Call
+     * Start mirroring DataStore into the ArmorCommentHeader caches. Call
      * once from PGPonyApp.onCreate with the process-scoped coroutine
      * scope. Survives app restart because it re-reads the persisted
-     * DataStore on every cold start.
+     * DataStore on every cold start. 4.0.0 Phase 9b: the collector now
+     * feeds both the message cache and the pubkey-export cache.
      */
     fun startCaching(scope: CoroutineScope) {
         scope.launch {
-            combine(includeFlow, textFlow) { include, text ->
-                ArmorCommentValidator.validate(include, text)
-            }.collect { validated ->
+            combine(includeFlow, pubkeyIncludeFlow, textFlow) { include, pubkeyInclude, text ->
+                ArmorCommentValidator.validate(include, text) to
+                    ArmorCommentValidator.validate(pubkeyInclude, text)
+            }.collect { (validated, pubkeyValidated) ->
                 ArmorCommentHeader.current = validated
+                ArmorCommentHeader.pubkeyCurrent = pubkeyValidated
             }
         }
     }
 
     companion object {
         private val KEY_INCLUDE = booleanPreferencesKey("armor_comment_include")
+        // 4.0.0 Phase 9b — independent toggle for exported public keys.
+        private val KEY_PUBKEY_INCLUDE = booleanPreferencesKey("armor_comment_pubkey_include")
         private val KEY_TEXT = stringPreferencesKey("armor_comment_text")
 
         @Volatile

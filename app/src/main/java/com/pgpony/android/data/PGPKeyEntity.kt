@@ -318,7 +318,15 @@ interface PGPKeyDao {
 
 // ── Database ──────────────────────────────────────────────────────────
 
-@Database(entities = [PGPKeyEntity::class], version = 5, exportSchema = false)
+// 4.0.0 Succession Phase 1: schema v5 → v6 adds the allowed_api_clients
+// table (ApiClientEntity in data/ApiClientEntity.kt) backing the OpenPGP
+// API provider's per-package, signature-pinned client allow-list.
+// MIGRATION_5_6 declared at the bottom of this file with the others.
+@Database(
+    entities = [PGPKeyEntity::class, ApiClientEntity::class, AutocryptPeerEntity::class],
+    version = 7,
+    exportSchema = false
+)
 @TypeConverters(
     TrustLevelConverter::class,
     KeyAlgorithmConverter::class,
@@ -326,6 +334,8 @@ interface PGPKeyDao {
 )
 abstract class PGPDatabase : RoomDatabase() {
     abstract fun keyDao(): PGPKeyDao
+    abstract fun apiClientDao(): ApiClientDao
+    abstract fun autocryptPeerDao(): AutocryptPeerDao
 }
 
 // ── Migrations ─────────────────────────────────────────────────────────
@@ -398,5 +408,48 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE pgp_keys ADD COLUMN lastUploadedAt INTEGER")
         db.execSQL("ALTER TABLE pgp_keys ADD COLUMN lastCheckedAt INTEGER")
+    }
+}
+
+/**
+ * 4.0.0 Succession Phase 1 — create the OpenPGP API provider's client
+ * allow-list table. A brand-new table (no ALTER of pgp_keys), so the
+ * migration cannot disturb existing rows. Column order, NOT NULL
+ * constraints, and the TEXT primary key mirror exactly what Room
+ * generates from ApiClientEntity, so the runtime schema verification
+ * under exportSchema = false passes.
+ */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `allowed_api_clients` (
+                `packageName` TEXT NOT NULL,
+                `signatureSha256` TEXT NOT NULL,
+                `grantedAt` INTEGER NOT NULL,
+                PRIMARY KEY(`packageName`)
+            )
+            """.trimIndent()
+        )
+    }
+}
+
+// 4.0.0 Phase 4 (Autocrypt) — the autocrypt_peers table.
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `autocrypt_peers` (
+                `identifier` TEXT NOT NULL,
+                `lastSeen` INTEGER NOT NULL,
+                `autocryptTimestamp` INTEGER NOT NULL,
+                `autocryptKeyFingerprint` TEXT,
+                `isMutual` INTEGER NOT NULL,
+                `gossipTimestamp` INTEGER NOT NULL,
+                `gossipKeyFingerprint` TEXT,
+                PRIMARY KEY(`identifier`)
+            )
+            """.trimIndent()
+        )
     }
 }

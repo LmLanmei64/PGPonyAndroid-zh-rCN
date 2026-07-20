@@ -190,6 +190,48 @@ class SigningService private constructor() {
         return out.toByteArray()
     }
 
+    /**
+     * 4.0.0 Phase P2d (additive) — streaming variant of [signDetached]:
+     * hashes [input] in 64 KiB chunks instead of requiring the whole
+     * payload in memory. Used by the OpenPGP API provider for
+     * multipart/signed mail with large attachments; identical signature
+     * output to the byte-array overload.
+     */
+    fun signDetachedStream(
+        input: java.io.InputStream,
+        secretKeyRing: PGPSecretKeyRing,
+        passphrase: String? = null,
+        hashAlgorithm: Int = DEFAULT_HASH_ALGORITHM,
+        armor: Boolean = true
+    ): ByteArray {
+        val signingKey = pickSigningKey(secretKeyRing)
+        val sigGen = buildSignatureGenerator(
+            signingKey = signingKey,
+            passphrase = passphrase,
+            hashAlgorithm = hashAlgorithm,
+            signatureType = PGPSignature.BINARY_DOCUMENT
+        )
+        val buf = ByteArray(1 shl 16)
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            sigGen.update(buf, 0, n)
+        }
+
+        val out = ByteArrayOutputStream()
+        val target: OutputStream = if (armor) ArmoredOutputStream(out).stripVersion() else out
+        try {
+            val sigOut = BCPGOutputStream(target)
+            sigGen.generate().encode(sigOut)
+            sigOut.close()
+        } catch (e: PGPException) {
+            throw SigningError.SigningFailed(e.message ?: "PGP error")
+        } finally {
+            if (target is ArmoredOutputStream) target.close()
+        }
+        return out.toByteArray()
+    }
+
     // ── Internals ─────────────────────────────────────────────────────
 
     /**

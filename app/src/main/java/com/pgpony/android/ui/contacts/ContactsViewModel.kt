@@ -27,6 +27,7 @@ import com.pgpony.android.R
 import com.pgpony.android.contacts.ContactWithKeys
 import com.pgpony.android.contacts.ContactsService
 import com.pgpony.android.data.PGPKeyEntity
+import com.pgpony.android.data.repository.ImportResolution
 import com.pgpony.android.data.repository.KeyRepository
 import com.pgpony.android.network.KeyServerRepository
 import kotlinx.coroutines.Job
@@ -196,11 +197,22 @@ class ContactsViewModel(
             try {
                 val result = KeyServerRepository.shared.searchByEmail(email)
                 if (result != null) {
-                    repo.importArmoredKey(result)
+                    // 4.0.0 Phase 1 (iOS v7.1.1 F3) — outcome-aware
+                    // commit: discovering a key you already hold no
+                    // longer errors. Byte-identical → "already in your
+                    // keyring"; differing material → merged-as-refresh.
+                    val outcome = repo.importArmoredKeyDetailed(result)
                     markEmailChecked(email)
+                    val message = when (outcome.resolution) {
+                        ImportResolution.ALREADY_IN_KEYRING ->
+                            PGPonyApp.instance.getString(R.string.import_result_already_in_keyring)
+                        ImportResolution.MERGED_NEW_MATERIAL ->
+                            PGPonyApp.instance.getString(R.string.import_result_merged)
+                        else -> "Key found and imported for $contactName"
+                    }
                     _state.value = _state.value.copy(
                         discoveringEmail = null,
-                        successMessage = "Key found and imported for $contactName"
+                        successMessage = message
                     )
                     refreshContacts()
                 } else {
@@ -252,7 +264,11 @@ class ContactsViewModel(
                             repo.importArmoredKey(armoredKey)
                             markEmailChecked(email)
                         } catch (_: Exception) {
-                            // Key might already exist — mark as checked anyway
+                            // 4.0.0 Phase 1 — duplicates no longer throw
+                            // (they merge or report already-present via
+                            // the dedup service), so this catch now only
+                            // covers parse/storage failures. Mark checked
+                            // either way.
                             markEmailChecked(email)
                         }
                     },

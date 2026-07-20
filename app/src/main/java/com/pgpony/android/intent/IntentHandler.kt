@@ -82,6 +82,8 @@ sealed class IntentAction {
     data class DecryptText(val armoredMessage: String) : IntentAction()
     data class ImportKey(val armoredKey: String) : IntentAction()
     data class DecryptFile(val data: ByteArray, val filename: String?) : IntentAction()
+    /** 4.0.0 Phase 3 — a PGPony (.pgpony) keyring backup → open Restore. */
+    data class RestoreBackup(val data: ByteArray) : IntentAction()
 
     // 3.1.0 Phase 1 (C1) — a non-PGP file opened/shared into the app
     // routes to the Encrypt tab with the file preloaded, mirroring iOS
@@ -473,6 +475,20 @@ object IntentHandler {
             val filename = displayName(uri, resolver)
 
             val head = headText(bytes)
+
+            // 4.0.0 Phase 3 — a PGPony keyring backup opens to Restore, not
+            // Decrypt. Detect by the armor comment (in the head sniff) or
+            // the .pgpony extension, before the generic message routing.
+            if (filename?.endsWith(".pgpony", ignoreCase = true) == true ||
+                head.contains("PGPony Backup", ignoreCase = true) ||
+                // OpenKeychain encrypted backup — the armor carries a
+                // "Passphrase-Format: numeric9x4" header. Routing it to
+                // Restore multi-imports every key inside (vs. the generic
+                // decrypt path, which wouldn't).
+                head.contains("Passphrase-Format", ignoreCase = true)
+            ) {
+                return IntentAction.RestoreBackup(bytes)
+            }
 
             // 3.1.0 Phase 4 (J2): an encrypted .eml declares its RFC 3156
             // envelope in the headers (within the head sniff) but the

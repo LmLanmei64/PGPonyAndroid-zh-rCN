@@ -9,6 +9,7 @@
 
 package com.pgpony.android.data.repository
 
+import android.content.SharedPreferences
 import com.pgpony.android.crypto.KeyAlgorithm
 import com.pgpony.android.crypto.KeyExpirationService
 import com.pgpony.android.crypto.PGPCryptoService
@@ -77,6 +78,32 @@ data class ImportPreview(
     val shortFingerprint: String get() = fingerprint.takeLast(8).uppercase()
 }
 
+/**
+ * 4.0.0 Phase 1 (iOS v7.1.1 F3) — how an import commit resolved.
+ * Screens that care (Import sheet's duplicate alert, Contacts and
+ * Exchange snackbar copy) read this off [ImportOutcome]; legacy call
+ * sites keep using [KeyRepository.importArmoredKey] and just get the
+ * entity.
+ */
+enum class ImportResolution {
+    /** No row existed for this fingerprint; a fresh row was inserted. */
+    INSERTED,
+    /** Private material arrived for an existing public-only row; upgraded in place. */
+    UPGRADED_TO_KEY_PAIR,
+    /** Public key folded onto an existing card-backed record (HW 1.5 pairing). */
+    PAIRED_WITH_CARD,
+    /** Byte-identical to the stored material — nothing new. */
+    ALREADY_IN_KEYRING,
+    /** Same fingerprint, newer/different public material — merged into the existing row. */
+    MERGED_NEW_MATERIAL
+}
+
+/** Entity + resolution pair returned by [KeyRepository.importArmoredKeyDetailed]. */
+data class ImportOutcome(
+    val entity: PGPKeyEntity,
+    val resolution: ImportResolution
+)
+
 class KeyRepository(
     private val dao: PGPKeyDao,
     private val store: SecureKeyStore,
@@ -87,6 +114,13 @@ class KeyRepository(
     private val revocation: RevocationService = RevocationService.shared,
     private val keyExpiration: KeyExpirationService = KeyExpirationService.shared
 ) {
+
+    // 4.0.0 Phase 1 (iOS v7.1.1 F3) — fingerprint-identity guard for
+    // every import path, plus the merge engine Phases 2/5/7 reuse.
+    // Built on the same dao + store this repository already owns, so
+    // the "ViewModels call the repository, never storage directly"
+    // rule holds for dedup too.
+    private val dedup = KeyDeduplicationService(dao, store)
 
     // ── Generate ───────────────────────────────────────────────────────
 
@@ -173,8 +207,11 @@ class KeyRepository(
      *   • duplicate=true, willUpgrade=true → public key in keyring,
      *     preview text contains a matching private key → import will
      *     upgrade the existing row to a key pair
-     *   • duplicate=true, willUpgrade=false → import will throw
-     *     AlreadyExists; UI should disable the Import button or warn
+     *   • duplicate=true, willUpgrade=false → the commit resolves
+     *     through KeyDeduplicationService: byte-identical material
+     *     reports "already in keyring", differing material merges
+     *     into the existing row (4.0.0 Phase 1; pre-4.0 this threw
+     *     AlreadyExists and the UI disabled the Import button)
      *
      * Returns null only when the parse failed entirely (malformed
      * armor, unsupported key type). Caller surfaces the parse error
@@ -183,7 +220,9 @@ class KeyRepository(
     suspend fun previewArmoredKey(armoredText: String): ImportPreview? {
         return try {
             val importResult = crypto.importArmoredKey(armoredText)
-            val existing = dao.getByFingerprint(importResult.fingerprint)
+            // 4.0.0 Phase 1 — normalized lookup (case/format variants
+            // count as the same identity, matching the commit path).
+            val existing = dedup.findExisting(importResult.fingerprint)
             val parsed = PGPKeyEntity.parseUserID(importResult.userID)
             val willUpgrade = existing != null
                     && importResult.hasPrivateKey
@@ -210,11 +249,32 @@ class KeyRepository(
         }
     }
 
-    suspend fun importArmoredKey(armoredText: String): PGPKeyEntity {
+    /**
+     * Legacy-shaped commit entry: returns just the entity. Every
+     * pre-4.0.0 call site keeps its signature; the behavior change is
+     * that a same-fingerprint duplicate no longer throws
+     * [KeyRepoError.AlreadyExists] — it resolves through
+     * [KeyDeduplicationService] (already-present, or merge of the
+     * newer public material). Call sites that want to distinguish the
+     * outcome use [importArmoredKeyDetailed] instead.
+     */
+    suspend fun importArmoredKey(armoredText: String): PGPKeyEntity =
+        importArmoredKeyDetailed(armoredText).entity
+
+    /**
+     * 4.0.0 Phase 1 (iOS v7.1.1 F3) — outcome-aware import commit.
+     * Same acquisition + card-pairing + secret-upgrade semantics as
+     * before; the plain-duplicate branch that used to throw
+     * AlreadyExists now resolves via the dedup service so a re-import
+     * doubles as a manual refresh and the UI can say what happened.
+     */
+    suspend fun importArmoredKeyDetailed(armoredText: String): ImportOutcome {
         val importResult = crypto.importArmoredKey(armoredText)
 
-        // Check for duplicate
-        val existing = dao.getByFingerprint(importResult.fingerprint)
+        // Check for duplicate — normalized fingerprint identity via
+        // the dedup service (exact DAO hit fast path, case/format
+        // variant scan fallback).
+        val existing = dedup.findExisting(importResult.fingerprint)
         if (existing != null) {
             // HW Phase 1.5 — pair a real public key onto a card-backed
             // record. A card scanned in Phase 1 is stored as identity +
@@ -251,16 +311,45 @@ class KeyRepository(
                     isKeyPair = false
                 )
                 dao.update(merged)
-                return merged
+                return ImportOutcome(merged, ImportResolution.PAIRED_WITH_CARD)
             }
             // If we're importing a private key for an existing public key, upgrade it
             if (importResult.hasPrivateKey && !existing.isKeyPair) {
                 store.storePrivateKey(importResult.fingerprint, importResult.secretKeyRing!!.encoded)
                 val upgraded = existing.copy(isKeyPair = true)
                 dao.update(upgraded)
-                return upgraded
+                return ImportOutcome(upgraded, ImportResolution.UPGRADED_TO_KEY_PAIR)
             }
-            throw KeyRepoError.AlreadyExists(importResult.fingerprint)
+            // 4.0.0 Phase 1 (iOS v7.1.1 F3) — the plain-duplicate branch
+            // no longer throws AlreadyExists. Byte-identical public
+            // material reports already-in-keyring; differing material
+            // merges into the existing row, preserving trust, contact
+            // link, secret material, notes, and local metadata. A
+            // private-only blob for a row that is already a pair
+            // carries nothing to merge — the secret-upgrade path above
+            // only fires for public-only rows, matching iOS
+            // (resolveDuplicate never touches secret material).
+            val dupPub = importResult.publicKeyRing
+                ?: return ImportOutcome(existing, ImportResolution.ALREADY_IN_KEYRING)
+            val dupExpiresAtMs = dupPub.publicKey?.let { key ->
+                val validSec = key.getValidSeconds()
+                if (validSec > 0) (key.creationTime.time + validSec * 1000) else null
+            }
+            val (resolved, resolution) = dedup.resolveDuplicate(
+                existing = existing,
+                newPublicRing = dupPub,
+                newArmoredPublicKey = crypto.exportArmoredPublicKey(dupPub),
+                newExpiresAtMs = dupExpiresAtMs
+            )
+            return ImportOutcome(
+                resolved,
+                when (resolution) {
+                    KeyDeduplicationService.DuplicateResolution.ALREADY_IN_KEYRING ->
+                        ImportResolution.ALREADY_IN_KEYRING
+                    KeyDeduplicationService.DuplicateResolution.MERGED_NEW_MATERIAL ->
+                        ImportResolution.MERGED_NEW_MATERIAL
+                }
+            )
         }
 
         // Store key material
@@ -295,7 +384,52 @@ class KeyRepository(
         )
 
         dao.insert(entity)
-        return entity
+        return ImportOutcome(entity, ImportResolution.INSERTED)
+    }
+
+    // ── 4.0.0 Phase 3 (Succession) — multi-key import ──────────────────
+    //
+    // OpenKeychain's "export all keys" and its decrypted encrypted-backup
+    // payload are MANY armored key blocks concatenated in one file;
+    // importArmoredKeyDetailed only ever consumes the first. These split
+    // a blob into its individual BEGIN/END key blocks and merge-import
+    // each through the normal dedup path, so a whole OpenKeychain keyring
+    // migrates in one shot.
+
+    private val armoredKeyBlockRegex = Regex(
+        "-----BEGIN PGP (?:PUBLIC|PRIVATE) KEY BLOCK-----" +
+            ".*?" +
+            "-----END PGP (?:PUBLIC|PRIVATE) KEY BLOCK-----",
+        RegexOption.DOT_MATCHES_ALL
+    )
+
+    /** Every armored key block in [text], in order (empty if none). */
+    fun splitArmoredKeyBlocks(text: String): List<String> =
+        armoredKeyBlockRegex.findAll(text).map { it.value }.toList()
+
+    /**
+     * Merge-import EVERY key block in [armoredText]. Each block runs
+     * through [importArmoredKeyDetailed] (so held secrets are never
+     * overwritten, public-only rows upgrade in place, etc.). A block that
+     * fails to parse is skipped, not fatal. Falls back to treating the
+     * whole text as one key when no BEGIN/END blocks are found.
+     */
+    suspend fun importAllArmoredKeysDetailed(armoredText: String): List<ImportOutcome> {
+        val blocks = splitArmoredKeyBlocks(armoredText).ifEmpty { listOf(armoredText) }
+        // A single armor block can hold multiple rings (the OpenKeychain
+        // backup payload is a public ring + a secret ring + … under one
+        // BEGIN/END), so explode each block into per-ring armored strings
+        // before merge-importing.
+        val perRing = ArrayList<String>()
+        for (block in blocks) {
+            val rings = crypto.explodeToArmoredKeys(block.toByteArray(Charsets.UTF_8))
+            if (rings.isEmpty()) perRing.add(block) else perRing.addAll(rings)
+        }
+        val outcomes = ArrayList<ImportOutcome>(perRing.size)
+        for (ring in perRing) {
+            runCatching { importArmoredKeyDetailed(ring) }.getOrNull()?.let { outcomes.add(it) }
+        }
+        return outcomes
     }
 
     // ── HW Phase 1: Import a hardware-key (OpenPGP card) record ────────
@@ -488,6 +622,17 @@ class KeyRepository(
     fun exportArmoredPublicKey(fingerprint: String): String? {
         val ring = loadPublicKeyRing(fingerprint) ?: return null
         return crypto.exportArmoredPublicKey(ring)
+    }
+
+    /**
+     * 4.0.0 Phase 9b (iOS 7.1.x parity) — armored public key for a
+     * user-facing copy / share / save, honoring the "Include comment in
+     * exported public keys" setting. Keyserver uploads, QR encodes, and
+     * cache refreshes keep using [exportArmoredPublicKey] (comment-free).
+     */
+    fun exportArmoredPublicKeyForSharing(fingerprint: String): String? {
+        val ring = loadPublicKeyRing(fingerprint) ?: return null
+        return crypto.exportArmoredPublicKeyForSharing(ring)
     }
 
     fun exportArmoredPrivateKey(fingerprint: String): String? {
@@ -750,5 +895,73 @@ class KeyRepository(
      */
     suspend fun exportRevocationCertificate(fingerprint: String): String? {
         return dao.getByFingerprint(fingerprint)?.revocationCertificate
+    }
+
+    // ── 4.0.0 Phase 2: keyserver refresh support (iOS v7.1.1 F5) ────────
+
+    /**
+     * Merge public material fetched from a keyserver into [existing].
+     * Same engine as duplicate imports (KeyDeduplicationService), so
+     * trust level, contact link, secret material, notes, and card
+     * backing all survive. Returns the (possibly updated) row plus
+     * whether anything actually changed. KeyRefreshService is the
+     * intended caller and has already fingerprint-verified
+     * [fetchedRing] against [existing] — this method trusts that check.
+     */
+    suspend fun mergeFetchedPublicMaterial(
+        existing: PGPKeyEntity,
+        fetchedRing: PGPPublicKeyRing,
+        fetchedArmored: String?,
+        fetchedExpiresAtMs: Long?
+    ): Pair<PGPKeyEntity, Boolean> {
+        val (row, resolution) = dedup.resolveDuplicate(
+            existing = existing,
+            newPublicRing = fetchedRing,
+            newArmoredPublicKey = fetchedArmored,
+            newExpiresAtMs = fetchedExpiresAtMs
+        )
+        return row to (resolution == KeyDeduplicationService.DuplicateResolution.MERGED_NEW_MATERIAL)
+    }
+
+    /**
+     * Stamp upstream revocation onto [fingerprint]'s row: the fetched
+     * keyserver copy carried a key-revocation signature (0x20). The
+     * revocation-bearing ring itself has already been merged into the
+     * secure store + armored cache by [mergeFetchedPublicMaterial];
+     * this records the flags the UI reads. revocationCertificate stays
+     * untouched — no isolated cert armor exists on this path, and the
+     * stored ring now carries the signature (matches iOS F5). No-op
+     * (returns the row unchanged) when already revoked, so a locally
+     * revoked key keeps its own revokedAt / reason.
+     */
+    suspend fun markRevokedFromUpstream(
+        fingerprint: String,
+        revokedAtMs: Long,
+        reason: RevocationReason?
+    ): PGPKeyEntity? {
+        val entity = dao.getByFingerprint(fingerprint) ?: return null
+        if (entity.isRevoked) return entity
+        val updated = entity.copy(
+            isRevoked = true,
+            revokedAt = revokedAtMs,
+            revocationReason = reason
+        )
+        dao.update(updated)
+        return updated
+    }
+
+    // ── 4.0.0 Phase 1: one-time duplicate sweep ─────────────────────────
+
+    /**
+     * Collapse duplicate keyring rows left behind by pre-3.1.0 imports
+     * (the offline-primary card-linking bug fixed forward in 3.1.0
+     * Phase 7 A1 created duplicate card-contact rows on existing
+     * installs). Delegates to [KeyDeduplicationService.runSweepIfNeeded];
+     * run-once via a SharedPreferences flag, safe to call on every
+     * launch. PGPonyApp fires this off applicationScope at startup so
+     * the DB work stays off the main thread.
+     */
+    suspend fun runDedupeSweepIfNeeded(prefs: SharedPreferences) {
+        dedup.runSweepIfNeeded(prefs)
     }
 }

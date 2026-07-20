@@ -10,6 +10,9 @@ import com.pgpony.android.data.MIGRATION_1_2
 import com.pgpony.android.data.MIGRATION_2_3
 import com.pgpony.android.data.MIGRATION_3_4
 import com.pgpony.android.data.MIGRATION_4_5
+import com.pgpony.android.data.MIGRATION_5_6
+import com.pgpony.android.data.MIGRATION_6_7
+import com.pgpony.android.autocrypt.AutocryptPeerStore
 import com.pgpony.android.data.PGPDatabase
 import com.pgpony.android.data.SecureKeyStore
 import com.pgpony.android.data.repository.KeyRepository
@@ -31,6 +34,7 @@ class PGPonyApp : Application() {
         private set
 
     lateinit var keyRepository: KeyRepository
+    lateinit var autocryptPeerStore: AutocryptPeerStore
         private set
 
     lateinit var contactsService: ContactsService
@@ -48,12 +52,14 @@ class PGPonyApp : Application() {
         // HW Phase 0/1: schema bumped to v3 to add card-backed columns.
         // MIGRATION_1_2 / MIGRATION_2_3 / MIGRATION_3_4 declared in data/PGPKeyEntity.kt.
         // 3.0.0-KS1: schema bumped to v5 for keyserver activity timestamps (MIGRATION_4_5).
+        // 4.0.0 Succession Phase 1: schema bumped to v6 for the OpenPGP API
+        // provider's allowed_api_clients table (MIGRATION_5_6).
         database = Room.databaseBuilder(
             applicationContext,
             PGPDatabase::class.java,
             "pgpony.db"
         )
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             .build()
 
         // Initialize secure key storage
@@ -64,6 +70,9 @@ class PGPonyApp : Application() {
             dao = database.keyDao(),
             store = secureKeyStore
         )
+
+        // 4.0.0 Phase 4 — Autocrypt peer-state store (OpenPGP API).
+        autocryptPeerStore = AutocryptPeerStore.create(database.autocryptPeerDao(), keyRepository)
 
         // Initialize contacts service
         contactsService = ContactsService.getInstance(applicationContext)
@@ -125,6 +134,38 @@ class PGPonyApp : Application() {
                     // to force a manual re-schedule
                 }
             }
+        }
+
+        // ── 4.0.0 Phase 1 (iOS v7.1.1 F3): duplicate-row sweep ─────────
+        //
+        // One-time collapse of duplicate keyring rows left behind by
+        // pre-3.1.0 imports (the offline-primary card-linking bug fixed
+        // forward in 3.1.0 Phase 7 A1 created duplicate card-contact
+        // rows on existing installs; the creation path is fixed but the
+        // rows remain). Run-once via a pgpony_prefs flag inside the
+        // service; the DB walk happens off-thread on applicationScope
+        // so cold start is untouched. Same launch pattern as the
+        // reminder re-schedule above.
+        applicationScope.launch {
+            try {
+                keyRepository.runDedupeSweepIfNeeded(prefs)
+            } catch (e: Exception) {
+                // best-effort; the run-once flag is only set on a clean
+                // pass, so a failed sweep retries on the next launch
+            }
+        }
+
+        // ── 4.0.0 Phase 5 — background keyserver refresh ───────────────
+        //
+        // Apply the current schedule on every cold start: schedules the
+        // periodic KeyRefreshWorker when enabled (play defaults ON, foss
+        // OFF — §6 Q4), cancels it when not. Idempotent (unique periodic
+        // work), so re-applying each launch is cheap and self-heals after
+        // an app-data clear or reboot.
+        try {
+            com.pgpony.android.sync.KeyRefreshScheduler.apply(applicationContext)
+        } catch (e: Exception) {
+            // WorkManager unavailable (very rare) — non-fatal.
         }
     }
 

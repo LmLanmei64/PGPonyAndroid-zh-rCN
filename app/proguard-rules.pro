@@ -3,6 +3,19 @@
 -keep class org.bouncycastle.** { *; }
 -dontwarn org.bouncycastle.**
 
+# ── Post-quantum composite (ML-KEM-768 + X25519) ─────────────────────
+# The org.bouncycastle.** keep above already covers BC's ML-KEM (KEM),
+# KMAC256, SHA3, and RFC-3394 AES key-wrap classes the composite path uses,
+# and the com.pgpony.android.crypto.** keep below covers our pqc package.
+# These explicit keeps document that dependency for the 4.0.0 PQC release and
+# guard against any future narrowing of those wildcards. The composite
+# session-key derivation is security-critical — keep it verbatim, unshrunk
+# and unobfuscated.
+-keep class com.pgpony.android.crypto.pqc.** { *; }
+-keep class org.bouncycastle.pqc.** { *; }
+-keep class org.bouncycastle.crypto.digests.SHA3Digest { *; }
+-keep class org.bouncycastle.crypto.macs.KMAC { *; }
+
 # ── PGPony app classes that crypto / Room / network code touches ──────
 -keep class com.pgpony.android.crypto.** { *; }
 -keep class com.pgpony.android.data.** { *; }

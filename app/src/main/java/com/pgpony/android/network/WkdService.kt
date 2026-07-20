@@ -31,9 +31,8 @@
 package com.pgpony.android.network
 
 import com.pgpony.android.crypto.util.ZBase32
-import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.engine.android.Android
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.accept
 import io.ktor.client.request.get
 import io.ktor.http.ContentType
@@ -56,6 +55,11 @@ import java.util.Base64
 enum class KeyLookupSource(val displayName: String) {
     WKD_ADVANCED("WKD (advanced)"),
     WKD_DIRECT("WKD (direct)"),
+    // A configured directory server other than keys.openpgp.org
+    // (e.g. keys.pgpony.app). Phase 6: the import/exchange search now
+    // consults the user's keyserver directory before the openpgp.org
+    // fallback.
+    KEYSERVER("key server"),
     HAGRID("keys.openpgp.org")
 }
 
@@ -97,12 +101,10 @@ class WkdService {
         private const val SOCKET_TIMEOUT_MS = 15_000L
     }
 
-    private val client = HttpClient(Android) {
-        engine {
-            connectTimeout = REQUEST_TIMEOUT_MS.toInt()
-            socketTimeout = SOCKET_TIMEOUT_MS.toInt()
-        }
-    }
+    // 4.0.0 Phase 6 — route through the shared proxy-aware client
+    // (Tor/Orbot when enabled; direct otherwise). Replaces the private
+    // per-service HttpClient so proxy config applies uniformly.
+    private val client get() = com.pgpony.android.network.HttpClientFactory.client()
 
     /**
      * Look up the public key for [email] via WKD. Tries the "advanced"
@@ -201,6 +203,17 @@ class WkdService {
                 // WKD spec recommends accepting application/octet-stream;
                 // most servers serve a fixed binary blob regardless.
                 accept(ContentType.Application.OctetStream)
+                // Fast-fail: WKD serves a tiny static file. If it's not
+                // answering quickly the domain likely doesn't run WKD, so
+                // cap the wait and fall through to the next source instead
+                // of eating the client's full request ceiling. (Tor gets
+                // more slack than a direct connection.)
+                timeout {
+                    requestTimeoutMillis =
+                        if (com.pgpony.android.network.ProxyPrefs
+                                .config(com.pgpony.android.PGPonyApp.instance).enabled
+                        ) 20_000L else REQUEST_TIMEOUT_MS
+                }
             }
             if (response.status == HttpStatusCode.OK) {
                 // Ktor 2.x: response.body<ByteArray>() is the canonical

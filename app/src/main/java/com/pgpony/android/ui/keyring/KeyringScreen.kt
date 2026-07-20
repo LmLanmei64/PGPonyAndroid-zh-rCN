@@ -326,12 +326,51 @@ fun KeyringScreen(
         GenerateKeySheet(state = state, viewModel = viewModel)
     }
 
+    // ── Post-generation publish prompt (4.0.0 Phase 5a, §6 Q6) ─────────
+    // After a key is generated (in-app OR onboarding — both route through
+    // KeyringViewModel.generateKey), offer to publish it: the same
+    // multi-server PublishSheet with both servers pre-checked. Skippable
+    // (dismiss). iOS parity — the verified-badge / board-trust funnel.
+    state.pendingPublishFingerprint?.let { fp ->
+        com.pgpony.android.ui.keydetail.PublishSheet(
+            fingerprint = fp,
+            onDismiss = { viewModel.dismissPublishPrompt() }
+        )
+    }
+
     // ── Import Sheet ───────────────────────────────────────────────────
     // Phase A10a — replaced the inline single-method ImportKeySheet
     // with ImportKeyScreen, which surfaces all four iOS methods
     // (Paste / File / QR / Key Server) and an inline preview card.
     if (state.showImportSheet) {
         ImportKeyScreen(state = state, viewModel = viewModel)
+    }
+
+    // ── 4.0.0 Phase 1 (iOS v7.1.1 F3): duplicate-import alert ──────────
+    // Raised when an import commit resolved ALREADY_IN_KEYRING. Hosted
+    // here (not in ImportKeyScreen) because the sheet has already been
+    // dismissed by the time the dialog shows, and because View Key
+    // needs this screen's onKeyClick hook to push KeyDetail — the
+    // Android shape of iOS's pendingShowKeyFingerprint handoff.
+    state.duplicateImportResult?.let { dup ->
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissDuplicateAlert() },
+            title = { Text(stringResource(R.string.import_duplicate_alert_title)) },
+            text = {
+                Text(stringResource(R.string.import_duplicate_alert_body_format, dup.keyName))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.dismissDuplicateAlert()
+                        onKeyClick(dup.fingerprint)
+                    }
+                ) { Text(stringResource(R.string.import_duplicate_view_key)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissDuplicateAlert() }) { Text(stringResource(R.string.common_button_ok)) }
+            }
+        )
     }
 
     // ── Delete Confirm ─────────────────────────────────────────────────

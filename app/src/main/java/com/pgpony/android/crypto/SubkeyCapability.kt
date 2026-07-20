@@ -115,6 +115,13 @@ enum class SubkeyCapability(val flag: Int, val displayName: String) {
                 KeyAlgorithm.V6_X25519,
                 KeyAlgorithm.V6_X448 ->
                     if (isPrimary) Certify.flag else Encrypt.flag
+
+                // 4.0.0 Phase 2b — composite ML-KEM+X25519 is an encryption
+                // (sub)key; the primary of such a key is Ed25519, not this.
+                KeyAlgorithm.MLKEM768_X25519_V6 ->
+                    if (isPrimary) Certify.flag else Encrypt.flag
+                KeyAlgorithm.MLKEM768_X25519_LIBREPGP ->
+                    if (isPrimary) Certify.flag else Encrypt.flag
             }
         }
 

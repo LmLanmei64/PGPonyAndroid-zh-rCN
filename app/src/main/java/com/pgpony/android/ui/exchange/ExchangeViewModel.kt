@@ -15,6 +15,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
 import com.pgpony.android.data.PGPKeyEntity
+import com.pgpony.android.data.repository.ImportResolution
 import com.pgpony.android.data.repository.KeyRepository
 import com.pgpony.android.network.KeyServerRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -118,11 +119,20 @@ class ExchangeViewModel(
         val text = _state.value.scannedText ?: return
         viewModelScope.launch {
             try {
-                repo.importArmoredKey(text)
+                // 4.0.0 Phase 1 (iOS v7.1.1 F3) — outcome-aware commit:
+                // scanning a key you already hold no longer errors.
+                val outcome = repo.importArmoredKeyDetailed(text)
+                val message = when (outcome.resolution) {
+                    ImportResolution.ALREADY_IN_KEYRING ->
+                        PGPonyApp.instance.getString(R.string.import_result_already_in_keyring)
+                    ImportResolution.MERGED_NEW_MATERIAL ->
+                        PGPonyApp.instance.getString(R.string.import_result_merged)
+                    else -> "Key imported from QR code"
+                }
                 _state.value = _state.value.copy(
                     scannedText = null,
                     showImportConfirm = false,
-                    successMessage = "Key imported from QR code"
+                    successMessage = message
                 )
                 loadKeys()
             } catch (e: Exception) {
@@ -154,7 +164,7 @@ class ExchangeViewModel(
                 val result = if (query.contains("@")) {
                     keyServer.searchByEmail(query)
                 } else {
-                    keyServer.searchByFingerprint(query)
+                    keyServer.findByFingerprint(query)?.armoredKey
                 }
                 if (result != null) {
                     _state.value = _state.value.copy(isSearching = false, searchResult = result)
@@ -171,10 +181,20 @@ class ExchangeViewModel(
         val armored = _state.value.searchResult ?: return
         viewModelScope.launch {
             try {
-                repo.importArmoredKey(armored)
+                // 4.0.0 Phase 1 (iOS v7.1.1 F3) — outcome-aware commit:
+                // importing a search hit you already hold no longer
+                // errors.
+                val outcome = repo.importArmoredKeyDetailed(armored)
+                val message = when (outcome.resolution) {
+                    ImportResolution.ALREADY_IN_KEYRING ->
+                        PGPonyApp.instance.getString(R.string.import_result_already_in_keyring)
+                    ImportResolution.MERGED_NEW_MATERIAL ->
+                        PGPonyApp.instance.getString(R.string.import_result_merged)
+                    else -> "Key imported from key server"
+                }
                 _state.value = _state.value.copy(
                     searchResult = null,
-                    successMessage = "Key imported from key server"
+                    successMessage = message
                 )
                 loadKeys()
             } catch (e: Exception) {

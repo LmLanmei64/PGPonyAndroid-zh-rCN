@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  PGPony Android — 4.0.0 Phase 6 (Tor onion mirror)
+
+  Tor onion services are end-to-end encrypted by the Tor protocol itself,
+  so plain HTTP to a .onion is safe — but Android blocks cleartext traffic
+  by default on API 28+, which broke keyserver publish over the onion
+  mirror ("Cleartext HTTP traffic to …onion not permitted").
+
+  Permit cleartext ONLY for PGPony's first-party onion (the fixed host the
+  onion mirror rewrites keys.pgpony.app to). Every other destination keeps
+  the secure default (cleartext forbidden); all clearnet keyserver/WKD
+  traffic is HTTPS regardless.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">pgponyisur7gxcrfw5ofpjr2sepqul3zgbs66rrd3ughk5qvi4a3t5id.onion</domain>
+    </domain-config>
+</network-security-config>

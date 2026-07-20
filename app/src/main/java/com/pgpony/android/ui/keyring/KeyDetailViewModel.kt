@@ -27,6 +27,8 @@ import com.pgpony.android.contacts.ContactsService
 import com.pgpony.android.contacts.DeviceContact
 import com.pgpony.android.crypto.KeyExpirationService
 import com.pgpony.android.crypto.RevocationError
+import com.pgpony.android.data.KeyRefreshResult
+import com.pgpony.android.data.KeyRefreshService
 import com.pgpony.android.data.PGPKeyEntity
 import com.pgpony.android.data.RevocationReason
 import com.pgpony.android.data.TrustLevel
@@ -40,6 +42,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+/**
+ * 4.0.0 Phase 2 (iOS v7.1.1 F4) — one User ID (tag-13) off the key
+ * bytes. [isPrimary] marks the ID the row displays (the stored
+ * entity.userID), falling back to the first when none matches.
+ */
+data class KeyUserIdInfo(
+    val raw: String,
+    val name: String,
+    val email: String,
+    val isPrimary: Boolean
+)
 
 data class KeyDetailUiState(
     /** The loaded key. Null while loading or if not found. */
@@ -103,6 +117,15 @@ data class KeyDetailUiState(
     /** 3.0.0-KS1 — true while the "Check key server" lookup is in flight, so
      *  that action row shows an inline spinner. */
     val isCheckingKeyServer: Boolean = false,
+    /** 4.0.0 Phase 2 (F4) — every User ID on the key, parsed at load
+     *  time from the stored ring bytes (the bytes are the source of
+     *  truth, so a keyserver refresh updates the list with no schema
+     *  change). Never empty once [key] is loaded: falls back to the
+     *  single stored ID when the ring can't be read. */
+    val userIds: List<KeyUserIdInfo> = emptyList(),
+    /** 4.0.0 Phase 2 (F5) — true while "Refresh from key server" is in
+     *  flight; drives that row's inline spinner. */
+    val isRefreshingFromKeyServer: Boolean = false,
     // ── Phase A6: Revocation ──────────────────────────────────────────
     /** Drives the RevokeKeySheet's visibility. */
     val showRevokeSheet: Boolean = false,
@@ -174,6 +197,11 @@ class KeyDetailViewModel(
     // because constructing the HTTP client has a small up-front cost.
     private val keyServer by lazy { KeyServerRepository() }
 
+    // 4.0.0 Phase 2 (F5) — the refresh pipeline. Lazy for the same
+    // reason as keyServer; shares that client so both keyserver rows
+    // ride one HTTP stack.
+    private val keyRefresh by lazy { KeyRefreshService(repo, keyServer) }
+
     private val _state = MutableStateFlow(KeyDetailUiState())
     val state: StateFlow<KeyDetailUiState> = _state.asStateFlow()
 
@@ -202,7 +230,10 @@ class KeyDetailViewModel(
             _state.value = _state.value.copy(
                 key = loaded,
                 isLoading = false,
-                notFound = loaded == null
+                notFound = loaded == null,
+                // 4.0.0 Phase 2 (F4) — parse the User ID list off the key
+                // bytes alongside the entity load.
+                userIds = loaded?.let { deriveUserIds(it) } ?: emptyList()
             )
         }
     }
@@ -528,6 +559,118 @@ class KeyDetailViewModel(
         }
     }
 
+    // ── 4.0.0 Phase 2 (F4): all User IDs off the key bytes ─────────────
+
+    /**
+     * Every tag-13 User ID on the key, in ring order, parsed from the
+     * stored public ring (BC exposes them directly on the primary key —
+     * no packet walk needed, unlike iOS). Primary = the ID this row
+     * displays (entity.userID), falling back to the first. Never empty:
+     * when the ring can't be loaded (fresh card record with no cert
+     * paired yet, storage hiccup) it falls back to the single stored
+     * ID. Mirrors iOS PGPKeyModel.allUserIDs().
+     */
+    private fun deriveUserIds(entity: PGPKeyEntity): List<KeyUserIdInfo> {
+        val fromRing = mutableListOf<KeyUserIdInfo>()
+        repo.loadPublicKeyRing(entity.fingerprint)?.publicKey?.userIDs?.let { ids ->
+            while (ids.hasNext()) {
+                val raw = ids.next() as? String ?: continue
+                if (raw.isEmpty()) continue
+                val parsed = PGPKeyEntity.parseUserID(raw)
+                fromRing.add(
+                    KeyUserIdInfo(
+                        raw = raw,
+                        name = parsed.first,
+                        email = parsed.second,
+                        isPrimary = false
+                    )
+                )
+            }
+        }
+        if (fromRing.isEmpty()) {
+            val parsed = PGPKeyEntity.parseUserID(entity.userID)
+            return listOf(
+                KeyUserIdInfo(
+                    raw = entity.userID,
+                    name = parsed.first,
+                    email = parsed.second,
+                    isPrimary = true
+                )
+            )
+        }
+        val primaryIndex = fromRing.indexOfFirst { it.raw == entity.userID }
+            .let { if (it >= 0) it else 0 }
+        return fromRing.mapIndexed { index, uid ->
+            if (index == primaryIndex) uid.copy(isPrimary = true) else uid
+        }
+    }
+
+    // ── 4.0.0 Phase 2 (F5): keyserver refresh-and-merge ────────────────
+
+    /**
+     * Re-fetch this key's material from the keyserver and merge it into
+     * the stored row. Thin caller over KeyRefreshService — the pipeline
+     * (fetch → mandatory fingerprint verification → Phase 1 merge →
+     * revocation scan → lastCheckedAt stamp) lives there so Phase 7's
+     * background worker exercises the exact same code. Every outcome
+     * reloads [KeyDetailUiState.key] and re-derives the F4 User ID list
+     * so the screen reflects the refreshed material immediately.
+     */
+    fun refreshFromKeyServer() {
+        val key = _state.value.key ?: return
+        if (_state.value.isRefreshingFromKeyServer) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isRefreshingFromKeyServer = true)
+            val app = PGPonyApp.instance
+            when (val result = keyRefresh.refresh(key.fingerprint)) {
+                is KeyRefreshResult.UpToDate -> _state.value = _state.value.copy(
+                    key = result.entity,
+                    userIds = deriveUserIds(result.entity),
+                    isRefreshingFromKeyServer = false,
+                    successMessage = app.getString(R.string.kd_vm_refresh_up_to_date)
+                )
+                is KeyRefreshResult.Merged -> _state.value = _state.value.copy(
+                    key = result.entity,
+                    userIds = deriveUserIds(result.entity),
+                    isRefreshingFromKeyServer = false,
+                    successMessage = app.getString(R.string.kd_vm_refresh_merged)
+                )
+                is KeyRefreshResult.RevokedUpstream -> _state.value = _state.value.copy(
+                    key = result.entity,
+                    userIds = deriveUserIds(result.entity),
+                    isRefreshingFromKeyServer = false,
+                    // Revocation leads regardless of whether material
+                    // also merged — matches iOS message precedence.
+                    successMessage = app.getString(R.string.kd_vm_refresh_revoked)
+                )
+                is KeyRefreshResult.NotFound -> _state.value = _state.value.copy(
+                    key = result.entity,
+                    userIds = deriveUserIds(result.entity),
+                    isRefreshingFromKeyServer = false,
+                    // Same copy as the KS1 check row — identical situation.
+                    successMessage = app.getString(R.string.kd_vm_check_not_found)
+                )
+                is KeyRefreshResult.FingerprintMismatch -> _state.value = _state.value.copy(
+                    key = result.entity,
+                    userIds = deriveUserIds(result.entity),
+                    isRefreshingFromKeyServer = false,
+                    errorMessage = app.getString(R.string.kd_vm_refresh_mismatch)
+                )
+                is KeyRefreshResult.Failed -> _state.value = _state.value.copy(
+                    key = result.entity,
+                    userIds = deriveUserIds(result.entity),
+                    isRefreshingFromKeyServer = false,
+                    errorMessage = app.getString(
+                        R.string.kd_vm_refresh_failed_format, result.detail
+                    )
+                )
+                KeyRefreshResult.KeyMissing -> _state.value = _state.value.copy(
+                    isRefreshingFromKeyServer = false
+                )
+            }
+        }
+    }
+
     /**
      * Phase A8 Fix2 — build a user-facing summary of the upload-and-
      * verify result. Four cases:
@@ -589,7 +732,10 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
      */
     fun armoredPublicKeyForShare(): String? {
         val key = _state.value.key ?: return null
-        return repo.exportArmoredPublicKey(key.fingerprint)
+        // 4.0.0 Phase 9b — the user-facing copy/share/save path honors
+        // the "Include comment in exported public keys" setting. QR and
+        // keyserver upload in this VM keep the comment-free export.
+        return repo.exportArmoredPublicKeyForSharing(key.fingerprint)
     }
 
     // ── Phase A4b: Delete ─────────────────────────────────────────────

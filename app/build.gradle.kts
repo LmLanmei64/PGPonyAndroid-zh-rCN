@@ -62,8 +62,17 @@ android {
         // GnuPG AEAD "tag 20" message acceptance, Send as Email with
         // format choice, sign-by-default, and hardened document reads.
         // versionCode moves to the 3xx band for the 3.1 line.
-        versionCode = 300
-        versionName = "3.1.0"
+        //
+        // v4.0.0 — "The OpenKeychain Succession". Post-quantum composite
+        // encryption (ML-KEM-768 + X25519): IETF draft algorithm 35 (v6) and
+        // LibrePGP / GnuPG 2.5.x algorithm 8 (v5) — keygen, encrypt, decrypt,
+        // passphrase-protected keys, with gpg/Sequoia-interop-aligned wire
+        // formats. Also the OpenPGP API provider service (PGPony as the crypto
+        // engine for Thunderbird for Android / K-9 Mail / Password Store),
+        // default-signer selection, Orbot/Tor SOCKS, and encrypted keyring
+        // backup/restore. versionCode jumps to the 4xx band for the 4.0 line.
+        versionCode = 400
+        versionName = "4.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -126,6 +135,12 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        // 4.0.0 Succession Phase 1 — AIDL codegen for the vendored
+        // OpenPGP API contract (IOpenPgpService2.aidl under
+        // src/main/aidl/org/openintents/openpgp/). AGP 8 defaults
+        // aidl to false; without this the generated Stub class never
+        // exists and the provider service cannot compile.
+        aidl = true
     }
 
     // FD3: drop the Google-signed dependency-metadata blob from build
@@ -140,6 +155,13 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+            // 4.0.0 Phase 0: BC 1.85 jars each ship META-INF/LICENSE.md (and
+            // NOTICE.md), so bcprov + bcpg + transitive bcutil collide at
+            // mergeJavaResource. Exclude them — BC attribution ships in-app
+            // via the Phase 9b LicensesScreen (full MIT permission text), so
+            // dropping the duplicate jar copies loses nothing legally.
+            excludes += "META-INF/LICENSE.md"
+            excludes += "META-INF/NOTICE.md"
         }
     }
 }
@@ -157,8 +179,28 @@ dependencies {
     //     v6 work expands.
     // bcprov and bcpg are version-locked together. ProGuard already keeps
     // org.bouncycastle.** wholesale, so no keep-rule change is required.
-    implementation("org.bouncycastle:bcprov-jdk18on:1.84")
-    implementation("org.bouncycastle:bcpg-jdk18on:1.84")
+    //
+    // 4.0.0 Phase 0 (dependency housekeeping): bumped 1.84 → 1.85.
+    //   - Lands before any 4.0.0 crypto work so every later phase is built
+    //     and regression-tested against the final dependency set.
+    //   - 1.85 (Maven Central, July 12 2026) OpenPGP-relevant fixes: SKESK
+    //     encoding for direct-S2K-encrypted messages; custom signature
+    //     creation time no longer ignored on message signatures; continued
+    //     AEAD chunk-size hardening on the path CVE-2026-3505 opened.
+    //   - PQC survey (plan §6 Q10, answered): bcpg 1.85 has NO OpenPGP PQC
+    //     composite support — PublicKeyAlgorithmTags still ends at Ed448
+    //     (28); neither LibrePGP algorithm 8 (GnuPG "ECC and Kyber") nor
+    //     RFC 9980 algorithm 35 exists in the packet layer. Phase 2b
+    //     therefore takes the own-composite-layer path: composite key/PKESK
+    //     parsing built on bcprov's ML-KEM (FIPS 203, in bcprov since 1.79)
+    //     + X25519 primitives, with iOS 8.0.0 Phase F as the reference
+    //     implementation for both wire formats.
+    //   - Regression focus: CardPublicKeyDataDecryptorFactory 3-arg
+    //     recoverSessionData routing (the 1.84 APDU-level quirk), Argon2/
+    //     AEAD v6 import, S2K paths, GnuPG interop suite. See
+    //     PHASE_4.0.0-P0_NOTES.md.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.85")
+    implementation("org.bouncycastle:bcpg-jdk18on:1.85")
     // ── Jetpack Compose ─────────────────────────────────────────────────
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")
@@ -181,6 +223,11 @@ dependencies {
     // of Settings still uses SharedPreferences. See ArmorCommentSettings.
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    // ── WorkManager — 4.0.0 Phase 5 background keyserver refresh ─────────
+    //     androidx, F-Droid-safe (no Google Play dependency). Drives the
+    //     periodic KeyRefreshWorker with Doze-friendly network/battery
+    //     constraints — no foreground service.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     // ── Ktor (HTTP client for key server) ───────────────────────────────
     implementation("io.ktor:ktor-client-android:2.3.12")
     implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
@@ -231,6 +278,20 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    // 4.0.0 Succession Phase 1 — ServiceTestRule for the provider
+    // handshake instrumented test (binds PGPonyOpenPgpService in-process).
+    androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+}
+
+// Forward selected -D properties to the forked unit-test JVM. Gradle does NOT
+// propagate command-line system properties to the test JVM by default, so the
+// gated interop harnesses (-DrunInterop=true) and their passphrases
+// (-DiosSecPass=...) would otherwise never see them. Only these keys are
+// forwarded; changing one invalidates the test task so it re-runs.
+tasks.withType<Test>().configureEach {
+    listOf("runInterop", "iosSecPass").forEach { k ->
+        System.getProperty(k)?.let { systemProperty(k, it) }
+    }
 }

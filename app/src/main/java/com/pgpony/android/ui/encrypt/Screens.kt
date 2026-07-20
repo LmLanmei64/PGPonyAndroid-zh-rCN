@@ -1207,7 +1207,9 @@ private fun EncryptModeBody(state: EncryptUiState, viewModel: EncryptDecryptView
                         viewModel.setSigningKey(picked)
                         showSignAsSheet = false
                     },
-                    onDismiss = { showSignAsSheet = false }
+                    onDismiss = { showSignAsSheet = false },
+                    defaultSignerFingerprint = state.defaultSignerFingerprint,
+                    onSetDefault = { viewModel.setDefaultSigner(it) }
                 )
             }
         }
@@ -1328,7 +1330,9 @@ private fun SignModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewMod
                     viewModel.setSigningKey(picked)
                     showSignAsSheet = false
                 },
-                onDismiss = { showSignAsSheet = false }
+                onDismiss = { showSignAsSheet = false },
+                defaultSignerFingerprint = state.defaultSignerFingerprint,
+                onSetDefault = { viewModel.setDefaultSigner(it) }
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
@@ -1523,6 +1527,8 @@ private fun PasswordModeBody(state: EncryptUiState, viewModel: EncryptDecryptVie
 @Composable
 private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewModel) {
     val context = LocalContext.current
+    // 4.0.0 Phase 9 (iOS v7.1.1 F6) — clipboard for the body Paste action.
+    val clipboard = LocalClipboardManager.current
     val activity = context.findEncryptMainActivity()
 
     val addFromPicker: (Array<String>) -> Unit = { mimes ->
@@ -1556,6 +1562,45 @@ private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewM
         modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
         maxLines = 10
     )
+    // 4.0.0 Phase 9 (iOS v7.1.1 F6) — character count + Paste + Clear on
+    // the Bundle body, matching the Message and Decrypt editors. Clear
+    // here empties only the body text; the toolbar Clear remains the
+    // full reset (attachments, recipients, results).
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            stringResource(R.string.encrypt_bundle_char_count_format, state.bundleBody.length),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        OutlinedButton(
+            onClick = { viewModel.updateBundleBody("") },
+            enabled = state.bundleBody.isNotEmpty(),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.error
+            )
+        ) {
+            Text(stringResource(R.string.common_button_clear))
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        FilledTonalButton(
+            onClick = {
+                clipboard.getText()?.text?.let { viewModel.updateBundleBody(it) }
+            }
+        ) {
+            Icon(
+                Icons.Filled.ContentPaste,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(stringResource(R.string.common_button_paste), fontWeight = FontWeight.SemiBold)
+        }
+    }
     Spacer(modifier = Modifier.height(12.dp))
 
     // 2) Attachment pickers
@@ -1953,7 +1998,9 @@ private fun FileSection(state: EncryptUiState, viewModel: EncryptDecryptViewMode
                         viewModel.setSigningKey(picked)
                         showSignAsSheet = false
                     },
-                    onDismiss = { showSignAsSheet = false }
+                    onDismiss = { showSignAsSheet = false },
+                    defaultSignerFingerprint = state.defaultSignerFingerprint,
+                    onSetDefault = { viewModel.setDefaultSigner(it) }
                 )
             }
         }
@@ -2617,6 +2664,8 @@ private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewMo
             currentSelection = state.signFileSelectedKey,
             onSelect = { viewModel.setSignFileKey(it) },
             onDismiss = { viewModel.dismissSignFileKeyPicker() },
+            defaultSignerFingerprint = state.defaultSignerFingerprint,
+            onSetDefault = { viewModel.setDefaultSigner(it) },
         )
     }
 }

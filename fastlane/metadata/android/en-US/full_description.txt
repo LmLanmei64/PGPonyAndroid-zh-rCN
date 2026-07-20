@@ -3,13 +3,25 @@ PGPony is an OpenPGP app for Android. Encrypt, decrypt, sign, and verify message
 Features:
 
 - Encrypt, decrypt, sign, and verify text and files
+- Post-quantum encryption: ML-KEM-768 + X25519 (Kyber) composite keys, in both the IETF draft (v6) and LibrePGP / GnuPG 2.5 (v5) formats
+- OpenPGP provider service: use PGPony as the crypto engine for Thunderbird for Android, K-9 Mail, and Password Store (OpenKeychain-compatible API)
 - Generate modern keys, including RFC 9580 (OpenPGP v6) Ed25519 and X25519, with Argon2id passphrase protection
 - Hardware security keys over NFC, including YubiKey 5 NFC and Token2, with on-card key generation, decrypt, sign, PIN management, and factory reset
 - Read your password-store (pass) entries, including those protected by a hardware key
-- Key discovery through WKD and the keys.openpgp.org verifying keyserver
+- Encrypted keyring backup and restore, including OpenKeychain backup import
+- PGP/MIME email: decrypt messages with attachments, compose encrypted .eml
+- Key discovery through WKD and the keys.openpgp.org verifying keyserver; optional Tor routing via Orbot
 - Optional contact integration for choosing recipients
 - QR import and scanning for keys
-- Biometric lock and secure-screen protection
+- Default signing key, biometric lock, and secure-screen protection
+
+Post-quantum limitations:
+
+Post-quantum OpenPGP is still being standardized, so cross-tool support is limited:
+
+- LibrePGP-format (v5) keys interoperate with GnuPG 2.5+ today: messages encrypt and decrypt in both directions, and public keys import cleanly. GnuPG cannot yet import post-quantum PRIVATE keys from any app — it stores them in a proprietary internal format.
+- IETF-format (v6) keys implement draft-ietf-openpgp-pqc and are verified against the draft's official test vectors, but current Sequoia (sq) preview builds implement a different draft revision and cannot read them yet, and GnuPG does not support this format at all.
+- Classical keys (RSA, Ed25519, v4 and v6) are unaffected.
 
 PGPony does not use accounts, ads, analytics, or tracking. The F-Droid build contains no Google services and runs fully on de-Googled devices.
 

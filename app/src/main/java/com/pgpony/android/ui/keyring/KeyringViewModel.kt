@@ -15,6 +15,7 @@ import com.pgpony.android.crypto.KeyAlgorithm
 import com.pgpony.android.data.PGPKeyEntity
 import com.pgpony.android.data.PgpSubkeyEntity
 import com.pgpony.android.data.repository.ImportPreview
+import com.pgpony.android.data.repository.ImportResolution
 import com.pgpony.android.data.repository.KeyRepository
 import com.pgpony.android.network.KeyLookupSource
 import com.pgpony.android.network.KeyServerRepository
@@ -46,6 +47,21 @@ enum class ImportMethod(val displayName: String) {
     KEY_SERVER("Key Server")
 }
 
+/**
+ * 4.0.0 Phase 1 (iOS v7.1.1 F3) — payload for the "Already in Keyring"
+ * dialog. Set on KeyringUiState when an import commit resolves
+ * ALREADY_IN_KEYRING (byte-identical material, nothing merged); the
+ * dialog is hosted in KeyringScreen so its View Key button can use the
+ * screen's onKeyClick navigation hook to push KeyDetail — the Android
+ * shape of iOS's appState.pendingShowKeyFingerprint handoff, without
+ * needing a pending flag because the dialog lives beside the
+ * NavController-aware host.
+ */
+data class DuplicateImportOutcome(
+    val fingerprint: String,
+    val keyName: String
+)
+
 data class KeyringUiState(
     val allKeys: List<PGPKeyEntity> = emptyList(),
     // Phase A1: subkey rows loaded alongside keys. Empty map means
@@ -72,6 +88,10 @@ data class KeyringUiState(
     val generateConfirmPassphrase: String = "",
     val generateExpiration: ExpirationOption = ExpirationOption.TWO_YEARS,
     val isGenerating: Boolean = false,
+    // 4.0.0 Phase 5a (§6 Q6) — set to the new key's fingerprint right
+    // after a successful generate so the UI can offer the publish
+    // prompt (both servers pre-checked, skippable). iOS parity.
+    val pendingPublishFingerprint: String? = null,
     // Import sheet
     val showImportSheet: Boolean = false,
     val importArmoredText: String = "",
@@ -110,6 +130,11 @@ data class KeyringUiState(
      *  navigation destination — keeps the import sheet's state
      *  intact while scanning. */
     val showImportQRScanner: Boolean = false,
+    // ── 4.0.0 Phase 1 (iOS v7.1.1 F3): duplicate-import alert ──────────
+    /** Set when an import commit resolved ALREADY_IN_KEYRING. Drives
+     *  the "Already in Keyring" dialog (with its View Key jump) hosted
+     *  in KeyringScreen. Null when no dialog is showing. */
+    val duplicateImportResult: DuplicateImportOutcome? = null,
     // Delete confirm
     val keyToDelete: PGPKeyEntity? = null,
     // Keyring sorting (Lukas feedback). Default MANUAL + empty order
@@ -361,7 +386,7 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
             _state.value = _state.value.copy(isGenerating = true, errorMessage = null)
             try {
                 val passphrase = s.generatePassphrase.ifBlank { null }
-                repo.generateKey(
+                val generated = repo.generateKey(
                     name = s.generateName.trim(),
                     email = s.generateEmail.trim(),
                     algorithm = s.generateAlgorithm,
@@ -371,6 +396,8 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
                 _state.value = _state.value.copy(
                     isGenerating = false,
                     showGenerateSheet = false,
+                    // 4.0.0 Phase 5a (§6 Q6) — offer to publish the new key.
+                    pendingPublishFingerprint = generated.fingerprint,
                     successMessage = PGPonyApp.instance.getString(R.string.keyring_status_key_generated)
                 )
                 loadKeys()
@@ -381,6 +408,12 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
                 )
             }
         }
+    }
+
+    /** 4.0.0 Phase 5a (§6 Q6) — user skipped or finished the post-
+     *  generation publish prompt. */
+    fun dismissPublishPrompt() {
+        _state.value = _state.value.copy(pendingPublishFingerprint = null)
     }
 
     // ── Import (Phase A10a — 4-method picker) ──────────────────────────
@@ -600,18 +633,12 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
             )
             try {
                 // Heuristic: email addresses contain '@', fingerprints don't.
-                // findByEmail does WKD → Hagrid fallback; fingerprint search
-                // goes directly to Hagrid.
+                // Both paths now try WKD (email only) → configured directory
+                // servers (keys.pgpony.app first) → keys.openpgp.org.
                 val result = if (query.contains('@')) {
                     KeyServerRepository.shared.findByEmail(query)
                 } else {
-                    val armored = KeyServerRepository.shared.searchByFingerprint(query)
-                    armored?.let {
-                        com.pgpony.android.network.KeyLookupResult(
-                            armoredKey = it,
-                            source = KeyLookupSource.HAGRID
-                        )
-                    }
+                    KeyServerRepository.shared.findByFingerprint(query)
                 }
                 _state.value = _state.value.copy(isSearchingKeyServer = false)
                 if (result != null) {
@@ -647,25 +674,73 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
     }
 
     /**
-     * A10a — commit the previewed key to the keyring. Runs the same
-     * repo.importArmoredKey as the pre-A10 path; the preview phase
-     * only added confidence, the commit semantics are unchanged.
+     * A10a — commit the previewed key to the keyring.
      *
-     * Success → dismiss sheet, refresh list, success snackbar.
-     * Duplicate → if willUpgradeToKeyPair, success message reflects
-     * the upgrade. Otherwise surface AlreadyExists as an error so
-     * the user can navigate to the existing row.
+     * 4.0.0 Phase 1 (iOS v7.1.1 F3) — the commit is now outcome-aware
+     * via repo.importArmoredKeyDetailed. A plain duplicate no longer
+     * errors:
+     *   • ALREADY_IN_KEYRING (byte-identical) → dismiss the sheet and
+     *     raise the "Already in Keyring" dialog with a View Key jump
+     *     (duplicateImportResult; dialog hosted in KeyringScreen).
+     *   • MERGED_NEW_MATERIAL → the re-import doubled as a manual
+     *     refresh; success snackbar says so.
+     *   • UPGRADED_TO_KEY_PAIR / PAIRED_WITH_CARD / INSERTED → same
+     *     success messages as before.
      */
     fun confirmImportPreview() {
         val preview = _state.value.importPreview ?: return
         viewModelScope.launch {
             _state.value = _state.value.copy(isImporting = true, errorMessage = null)
             try {
-                repo.importArmoredKey(preview.armoredText)
-                val message = when {
-                    preview.willUpgradeToKeyPair -> PGPonyApp.instance.getString(R.string.keyring_status_key_upgraded)
-                    preview.hasPrivateKey -> "Key pair imported"
-                    else -> "Public key imported"
+                // 4.0.0 Phase 3 (Succession) — a file/paste holding more than
+                // one key block (OpenKeychain "export all keys", or a
+                // decrypted OpenKeychain backup) imports ALL of them and
+                // reports a summary instead of just the first.
+                val blocks = repo.splitArmoredKeyBlocks(preview.armoredText)
+                if (blocks.size > 1) {
+                    val outcomes = repo.importAllArmoredKeysDetailed(preview.armoredText)
+                    val added = outcomes.count { it.resolution == ImportResolution.INSERTED }
+                    val updated = outcomes.count {
+                        it.resolution == ImportResolution.UPGRADED_TO_KEY_PAIR ||
+                            it.resolution == ImportResolution.MERGED_NEW_MATERIAL ||
+                            it.resolution == ImportResolution.PAIRED_WITH_CARD
+                    }
+                    val unchanged = outcomes.count {
+                        it.resolution == ImportResolution.ALREADY_IN_KEYRING
+                    }
+                    _state.value = _state.value.copy(
+                        isImporting = false,
+                        showImportSheet = false,
+                        importPreview = null,
+                        successMessage = PGPonyApp.instance.getString(
+                            R.string.import_multi_result_format,
+                            outcomes.size, added, updated, unchanged
+                        )
+                    )
+                    loadKeys()
+                    return@launch
+                }
+                val outcome = repo.importArmoredKeyDetailed(preview.armoredText)
+                if (outcome.resolution == ImportResolution.ALREADY_IN_KEYRING) {
+                    val name = outcome.entity.userName.ifBlank { outcome.entity.shortFingerprint }
+                    _state.value = _state.value.copy(
+                        isImporting = false,
+                        showImportSheet = false,
+                        importPreview = null,
+                        duplicateImportResult = DuplicateImportOutcome(
+                            fingerprint = outcome.entity.fingerprint,
+                            keyName = name
+                        )
+                    )
+                    loadKeys()
+                    return@launch
+                }
+                val message = when (outcome.resolution) {
+                    ImportResolution.MERGED_NEW_MATERIAL ->
+                        PGPonyApp.instance.getString(R.string.import_result_merged)
+                    ImportResolution.UPGRADED_TO_KEY_PAIR ->
+                        PGPonyApp.instance.getString(R.string.keyring_status_key_upgraded)
+                    else -> if (preview.hasPrivateKey) "Key pair imported" else "Public key imported"
                 }
                 _state.value = _state.value.copy(
                     isImporting = false,
@@ -681,6 +756,11 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
                 )
             }
         }
+    }
+
+    /** 4.0.0 Phase 1 — dismiss the "Already in Keyring" dialog. */
+    fun dismissDuplicateAlert() {
+        _state.value = _state.value.copy(duplicateImportResult = null)
     }
 
     /**

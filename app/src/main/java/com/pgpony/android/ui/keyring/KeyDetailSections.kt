@@ -57,7 +57,9 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Report
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -106,6 +108,8 @@ internal object KeyDetailActionIds {
     const val SET_AS_DEFAULT = "Set as Default Key"
     const val UPLOAD_TO_KEY_SERVER = "Upload to Key Server"
     const val CHECK_KEY_SERVER = "Check Key Server"
+    // 4.0.0 Phase 2 (iOS v7.1.1 F5)
+    const val REFRESH_KEY_SERVER = "Refresh from Key Server"
     const val DELETE_KEY = "Delete Key"
     const val REVOKE_KEY = "Revoke Key"
     const val EXPORT_REVOCATION_CERT = "Export Revocation Certificate"
@@ -208,6 +212,9 @@ private fun ActionRow(
     label: String,
     tint: Color = Color(0xFF8B5CF6),
     enabled: Boolean = true,
+    // 4.0.0 Phase 2 — optional trailing slot (inline spinner for the
+    // keyserver check/refresh rows). Null keeps the pre-4.0 layout.
+    trailing: (@Composable () -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val effectiveTint = if (enabled) tint else MaterialTheme.colorScheme.onSurfaceVariant
@@ -230,7 +237,20 @@ private fun ActionRow(
             style = MaterialTheme.typography.bodyMedium,
             color = effectiveTint
         )
+        if (trailing != null) {
+            Spacer(modifier = Modifier.weight(1f))
+            trailing()
+        }
     }
+}
+
+/** 4.0.0 Phase 2 — small inline spinner for in-flight ActionRows. */
+@Composable
+private fun ActionRowSpinner() {
+    CircularProgressIndicator(
+        modifier = Modifier.size(16.dp),
+        strokeWidth = 2.dp
+    )
 }
 
 // ── Header section ────────────────────────────────────────────────────
@@ -650,7 +670,11 @@ fun QRSection(onShowQR: () -> Unit) {
 @Composable
 fun ActionsSection(
     key: PGPKeyEntity,
-    onComingSoon: (String) -> Unit
+    onComingSoon: (String) -> Unit,
+    // 4.0.0 Phase 2 — inline spinner flags for the two keyserver rows.
+    // Defaulted so previews and older call sites compile unchanged.
+    isCheckingKeyServer: Boolean = false,
+    isRefreshingFromKeyServer: Boolean = false
 ) {
     SectionGroup {
         ActionRow(
@@ -689,11 +713,74 @@ fun ActionsSection(
         }
         // 3.0.0-KS1 (Lukas request) — look this key up on a keyserver and
         // stamp "Last checked". Available for any key (read-only lookup).
+        // 4.0.0 Phase 2 — gains the inline spinner the KS1 state flag
+        // always intended (isCheckingKeyServer finally reaches the row).
         ActionRow(
             icon = Icons.Filled.CloudDownload,
             label = stringResource(R.string.key_detail_action_check_key_server),
+            enabled = !isCheckingKeyServer,
+            trailing = if (isCheckingKeyServer) ({ ActionRowSpinner() }) else null,
             onClick = { onComingSoon(KeyDetailActionIds.CHECK_KEY_SERVER) }
         )
+        // 4.0.0 Phase 2 (iOS v7.1.1 F5) — re-fetch this key's material
+        // from the keyserver and merge it into this row (public keys and
+        // key pairs alike). Fingerprint-verified before anything is
+        // written; a revoked upstream copy applies the revocation here.
+        ActionRow(
+            icon = Icons.Filled.Sync,
+            label = stringResource(R.string.key_detail_action_refresh_key_server),
+            enabled = !isRefreshingFromKeyServer,
+            trailing = if (isRefreshingFromKeyServer) ({ ActionRowSpinner() }) else null,
+            onClick = { onComingSoon(KeyDetailActionIds.REFRESH_KEY_SERVER) }
+        )
+    }
+}
+
+// ── User IDs (4.0.0 Phase 2 · iOS v7.1.1 F4) ──────────────────────────
+
+/**
+ * Every tag-13 User ID on the key, in ring order, with a PRIMARY
+ * capsule on the identity the row displays. The screen renders this
+ * only when the key carries more than one ID — a single ID is already
+ * the header above. Read-only, matching iOS 7.1.1.
+ */
+@Composable
+fun UserIdsSection(userIds: List<KeyUserIdInfo>) {
+    SectionGroup(title = stringResource(R.string.key_detail_userids_title)) {
+        userIds.forEach { uid ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = uid.name.ifEmpty { uid.email },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (uid.isPrimary) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = stringResource(R.string.key_detail_userids_primary).uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier
+                                .background(Color(0xFF8B5CF6), RoundedCornerShape(999.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                if (uid.email.isNotEmpty() && uid.name.isNotEmpty()) {
+                    Text(
+                        text = uid.email,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
     }
 }
 

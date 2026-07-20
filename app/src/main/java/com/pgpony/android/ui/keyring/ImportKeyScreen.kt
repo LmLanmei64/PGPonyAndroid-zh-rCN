@@ -122,7 +122,10 @@ fun ImportKeyScreen(state: KeyringUiState, viewModel: KeyringViewModel) {
             // ── Method-specific section ───────────────────────────────
             when (state.importMethod) {
                 ImportMethod.PASTE      -> PasteSection(state, viewModel)
-                ImportMethod.FILE       -> FileSection(state, viewModel)
+                ImportMethod.FILE       -> {
+                    OpenKeychainMigrationCard()
+                    FileSection(state, viewModel)
+                }
                 ImportMethod.QR_CODE    -> QrSection(state, viewModel)
                 ImportMethod.KEY_SERVER -> KeyServerSection(state, viewModel)
             }
@@ -164,17 +167,18 @@ fun ImportKeyScreen(state: KeyringUiState, viewModel: KeyringViewModel) {
                     Button(
                         onClick = { viewModel.confirmImportPreview() },
                         modifier = Modifier.weight(1f),
-                        // Block re-commit during the in-flight import,
-                        // and disable when the existing key isn't a
-                        // candidate for upgrade — confirmImportPreview
-                        // would throw AlreadyExists anyway.
-                        // HW Phase 1.5 — a card-pairing duplicate is also
-                        // a valid commit (folds the public key onto the
-                        // card record), so keep the button live for it.
+                        // Block re-commit during the in-flight import.
+                        // 4.0.0 Phase 1 (iOS v7.1.1 F3) — a plain
+                        // duplicate is now a valid commit too: it
+                        // resolves to already-in-keyring (dialog with a
+                        // View Key jump) or merges newer material into
+                        // the existing row, so the pre-4.0 duplicate
+                        // disable is gone.
+                        // HW Phase 1.5 — a card-pairing duplicate folds
+                        // the public key onto the card record; the
+                        // secret-upgrade duplicate adds the private
+                        // material. All duplicate shapes commit.
                         enabled = !state.isImporting
-                                && (!preview.isDuplicate
-                                    || preview.willUpgradeToKeyPair
-                                    || preview.willPairWithCard)
                     ) {
                         if (state.isImporting) {
                             CircularProgressIndicator(
@@ -598,6 +602,7 @@ private fun LookupSourceBadge(source: KeyLookupSource) {
     val (tint, label) = when (source) {
         KeyLookupSource.WKD_ADVANCED -> Color(0xFF22C55E) to stringResource(R.string.import_preview_source_wkd_advanced)
         KeyLookupSource.WKD_DIRECT   -> Color(0xFF22C55E) to stringResource(R.string.import_preview_source_wkd_direct)
+        KeyLookupSource.KEYSERVER    -> Color(0xFF8B5CF6) to stringResource(R.string.import_preview_source_keyserver)
         KeyLookupSource.HAGRID       -> Color(0xFF3B82F6) to stringResource(R.string.import_preview_source_hagrid)
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -629,10 +634,16 @@ private fun DuplicateBanner(willUpgrade: Boolean, willPairWithCard: Boolean = fa
             Icons.Filled.Upgrade,
             stringResource(R.string.import_duplicate_will_upgrade)
         )
+        // 4.0.0 Phase 1 (iOS v7.1.1 F3) — a plain duplicate is no
+        // longer a dead end: committing merges any newer key data or
+        // reports already-in-keyring, so the banner is informational
+        // blue rather than warning yellow. import_duplicate_no_change
+        // stays in strings.xml for additive integrity; this banner
+        // reads the merge-aware copy.
         else -> Triple(
-            Color(0xFFEAB308),
-            Icons.Filled.Warning,
-            stringResource(R.string.import_duplicate_no_change)
+            Color(0xFF3B82F6),
+            Icons.Filled.Info,
+            stringResource(R.string.import_duplicate_will_merge)
         )
     }
     Row(
@@ -661,6 +672,39 @@ private fun DuplicateBanner(willUpgrade: Boolean, willPairWithCard: Boolean = fa
 // the real activity, or null if we don't find one (shouldn't happen
 // in production — the file picker would just be a no-op rather than
 // a crash).
+@Composable
+private fun OpenKeychainMigrationCard() {
+    Spacer(modifier = Modifier.height(12.dp))
+    Surface(
+        color = Color(0xFF8B5CF6).copy(alpha = 0.10f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+            Icon(
+                Icons.Filled.SwapHoriz,
+                contentDescription = null,
+                tint = Color(0xFF8B5CF6),
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    stringResource(R.string.okc_migration_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.okc_migration_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 private tailrec fun Context.findMainActivity(): MainActivity? = when (this) {
     is MainActivity -> this
     is ContextWrapper -> baseContext.findMainActivity()

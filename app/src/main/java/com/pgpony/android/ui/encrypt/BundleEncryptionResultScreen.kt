@@ -48,6 +48,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.pgpony.android.PGPonyApp
+import com.pgpony.android.autocrypt.AutocryptHeader
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -64,6 +71,14 @@ import java.io.File
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BundleEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
+    // 4.0.0 Phase 4 — our own Autocrypt header, injected into the .eml
+    // output (best-effort; see MimeBuilder.wrapEncrypted).
+    var autocryptHeader by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        autocryptHeader = runCatching {
+            AutocryptHeader.currentUserHeader(PGPonyApp.instance.keyRepository)
+        }.getOrNull()
+    }
     val context = LocalContext.current
     // 3.1.0 Phase 5 Fix1: Save-to-Files needs the SAF document creator,
     // which lives on MainActivity (A10b helper).
@@ -110,7 +125,7 @@ fun BundleEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(
-                    onClick = { shareBundleFile(context, MimeBuilder.wrapEncrypted(armored), "message.eml", "message/rfc822") },
+                    onClick = { shareBundleFile(context, MimeBuilder.wrapEncrypted(armored, autocryptHeader = autocryptHeader), "message.eml", "message/rfc822") },
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Filled.Email, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -119,7 +134,7 @@ fun BundleEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
                 }
                 OutlinedButton(
                     onClick = {
-                        saveBundleFile(activity, context, MimeBuilder.wrapEncrypted(armored), "message.eml")
+                        saveBundleFile(activity, context, MimeBuilder.wrapEncrypted(armored, autocryptHeader = autocryptHeader), "message.eml")
                     }
                 ) {
                     Icon(

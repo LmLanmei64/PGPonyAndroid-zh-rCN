@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.foundation.clickable
@@ -47,7 +48,9 @@ fun OnboardingPage(
     slide: OnboardingSlide,
     prefs: SharedPreferences,
     keyringVm: KeyringViewModel,
-    onAdvance: () -> Unit
+    onAdvance: () -> Unit,
+    onImportExisting: () -> Unit = {},
+    onRestoreBackup: () -> Unit = {}
 ) {
     var showGenerateSheet by remember { mutableStateOf(false) }
     val keyringState by keyringVm.state.collectAsState()
@@ -124,6 +127,15 @@ fun OnboardingPage(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
+                Spacer(modifier = Modifier.height(16.dp))
+                OpenKeychainOnboardingCard()
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(onClick = onImportExisting, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.onboarding_page_import_existing))
+                }
+                TextButton(onClick = onRestoreBackup, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.onboarding_page_restore_backup))
+                }
             }
         }
 
@@ -297,6 +309,40 @@ private fun BiometricToggleRow(prefs: SharedPreferences) {
                     prefs.edit().putBoolean("biometric_lock", newValue).apply()
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun OpenKeychainOnboardingCard() {
+    Surface(
+        color = Color(0xFF8B5CF6).copy(alpha = 0.10f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+            Icon(
+                Icons.Filled.SwapHoriz,
+                contentDescription = null,
+                tint = Color(0xFF8B5CF6),
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    stringResource(R.string.okc_migration_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Start
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.okc_migration_onboarding_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Start
+                )
+            }
         }
     }
 }

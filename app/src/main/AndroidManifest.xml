@@ -27,6 +27,15 @@
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!--
+      4.0.0 Phase 6 — Orbot detection. Android 11+ package visibility
+      requires declaring a package before queryable. We only READ whether
+      Orbot is installed (to offer the one-tap SOCKS default); no
+      interaction beyond that.
+    -->
+    <queries>
+        <package android:name="org.torproject.android" />
+    </queries>
     <application
         android:name=".PGPonyApp"
         android:allowBackup="false"
@@ -36,6 +45,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.PGPony"
         android:localeConfig="@xml/locales_config"
+        android:networkSecurityConfig="@xml/network_security_config"
         tools:targetApi="35">
         <activity
             android:name=".MainActivity"
@@ -102,6 +112,8 @@
                 <data android:pathPattern=".*\\.sig" />
                 <!-- 3.1.0 Phase 4 (J2) -->
                 <data android:pathPattern=".*\\.eml" />
+                <!-- 4.0.0 Phase 3 — encrypted keyring backup opens to Restore -->
+                <data android:pathPattern=".*\\.pgpony" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -116,6 +128,8 @@
                 <data android:pathPattern=".*\\.sig" />
                 <!-- 3.1.0 Phase 4 (J2) -->
                 <data android:pathPattern=".*\\.eml" />
+                <!-- 4.0.0 Phase 3 — encrypted keyring backup opens to Restore -->
+                <data android:pathPattern=".*\\.pgpony" />
             </intent-filter>
         </activity>
 
@@ -315,6 +329,93 @@
           android:exported is false because nothing outside our process
           should be invoking it.
         -->
+        <!--
+          4.0.0 Succession Phase 1 — OpenPGP API provider service.
+
+          The exported crypto-provider surface that makes PGPony
+          selectable in Thunderbird for Android / K-9 Mail / Password
+          Store / Conversations. Clients discover providers by
+          resolving the org.openintents.openpgp.IOpenPgpService2
+          action, bind, and call execute() over AIDL.
+
+          exported=true is REQUIRED — the entire point is that other
+          apps bind to it. The security boundary is NOT the manifest;
+          it is the signature-pinned per-package allow-list enforced
+          inside the service on every call (ApiClientAuthorizer, plan
+          §5: no default-allow, first-use consent, revocation UI in
+          Settings → Connected apps).
+
+          Only the IOpenPgpService2 action is registered (API versions
+          7–11, same as OpenKeychain 6.0.4). The obsolete v1
+          IOpenPgpService action is deliberately absent: registering
+          it would advertise an interface we do not implement to
+          ancient clients.
+        -->
+        <service
+            android:name=".provider.PGPonyOpenPgpService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.openintents.openpgp.IOpenPgpService2" />
+            </intent-filter>
+        </service>
+
+        <!--
+          4.0.0 Succession Phase 1 — first-use consent dialog for API
+          clients. NOT exported: it is only ever launched through the
+          PendingIntent the provider service returns with
+          RESULT_CODE_USER_INTERACTION_REQUIRED, so external apps
+          cannot open it directly (a PendingIntent carries OUR
+          identity, which is what makes the non-exported launch work).
+          Presents as a dialog-first screen (Compose AlertDialog over
+          the app theme); excludeFromRecents so a half-finished
+          consent never lingers in the app switcher.
+        -->
+        <activity
+            android:name=".provider.ApiConsentActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PGPony"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop" />
+
+        <!--
+          4.0.0 Succession Phase P2a-1 — signing-key picker for API
+          clients (Thunderbird's "Configure end-to-end key"). Same
+          posture as the consent activity: NOT exported, reachable only
+          via the PendingIntent attached to GET_SIGN_KEY_ID responses.
+        -->
+        <activity
+            android:name=".provider.ProviderKeyPickerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PGPony"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop" />
+
+        <!--
+          4.0.0 Succession Phase P2a-2 — passphrase prompt for provider
+          operations on a protected signing key. Same posture: NOT
+          exported, PendingIntent-only. The passphrase goes into the
+          in-process ProviderPassphraseCache, never back to the client.
+        -->
+        <activity
+            android:name=".provider.ProviderPassphraseActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PGPony"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop" />
+
+        <!--
+          4.0.0 Succession Phase P2c — hardware-card operation surface
+          for API clients: NFC scan + PIN, with the whole crypto
+          operation running during the tap. Same posture as the other
+          provider activities: NOT exported, PendingIntent-only.
+        -->
+        <activity
+            android:name=".provider.ProviderCardOpActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PGPony"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop" />
+
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"

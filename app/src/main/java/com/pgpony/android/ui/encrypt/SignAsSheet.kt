@@ -16,6 +16,12 @@
 // more visual info (name, email, fingerprint, default pill, check
 // indicator) than a flat dropdown menu row can sensibly show.
 //
+// v4.0.0 (iOS parity): a "Set as default signer" action pins the current
+// selection as the persisted default signer (EncryptView.swift's
+// `signingKeyChooser` button). Once set, that key is preselected on every
+// Sign + Encrypt. Distinct from a key's generic `isDefault` flag: the
+// persisted signer fingerprint wins, falling back to isDefault when unset.
+//
 // Scope deliberately limited to KEY PAIR selection, not subkey
 // selection. For PGPony's Ed25519+Cv25519 keys the primary is the
 // signing key and the only encryption subkey is Cv25519 — there's no
@@ -44,6 +50,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -51,6 +59,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
@@ -71,7 +80,11 @@ fun SignAsSheet(
     keyPairs: List<PGPKeyEntity>,
     currentSelection: PGPKeyEntity?,
     onSelect: (PGPKeyEntity) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // v4.0.0 (iOS parity): the persisted default-signer fingerprint (empty
+    // when none pinned), and the action to pin a new one.
+    defaultSignerFingerprint: String = "",
+    onSetDefault: ((PGPKeyEntity) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -101,7 +114,20 @@ fun SignAsSheet(
                 else -> SigningKeyList(
                     keyPairs = keyPairs,
                     currentSelection = currentSelection,
+                    defaultSignerFingerprint = defaultSignerFingerprint,
                     onSelect = onSelect
+                )
+            }
+
+            // "Set as default signer" — pins the current selection so it's
+            // preselected on every Sign + Encrypt. Only meaningful with 2+
+            // key pairs (with one, it's implicitly the signer already).
+            if (onSetDefault != null && currentSelection != null && keyPairs.size > 1) {
+                Spacer(modifier = Modifier.height(4.dp))
+                DefaultSignerControl(
+                    selection = currentSelection,
+                    isCurrentDefault = currentSelection.fingerprint == defaultSignerFingerprint,
+                    onSetDefault = onSetDefault
                 )
             }
 
@@ -113,9 +139,48 @@ fun SignAsSheet(
 // ── Body composables ──────────────────────────────────────────────────
 
 @Composable
+private fun DefaultSignerControl(
+    selection: PGPKeyEntity,
+    isCurrentDefault: Boolean,
+    onSetDefault: (PGPKeyEntity) -> Unit
+) {
+    if (isCurrentDefault) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.CheckCircle,
+                contentDescription = null,
+                tint = Color(0xFF22C55E),
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = stringResource(R.string.sign_as_sheet_is_default),
+                style = MaterialTheme.typography.labelLarge,
+                color = Color(0xFF22C55E),
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    } else {
+        TextButton(onClick = { onSetDefault(selection) }) {
+            Icon(
+                imageVector = Icons.Outlined.StarBorder,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(text = stringResource(R.string.sign_as_sheet_set_default))
+        }
+    }
+}
+
+@Composable
 private fun SigningKeyList(
     keyPairs: List<PGPKeyEntity>,
     currentSelection: PGPKeyEntity?,
+    defaultSignerFingerprint: String,
     onSelect: (PGPKeyEntity) -> Unit
 ) {
     LazyColumn(
@@ -124,9 +189,17 @@ private fun SigningKeyList(
             .heightIn(max = 480.dp)
     ) {
         items(keyPairs, key = { it.fingerprint }) { key ->
+            // The default-signer badge follows the persisted fingerprint when
+            // set, else the generic isDefault flag (matches iOS's fallback).
+            val isDefaultSigner = if (defaultSignerFingerprint.isEmpty()) {
+                key.isDefault
+            } else {
+                key.fingerprint == defaultSignerFingerprint
+            }
             SigningKeyRow(
                 key = key,
                 isSelected = currentSelection?.fingerprint == key.fingerprint,
+                isDefaultSigner = isDefaultSigner,
                 onClick = { onSelect(key) }
             )
             HorizontalDivider(
@@ -141,6 +214,7 @@ private fun SigningKeyList(
 private fun SigningKeyRow(
     key: PGPKeyEntity,
     isSelected: Boolean,
+    isDefaultSigner: Boolean,
     onClick: () -> Unit
 ) {
     Row(
@@ -180,7 +254,7 @@ private fun SigningKeyRow(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                if (key.isDefault) {
+                if (isDefaultSigner) {
                     DefaultPill()
                 }
             }

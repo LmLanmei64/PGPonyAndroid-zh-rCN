@@ -118,6 +118,9 @@ data class EncryptUiState(
     val availableRecipients: List<PGPKeyEntity> = emptyList(),
     val signingKey: PGPKeyEntity? = null,
     val availableSigningKeys: List<PGPKeyEntity> = emptyList(),
+    // v4.0.0 (iOS parity) — persisted default signer fingerprint; preselected
+    // on open ahead of the generic isDefault flag. Empty = none pinned.
+    val defaultSignerFingerprint: String = "",
     val signMessage: Boolean = false,
     // Sign tab: produce a standalone detached signature block instead of
     // a clear-signed message. Only consulted in EncryptMode.SIGN.
@@ -404,6 +407,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 !it.isRevoked && it.isCardBacked && !it.isKeyPair && it.armoredPublicKey != null
             }
             val signableKeys = unrevokedKeyPairs + cardSigners
+            val defaultSignerFpr = appPrefs.getString("pgpony_default_signer_fpr", "") ?: ""
 
             // Phase A4 — default/remembered recipient pre-selection. Only seed
             // when nothing is selected yet (loadKeys also runs on tab return,
@@ -427,8 +431,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 // (loadKeys runs on tab return, so this can happen), bump
                 // it back to default-or-first to avoid the user signing
                 // with a revoked key on autopilot.
-                signingKey = signableKeys.firstOrNull { it.isDefault }
-                    ?: signableKeys.firstOrNull()
+                signingKey = signableKeys.firstOrNull { it.fingerprint == defaultSignerFpr }
+                    ?: signableKeys.firstOrNull { it.isDefault }
+                    ?: signableKeys.firstOrNull(),
+                defaultSignerFingerprint = defaultSignerFpr
             )
             // Phase A6 — DECRYPT side keeps revoked keys available.
             // A user can still legitimately decrypt messages that were
@@ -503,6 +509,16 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
     fun setSigningKey(key: PGPKeyEntity?) {
         _encryptState.value = _encryptState.value.copy(signingKey = key)
+    }
+
+    /** v4.0.0 (iOS parity) — pin [key] as the default signer, preselected
+     *  on every Sign + Encrypt open. Persisted in app prefs. */
+    fun setDefaultSigner(key: PGPKeyEntity) {
+        appPrefs.edit().putString("pgpony_default_signer_fpr", key.fingerprint).apply()
+        _encryptState.value = _encryptState.value.copy(
+            defaultSignerFingerprint = key.fingerprint,
+            signingKey = key
+        )
     }
 
     fun setDetachedSignature(enabled: Boolean) {
@@ -1046,7 +1062,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         _encryptState.value = _encryptState.value.copy(
             showEncryptResultSheet = false
         )
-        clearEncryptInputsForPrivacy()
+        clearEncryptInputsIfEnabled()
     }
 
     // ── 3.1.0 Phase 5 (J3/J4): Bundle compose ──────────────────────────
@@ -1167,7 +1183,21 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             showBundleResultSheet = false,
             encryptedBundleArmored = null
         )
-        clearEncryptInputsForPrivacy()
+        clearEncryptInputsIfEnabled()
+    }
+
+    /**
+     * 4.0.0 Phase 9b (iOS v7.1.1 parity) — the auto-wipe is now a user
+     * setting ("Clear inputs after encrypting", Settings → Security).
+     * Default ON preserves the 3.1.0 Phase 5 always-on behavior every
+     * existing install has today; iOS gained the same toggle in 7.1.1.
+     * Read live from prefs at each dismissal so a Settings change
+     * applies to the very next result close, no restart.
+     */
+    private fun clearEncryptInputsIfEnabled() {
+        if (appPrefs.getBoolean("clear_inputs_after_encrypt", true)) {
+            clearEncryptInputsForPrivacy()
+        }
     }
 
     /**
@@ -1175,6 +1205,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * clears your message, files, and attachments automatically after
      * you close the result, so nothing lingers between sessions." One
      * place, called from every encrypt-result dismissal.
+     * 4.0.0 Phase 9b: dismissals route through
+     * [clearEncryptInputsIfEnabled] so the wipe honors the new setting.
      */
     private fun clearEncryptInputsForPrivacy() {
         _encryptState.value = _encryptState.value.copy(
@@ -1203,7 +1235,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             encryptedFileBytes = null
         )
         // 3.1.0 Phase 5 (privacy): see clearEncryptInputsForPrivacy.
-        clearEncryptInputsForPrivacy()
+        // 4.0.0 Phase 9b: honors the "Clear inputs after encrypting" setting.
+        clearEncryptInputsIfEnabled()
     }
 
     // ── Decrypt ────────────────────────────────────────────────────────
@@ -1527,6 +1560,23 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * the same UnknownSigner-with-lookup affordance clear-signed gets
      * today.
      */
+    /**
+     * 4.0.0 Phase 4 — app-side Autocrypt. Pull the sender's key from an
+     * `Autocrypt:` header on a decrypted email (and any `Autocrypt-Gossip`
+     * from the decrypted MIME) into the peer store, so PGPony's own decrypt
+     * acquires keys automatically like the provider does. Guarded on the
+     * header string so non-Autocrypt decrypts pay nothing.
+     */
+    private fun ingestAutocrypt(rawInput: String?, decrypted: ByteArray?) {
+        if (rawInput == null || !rawInput.contains("Autocrypt", ignoreCase = true)) return
+        val decText = decrypted?.toString(Charsets.UTF_8)
+        viewModelScope.launch {
+            runCatching {
+                PGPonyApp.instance.autocryptPeerStore.ingestEmail(rawInput, decText)
+            }
+        }
+    }
+
     private fun decryptAndVerifyPath(s: DecryptUiState) {
         viewModelScope.launch {
             _decryptState.value = _decryptState.value.copy(isProcessing = true, errorMessage = null)
@@ -1579,6 +1629,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     showStructuredResultSheet = mime != null
                 )
                 _events.tryEmit(Event.DecryptSuccess)
+                ingestAutocrypt(s.inputText, result.data)
                 recordDecryptUsage(s.selectedKeyFingerprint)
             } catch (e: com.pgpony.android.crypto.PGPCryptoError.PassphraseRequired) {
                 _decryptState.value = _decryptState.value.copy(

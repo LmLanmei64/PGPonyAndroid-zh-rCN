@@ -106,6 +106,8 @@
     <string name="common_button_select">Select</string>
     <string name="common_button_select_all">Select All</string>
     <string name="common_button_clear">Clear</string>
+    <!-- 4.0.0 Phase 9 (F6) — compact Paste label for inline editor rows -->
+    <string name="common_button_paste">Paste</string>
     <string name="common_button_confirm">Confirm</string>
     <string name="common_button_skip">Skip</string>
     <string name="common_loading">Loading…</string>
@@ -558,7 +560,7 @@
     <string name="import_keyserver_query_placeholder">alice@example.com</string>
     <string name="import_keyserver_search_button">Search</string>
     <string name="import_keyserver_search_button_in_progress">Searching…</string>
-    <string name="import_keyserver_help">For email addresses, PGPony first tries Web Key Directory at the recipient\'s own domain, then falls back to keys.openpgp.org. Fingerprints go straight to keys.openpgp.org.</string>
+    <string name="import_keyserver_help">For email addresses, PGPony first tries Web Key Directory at the recipient\'s own domain, then your configured key servers (keys.pgpony.app first), then keys.openpgp.org. Fingerprints skip WKD and search your key servers in the same order.</string>
 
     <!-- ── Preview card ─────────────────────────────────────────────── -->
     <string name="import_preview_type_key_pair">Key Pair (Public + Private)</string>
@@ -571,11 +573,20 @@
     <string name="import_preview_source_wkd_advanced">Found via WKD (advanced)</string>
     <string name="import_preview_source_wkd_direct">Found via WKD (direct)</string>
     <string name="import_preview_source_hagrid">Found via keys.openpgp.org</string>
+    <string name="import_preview_source_keyserver">Found via your key servers</string>
 
     <!-- ── Duplicate banner ─────────────────────────────────────────── -->
     <string name="import_duplicate_will_upgrade">This key is already in your keyring. Importing will add the private material and upgrade it to a key pair.</string>
     <string name="import_duplicate_no_change">This key is already in your keyring. Importing again won\'t change anything.</string>
     <string name="import_duplicate_will_pair_card">This matches a hardware key on your keyring. Importing will pair this public key with the card so you can encrypt to it and verify its signatures.</string>
+
+    <!-- ── 4.0.0 Phase 1: duplicate-import merge + alert (iOS v7.1.1 F3) ── -->
+    <string name="import_duplicate_will_merge">This key is already in your keyring. Importing will merge any newer key data into your existing entry.</string>
+    <string name="import_duplicate_alert_title">Already in Keyring</string>
+    <string name="import_duplicate_alert_body_format">The key for %1$s is already in your keyring, and the imported copy contains nothing new.</string>
+    <string name="import_duplicate_view_key">View Key</string>
+    <string name="import_result_merged">This key was already in your keyring. It has been updated with the newer key material.</string>
+    <string name="import_result_already_in_keyring">This key is already in your keyring.</string>
 
     <!-- ── Confirm/cancel buttons (preview card) ────────────────────── -->
     <string name="import_button_upgrade_key">Upgrade Key</string>
@@ -641,6 +652,16 @@
     <string name="kd_vm_check_found">This key is published on the keyserver.</string>
     <string name="kd_vm_check_not_found">This key was not found on the keyserver.</string>
     <string name="kd_vm_check_failed_format">Keyserver check failed: %1$s</string>
+
+    <!-- ── 4.0.0 Phase 2: keyserver refresh + User IDs (iOS v7.1.1 F4/F5) ── -->
+    <string name="key_detail_action_refresh_key_server">Refresh from key server</string>
+    <string name="kd_vm_refresh_up_to_date">This key is up to date with the keyserver.</string>
+    <string name="kd_vm_refresh_merged">Refreshed. This key has been updated with the newer material from the keyserver.</string>
+    <string name="kd_vm_refresh_revoked">The keyserver copy of this key is revoked. The revocation has been applied.</string>
+    <string name="kd_vm_refresh_mismatch">The keyserver returned a key whose fingerprint doesn\'t match this key. Nothing was changed.</string>
+    <string name="kd_vm_refresh_failed_format">Keyserver refresh failed: %1$s</string>
+    <string name="key_detail_userids_title">User IDs</string>
+    <string name="key_detail_userids_primary">Primary</string>
     <string name="key_detail_action_delete_key">Delete Key</string>
     <string name="key_detail_action_revoke_key">Revoke Key…</string>
     <string name="key_detail_action_export_revocation_cert">Export Revocation Certificate</string>
@@ -991,6 +1012,8 @@
     <!-- ── Key server lookup ────────────────────────────────────────── -->
     <string name="exchange_keyserver_query_label">Email or fingerprint</string>
     <string name="exchange_keyserver_search_cd">Search</string>
+    <string name="exchange_keyserver_search_button">Search key servers</string>
+    <string name="exchange_keyserver_searching">Searching…</string>
     <string name="exchange_keyserver_import_button">Import Key</string>
 
     <!-- ── Tooltip ──────────────────────────────────────────────────── -->
@@ -1155,6 +1178,8 @@
     <string name="sign_as_sheet_selected_cd">Selected</string>
     <string name="sign_as_sheet_default_badge">DEFAULT</string>
     <string name="sign_as_sheet_empty">No key pairs available.</string>
+    <string name="sign_as_sheet_set_default">Set as default signer</string>
+    <string name="sign_as_sheet_is_default">Default signer</string>
 
     <!-- ════════════════════════════════════════════════════════════════
          QRScannerScreen
@@ -1497,6 +1522,8 @@
     <!-- 3.1.0 Phase 5 (J3/J4) — Bundle compose + outputs -->
     <string name="encrypt_mode_bundle">Bundle</string>
     <string name="encrypt_bundle_body_label">Message</string>
+    <!-- 4.0.0 Phase 9 (F6) — Bundle body character count -->
+    <string name="encrypt_bundle_char_count_format">%1$d characters</string>
     <string name="encrypt_bundle_add_photos">Add photos</string>
     <string name="encrypt_bundle_add_files">Add files</string>
     <string name="encrypt_bundle_attachments_format">Attachments (%1$d)</string>
@@ -1523,6 +1550,18 @@
     <string name="settings_card_pin_cache_countdown_format">PIN remembered — clears in %1$s</string>
     <string name="settings_card_pin_cache_none_held">No PIN is currently remembered.</string>
     <string name="settings_card_pin_cache_clear">Clear now</string>
+    <!-- 4.0.0 Phase 9 (G9) — "Until I clear it" PIN cache mode -->
+    <string name="settings_card_pin_cache_until_cleared">Until I clear it</string>
+    <string name="settings_card_pin_cache_held_until_cleared">PIN remembered until you clear it.</string>
+    <!-- 4.0.0 Phase 9b: settings parity (clear inputs, pubkey comment, licenses) -->
+    <string name="settings_clear_inputs_title">Clear inputs after encrypting</string>
+    <string name="settings_clear_inputs_subtitle">Wipe the message, files, and passwords when you close an encryption result</string>
+    <string name="settings_armor_comment_pubkey_title">Include comment in exported public keys</string>
+    <string name="settings_armor_comment_pubkey_subtitle">Add the Comment header when you copy, share, or save a public key. Keyserver uploads and QR codes stay comment free.</string>
+    <string name="settings_about_licenses_title">Licenses</string>
+    <string name="settings_about_licenses_subtitle">Open source attributions</string>
+    <string name="licenses_title">Licenses</string>
+    <string name="licenses_subtitle">Third party software used by PGPony.</string>
     <!-- 3.1.0 Phase 8 (E4/E5) — email send + sign by default -->
     <string name="result_send_email_button">Send as Email</string>
     <string name="settings_sign_by_default_title">Sign by default</string>
@@ -1539,4 +1578,139 @@
     <string name="keyring_error_parse_diag">Couldn\'t read a key from the file — got %1$d bytes starting with \"%2$s\"</string>
     <!-- 3.1.0 Phase 8 Fix3 — richer file import diagnostic -->
     <string name="keyring_error_parse_diag2">Couldn\'t read a key from \"%1$s\" — got %2$d bytes (file reports %3$s), starting with \"%4$s\"</string>
+    <!-- 4.0.0 Succession Phase 1 — OpenPGP API provider -->
+    <string name="settings_section_provider">OpenPGP Provider</string>
+    <string name="settings_provider_clients_title">Connected apps</string>
+    <string name="settings_provider_clients_subtitle">Apps allowed to use PGPony for OpenPGP encryption, like Thunderbird or K-9 Mail</string>
+    <string name="provider_clients_title">Connected apps</string>
+    <string name="provider_clients_subtitle">These apps can use your PGPony keyring through the OpenPGP API. Removing an app here revokes its access immediately — it will ask for permission again on its next request.</string>
+    <string name="provider_clients_empty_title">No connected apps yet</string>
+    <string name="provider_clients_empty_body">In an OpenPGP-capable app such as Thunderbird for Android, choose PGPony as the OpenPGP provider. The app will appear here after you approve its first connection.</string>
+    <string name="provider_clients_granted_format">Connected %1$s</string>
+    <string name="provider_clients_revoke">Revoke access</string>
+    <string name="provider_consent_title">Allow %1$s?</string>
+    <string name="provider_consent_body">%1$s (%2$s) wants to use PGPony for OpenPGP operations such as encrypting, decrypting, and signing.\n\nPGPony will remember this app by its package name and signing certificate. You can revoke access at any time in Settings → Connected apps.</string>
+    <string name="provider_consent_allow">Allow</string>
+    <string name="provider_consent_deny">Don\'t allow</string>
+    <!-- 4.0.0 Succession Phase P2a-1 — signing-key picker -->
+    <string name="provider_keypicker_title">Choose signing key</string>
+    <string name="provider_keypicker_for_format">For %1$s</string>
+    <string name="provider_keypicker_none">No key — don\'t sign</string>
+    <string name="provider_keypicker_empty">No usable keys in your keyring yet. Create or import a key pair in PGPony first.</string>
+    <!-- 4.0.0 Succession Phase P2a-2 — provider passphrase prompt -->
+    <string name="provider_passphrase_title">Unlock signing key</string>
+    <string name="provider_passphrase_body_format">Enter the passphrase for %1$s to sign this message. PGPony remembers it for 5 minutes on this device only.</string>
+    <string name="provider_passphrase_wrong">Wrong passphrase — try again.</string>
+    <string name="provider_passphrase_hint">Passphrase</string>
+    <string name="provider_passphrase_unlock">Unlock</string>
+    <!-- 4.0.0 Succession Phase P2c — provider hardware-card operations -->
+    <string name="provider_cardop_title">Confirm with your %1$s key</string>
+    <string name="provider_cardop_generic_card">security</string>
+    <string name="provider_cardop_body_sign">This message will be signed with your hardware key. Enter the card PIN, then hold the key against the back of your phone.</string>
+    <string name="provider_cardop_body_decrypt">This message is encrypted to your hardware key. Enter the card PIN, then hold the key against the back of your phone.</string>
+    <string name="provider_cardop_pin_hint">Card PIN</string>
+    <string name="provider_cardop_pin_needed">Enter the card PIN first, then tap the card again.</string>
+    <string name="provider_cardop_waiting">Waiting for the card…</string>
+    <string name="provider_cardop_wrong_pin">Wrong PIN — %1$d tries remaining. Check the PIN and tap the card again.</string>
+    <string name="provider_cardop_tag_lost">The card moved away — hold it still against the phone and try again.</string>
+    <string name="provider_cardop_nfc_unavailable">NFC is unavailable or turned off. Enable NFC and try again.</string>
+    <string name="provider_cardop_generic_error">The card operation failed. Hold the card still and try again.</string>
+    <!-- P2c Fix1 -->
+    <string name="provider_cardop_no_slot_key">This card has no key in the required slot.</string>
+    <string name="provider_cardop_pair_first">Pair this card\'s public key into your PGPony keyring first, then try again.</string>
+    <string name="provider_cardop_wrong_card">This is a different card than the selected key. Tap the matching card.</string>
+    <!-- 4.0.0 Phase 5a — multi-keyserver directory + publish -->
+    <string name="settings_section_keyservers">Key Servers</string>
+    <string name="settings_keyservers_title">Key servers</string>
+    <string name="settings_keyservers_subtitle">Where PGPony looks up and publishes keys</string>
+    <string name="keyservers_title">Key servers</string>
+    <string name="keyservers_subtitle">PGPony looks up keys from these servers in order and publishes to the ones you enable. keys.pgpony.app is PGPony\'s own server and accepts every key type.</string>
+    <string name="keyservers_first_party_badge">FIRST-PARTY</string>
+    <string name="keyservers_lookup">Use for lookup</string>
+    <string name="keyservers_publish">Use for publishing</string>
+    <string name="keyservers_move_up">Move up</string>
+    <string name="keyservers_move_down">Move down</string>
+    <string name="keyservers_reset">Reset to defaults</string>
+    <string name="publish_title">Publish key</string>
+    <string name="publish_subtitle">Upload this public key so others can find it. Choose which servers to publish to.</string>
+    <string name="publish_action">Publish</string>
+    <string name="publish_may_not_accept_format">May not accept %1$s keys — your other servers still will.</string>
+    <string name="publish_rejected_key_type_format">Not accepted — this server likely doesn\'t support %1$s keys yet. Still published to your other servers.</string>
+    <string name="publish_failed_format">Couldn\'t publish: %1$s</string>
+    <string name="publish_ok">Published.</string>
+    <string name="publish_ok_pending">Published — check %1$s for a verification email.</string>
+    <string name="publish_status_verified">✓ Verified identity</string>
+    <string name="publish_status_awaiting">Published, awaiting email verification</string>
+    <string name="publish_status_published">Published</string>
+    <string name="publish_status_not_published">Not on this server yet</string>
+    <!-- 4.0.0 Phase 5 — background keyserver refresh -->
+    <string name="settings_section_key_refresh">Key Refresh</string>
+    <string name="settings_key_refresh_title">Background refresh</string>
+    <string name="settings_key_refresh_subtitle">Automatically re-check your keys on the key servers so you notice revocations and expirations</string>
+    <string name="settings_key_refresh_wifi_title">Wi-Fi only</string>
+    <string name="settings_key_refresh_wifi_subtitle">Refresh only on unmetered networks</string>
+    <string name="settings_key_refresh_disclosure">When on, PGPony periodically sends your held keys\' fingerprints to your enabled key servers (including keys.pgpony.app) to fetch updates. Use the onion option under Proxy to keep this over Tor.</string>
+    <string name="settings_key_refresh_foss_enable">F-Droid builds keep this off by default. Turn it on to let PGPony check for revocations automatically.</string>
+    <string name="key_refresh_notif_revoked_title">A key was revoked</string>
+    <string name="key_refresh_notif_revoked_body">%1$s\'s key is now revoked on a key server. You may want to stop using it.</string>
+    <string name="key_refresh_notif_expired_title">A key expired</string>
+    <string name="key_refresh_notif_expired_body">%1$s\'s key has expired according to a key server.</string>
+    <!-- 4.0.0 Phase 6 — SOCKS/Tor proxy -->
+    <string name="settings_section_proxy">Proxy (Tor)</string>
+    <string name="settings_proxy_title">Route traffic through a proxy</string>
+    <string name="settings_proxy_subtitle">Send all key server and WKD traffic through Tor or a SOCKS5 proxy</string>
+    <string name="settings_proxy_mode_off">Off</string>
+    <string name="settings_proxy_mode_orbot">Orbot (Tor)</string>
+    <string name="settings_proxy_mode_custom">Custom</string>
+    <string name="settings_proxy_orbot_missing">Orbot isn\'t installed. Install it from F-Droid or Google Play to route through Tor.</string>
+    <string name="settings_proxy_custom_host">SOCKS5 host</string>
+    <string name="settings_proxy_custom_port">Port</string>
+    <string name="settings_proxy_onion_title">Use PGPony onion mirror</string>
+    <string name="settings_proxy_onion_subtitle">Reach keys.pgpony.app over its .onion so keyserver traffic never leaves Tor</string>
+    <string name="settings_proxy_failclosed_note">When the proxy is unreachable, requests fail rather than falling back to a direct connection.</string>
+
+    <!-- 4.0.0 Phase 3 — encrypted keyring backup / restore -->
+    <string name="settings_section_backup">Backup</string>
+    <string name="settings_backup_title">Back up &amp; restore</string>
+    <string name="settings_backup_subtitle">Save your whole keyring to an encrypted file, or restore one</string>
+    <string name="backup_screen_title">Backup &amp; Restore</string>
+    <string name="backup_menu_backup_title">Back up my keyring</string>
+    <string name="backup_menu_backup_subtitle">Save all your keys to one encrypted file</string>
+    <string name="backup_menu_restore_title">Restore from a backup</string>
+    <string name="backup_menu_restore_subtitle">Import keys from a .pgpony backup file</string>
+    <string name="backup_code_heading">Your recovery code</string>
+    <string name="backup_code_explain">This code is the only way to open your backup. Write it down and keep it somewhere safe — PGPony can\'t recover it for you.</string>
+    <string name="backup_code_copy">Copy code</string>
+    <string name="backup_code_copied">Copied</string>
+    <string name="backup_confirm_label">Re-enter your recovery code</string>
+    <string name="backup_confirm_hint">Confirm you\'ve saved it before the file is written.</string>
+    <string name="backup_confirm_mismatch">That doesn\'t match the code above</string>
+    <string name="backup_continue">Save backup</string>
+    <string name="backup_working">Working…</string>
+    <string name="backup_saved_title">Backup saved</string>
+    <string name="backup_saved_body">Keep your recovery code somewhere safe — you\'ll need it to restore this backup.</string>
+    <string name="restore_code_heading">Enter the recovery code</string>
+    <string name="restore_code_explain">Enter the recovery code from when this backup was created.</string>
+    <string name="restore_code_heading_okc">Enter your OpenKeychain backup code</string>
+    <string name="restore_code_explain_okc">The 36-digit code OpenKeychain showed when you created this backup. It\'ll import all the keys inside.</string>
+    <string name="restore_code_label">Recovery code</string>
+    <string name="restore_run">Restore</string>
+    <string name="restore_done_title">Restore complete</string>
+    <string name="restore_added">Added</string>
+    <string name="restore_upgraded">Upgraded to key pair</string>
+    <string name="restore_updated">Updated</string>
+    <string name="restore_unchanged">Already up to date</string>
+    <string name="restore_failed">Couldn\'t restore</string>
+    <string name="restore_settings_applied">Settings restored</string>
+    <string name="restore_nothing">No keys were found in this backup.</string>
+    <string name="backup_done">Done</string>
+    <!-- 4.0.0 Phase 3 — onboarding: three paths (create / import / restore) -->
+    <string name="onboarding_page_import_existing">I already have a key</string>
+    <string name="onboarding_page_restore_backup">Restore from a backup</string>
+    <!-- 4.0.0 Phase 3 — multi-key import summary (OpenKeychain export-all) -->
+    <string name="import_multi_result_format">Imported %1$d keys: %2$d new, %3$d updated, %4$d already present</string>
+    <!-- 4.0.0 Phase 3 — OpenKeychain migration card -->
+    <string name="okc_migration_title">Coming from OpenKeychain?</string>
+    <string name="okc_migration_body">Export your keys in OpenKeychain, then pick that file below — they all import at once. For an encrypted OpenKeychain backup (a .sec.pgp file), use Settings → Backup → Restore instead.</string>
+    <string name="okc_migration_onboarding_body">Choose \"Restore from a backup\" for an encrypted OpenKeychain backup, or \"I already have a key\" to import an exported key file.</string>
 </resources>

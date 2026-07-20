@@ -69,7 +69,8 @@ import com.pgpony.android.ui.theme.AppTheme
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     onReplayOnboarding: () -> Unit = {},
-    onOpenPassStore: () -> Unit = {}
+    onOpenPassStore: () -> Unit = {},
+    onKeysChanged: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
     val billingService = LocalBillingService.current
@@ -80,6 +81,15 @@ fun SettingsScreen(
     // showSecurityInfo pattern used for the security-info modal.
     var showLanguagePicker by remember { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
+    // 4.0.0 Phase 9b — About → Licenses overlay flag, same pattern as
+    // the security-info and language-picker overlays above.
+    var showLicenses by remember { mutableStateOf(false) }
+    // 4.0.0 Succession Phase 1 — OpenPGP provider → Connected apps
+    // overlay flag, same pattern as the overlays above.
+    var showApiClients by remember { mutableStateOf(false) }
+    // 4.0.0 Phase 5a — Key servers directory overlay flag.
+    var showKeyservers by remember { mutableStateOf(false) }
+    var showBackup by remember { mutableStateOf(false) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = context as? android.app.Activity
@@ -208,6 +218,19 @@ fun SettingsScreen(
             SignByDefaultToggle()
             // ── 3.1.0 Phase 7 (B1/B2/B3): Remember Card PIN ─────────────
             CardPinCacheSection()
+            // ── 4.0.0 Phase 9b (iOS v7.1.1 parity): auto-wipe toggle ────
+            //
+            // The wipe behavior itself shipped in 3.1.0 Phase 5
+            // (always-on); this makes it a setting. Default ON preserves
+            // what every existing install does today.
+            SettingsToggle(
+                title = stringResource(R.string.settings_clear_inputs_title),
+                subtitle = stringResource(R.string.settings_clear_inputs_subtitle),
+                icon = Icons.Filled.CleaningServices,
+                iconTint = Color(0xFFF59E0B),
+                checked = state.clearInputsAfterEncrypt,
+                onCheckedChange = { viewModel.setClearInputsAfterEncrypt(it) }
+            )
             Spacer(modifier = Modifier.height(16.dp))
 
             // ── 3.1.0 Phase 8 (E4 F-item): email send format ────────────
@@ -344,6 +367,21 @@ fun SettingsScreen(
                     )
                 }
             }
+            // ── 4.0.0 Phase 9b (iOS 7.1.x parity): pubkey export comment ──
+            //
+            // Independent toggle for the Comment header on user-facing
+            // public key exports (Key Detail → Share Public Key: copy,
+            // save-as-file, share sheet). Shares the comment text above.
+            // Keyserver uploads and QR codes stay comment-free regardless
+            // — same exemption as iOS.
+            SettingsToggle(
+                title = stringResource(R.string.settings_armor_comment_pubkey_title),
+                subtitle = stringResource(R.string.settings_armor_comment_pubkey_subtitle),
+                icon = Icons.Filled.QrCode2,
+                iconTint = Color(0xFF10B981),
+                checked = state.armorCommentPubkeyInclude,
+                onCheckedChange = { viewModel.setArmorCommentPubkeyInclude(it) }
+            )
             Spacer(modifier = Modifier.height(16.dp))
 
             // ── Appearance Section (Phase A12) ─────────────────────────
@@ -584,6 +622,54 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(16.dp))
 
+            // ── OpenPGP Provider Section (4.0.0 Succession Phase 1) ────
+            //
+            // Management surface for the OpenPGP API provider: which
+            // apps (Thunderbird for Android, K-9, Password Store, …)
+            // may use PGPony as their crypto engine. The revocation UI
+            // is a plan §5 non-negotiable for the exported service.
+            SectionHeader(stringResource(R.string.settings_section_provider))
+            SettingsAction(
+                title = stringResource(R.string.settings_provider_clients_title),
+                subtitle = stringResource(R.string.settings_provider_clients_subtitle),
+                icon = Icons.Filled.Link,
+                iconTint = Color(0xFF8B5CF6),
+                onClick = { showApiClients = true }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── Key Servers Section (4.0.0 Phase 5a) ───────────────────
+            SectionHeader(stringResource(R.string.settings_section_keyservers))
+            SettingsAction(
+                title = stringResource(R.string.settings_keyservers_title),
+                subtitle = stringResource(R.string.settings_keyservers_subtitle),
+                icon = Icons.Filled.Dns,
+                iconTint = Color(0xFF8B5CF6),
+                onClick = { showKeyservers = true }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── Key Refresh Section (4.0.0 Phase 5) ────────────────────
+            SectionHeader(stringResource(R.string.settings_section_key_refresh))
+            BackgroundRefreshSection()
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── Proxy / Tor Section (4.0.0 Phase 6) ────────────────────
+            SectionHeader(stringResource(R.string.settings_section_proxy))
+            ProxySection()
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── Backup Section (4.0.0 Phase 3) ─────────────────────────
+            SectionHeader(stringResource(R.string.settings_section_backup))
+            SettingsAction(
+                title = stringResource(R.string.settings_backup_title),
+                subtitle = stringResource(R.string.settings_backup_subtitle),
+                icon = Icons.Filled.Backup,
+                iconTint = Color(0xFF8B5CF6),
+                onClick = { showBackup = true }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
             // ── Data Section ───────────────────────────────────────────
             SectionHeader(stringResource(R.string.settings_section_data))
             TextButton(
@@ -755,6 +841,15 @@ fun SettingsScreen(
                 icon = Icons.Filled.Security,
                 iconTint = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // 4.0.0 Phase 9b — open-source attributions (iOS parity;
+            // Bouncy Castle's MIT-style license requires the notice).
+            SettingsAction(
+                title = stringResource(R.string.settings_about_licenses_title),
+                subtitle = stringResource(R.string.settings_about_licenses_subtitle),
+                icon = Icons.Filled.Description,
+                iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                onClick = { showLicenses = true }
+            )
             SettingsAction(
                 title = stringResource(R.string.settings_about_replay_onboarding_title),
                 subtitle = stringResource(R.string.settings_about_replay_onboarding_subtitle),
@@ -842,6 +937,27 @@ fun SettingsScreen(
     // ── Help & FAQ (Phase 2) ────────────────────────────────────────────
     if (showHelp) {
         HelpScreen(onDismiss = { showHelp = false })
+    }
+
+    // ── Licenses (4.0.0 Phase 9b) ───────────────────────────────────────
+    if (showLicenses) {
+        LicensesScreen(onDismiss = { showLicenses = false })
+    }
+
+    // ── Connected apps (4.0.0 Succession Phase 1) ───────────────────────
+    if (showApiClients) {
+        ApiClientsScreen(onDismiss = { showApiClients = false })
+    }
+
+    // ── Key servers (4.0.0 Phase 5a) ────────────────────────────────────
+    if (showKeyservers) {
+        KeyserversScreen(onDismiss = { showKeyservers = false })
+    }
+    if (showBackup) {
+        com.pgpony.android.ui.backup.BackupScreen(
+            onDismiss = { showBackup = false },
+            onRestored = onKeysChanged
+        )
     }
 }
 
@@ -945,6 +1061,210 @@ private fun SettingsAction(
 // recomputes expiry from the CURRENT duration preference on every
 // read, changing the duration updates both the held PIN's lifetime and
 // the visible countdown immediately (the 7.1.x recompute F-item).
+// ── 4.0.0 Phase 5 — background keyserver refresh settings ──────────────
+//
+// Self-contained (reads/writes SharedPreferences directly, same pattern
+// as CardPinCacheSection), so no SettingsViewModel change. Every toggle
+// re-applies the WorkManager schedule immediately via
+// KeyRefreshScheduler.apply. §6 Q4: the enable default is play=ON /
+// foss=OFF (KeyRefreshScheduler.defaultEnabled), and the foss build
+// shows a one-line "turn it on" nudge when off. The privacy disclosure
+// (plan §5) sits under the toggle whenever it's enabled.
+@Composable
+private fun BackgroundRefreshSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember {
+        context.getSharedPreferences(
+            com.pgpony.android.sync.KeyRefreshScheduler.PREFS, android.content.Context.MODE_PRIVATE
+        )
+    }
+    var enabled by remember {
+        mutableStateOf(com.pgpony.android.sync.KeyRefreshScheduler.isEnabled(context))
+    }
+    var wifiOnly by remember {
+        mutableStateOf(com.pgpony.android.sync.KeyRefreshScheduler.isWifiOnly(context))
+    }
+
+    SettingsToggle(
+        title = stringResource(R.string.settings_key_refresh_title),
+        subtitle = stringResource(R.string.settings_key_refresh_subtitle),
+        icon = Icons.Filled.Sync,
+        iconTint = Color(0xFF8B5CF6),
+        checked = enabled,
+        onCheckedChange = {
+            enabled = it
+            prefs.edit().putBoolean(
+                com.pgpony.android.sync.KeyRefreshScheduler.KEY_ENABLED, it
+            ).apply()
+            com.pgpony.android.sync.KeyRefreshScheduler.apply(context)
+        }
+    )
+
+    if (!enabled && com.pgpony.android.BuildConfig.FLAVOR == "foss") {
+        Text(
+            stringResource(R.string.settings_key_refresh_foss_enable),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
+        )
+    }
+
+    if (enabled) {
+        SettingsToggle(
+            title = stringResource(R.string.settings_key_refresh_wifi_title),
+            subtitle = stringResource(R.string.settings_key_refresh_wifi_subtitle),
+            icon = Icons.Filled.Wifi,
+            iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+            checked = wifiOnly,
+            onCheckedChange = {
+                wifiOnly = it
+                prefs.edit().putBoolean(
+                    com.pgpony.android.sync.KeyRefreshScheduler.KEY_WIFI_ONLY, it
+                ).apply()
+                com.pgpony.android.sync.KeyRefreshScheduler.apply(context)
+            }
+        )
+        Text(
+            stringResource(R.string.settings_key_refresh_disclosure),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 36.dp, top = 4.dp)
+        )
+    }
+}
+
+// ── 4.0.0 Phase 6 — SOCKS/Tor proxy settings ───────────────────────────
+//
+// Self-contained (SharedPreferences via ProxyPrefs). Mode chips
+// Off / Orbot / Custom; custom host+port fields; the onion-mirror
+// toggle and the fail-closed note when a proxy is active. Changing the
+// mode invalidates the shared client so the next request uses the new
+// route.
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ProxySection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var mode by remember {
+        mutableStateOf(com.pgpony.android.network.ProxyPrefs.config(context).mode)
+    }
+    var onion by remember {
+        mutableStateOf(com.pgpony.android.network.ProxyPrefs.onionMirror(context))
+    }
+    var customHost by remember {
+        mutableStateOf(
+            context.getSharedPreferences(
+                com.pgpony.android.network.ProxyPrefs.PREFS, android.content.Context.MODE_PRIVATE
+            ).getString(com.pgpony.android.network.ProxyPrefs.KEY_CUSTOM_HOST, "") ?: ""
+        )
+    }
+    var customPort by remember {
+        mutableStateOf(
+            context.getSharedPreferences(
+                com.pgpony.android.network.ProxyPrefs.PREFS, android.content.Context.MODE_PRIVATE
+            ).getInt(
+                com.pgpony.android.network.ProxyPrefs.KEY_CUSTOM_PORT,
+                com.pgpony.android.network.ProxyPrefs.ORBOT_PORT
+            ).toString()
+        )
+    }
+
+    Text(
+        stringResource(R.string.settings_proxy_subtitle),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = 8.dp)
+    )
+
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        data class ModeOpt(val id: String, val labelRes: Int)
+        listOf(
+            ModeOpt(com.pgpony.android.network.ProxyPrefs.MODE_OFF, R.string.settings_proxy_mode_off),
+            ModeOpt(com.pgpony.android.network.ProxyPrefs.MODE_ORBOT, R.string.settings_proxy_mode_orbot),
+            ModeOpt(com.pgpony.android.network.ProxyPrefs.MODE_CUSTOM, R.string.settings_proxy_mode_custom)
+        ).forEach { opt ->
+            FilterChip(
+                selected = mode == opt.id,
+                onClick = {
+                    mode = opt.id
+                    com.pgpony.android.network.ProxyPrefs.setMode(context, opt.id)
+                    com.pgpony.android.network.HttpClientFactory.invalidate()
+                },
+                label = { Text(stringResource(opt.labelRes)) }
+            )
+        }
+    }
+
+    if (mode == com.pgpony.android.network.ProxyPrefs.MODE_ORBOT &&
+        !com.pgpony.android.network.ProxyPrefs.isOrbotInstalled(context)
+    ) {
+        Text(
+            stringResource(R.string.settings_proxy_orbot_missing),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+    }
+
+    if (mode == com.pgpony.android.network.ProxyPrefs.MODE_CUSTOM) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = customHost,
+                onValueChange = {
+                    customHost = it
+                    com.pgpony.android.network.ProxyPrefs.setCustom(
+                        context, it, customPort.toIntOrNull()
+                            ?: com.pgpony.android.network.ProxyPrefs.ORBOT_PORT
+                    )
+                    com.pgpony.android.network.HttpClientFactory.invalidate()
+                },
+                singleLine = true,
+                label = { Text(stringResource(R.string.settings_proxy_custom_host)) },
+                modifier = Modifier.weight(2f)
+            )
+            OutlinedTextField(
+                value = customPort,
+                onValueChange = {
+                    val digits = it.filter { c -> c.isDigit() }.take(5)
+                    customPort = digits
+                    com.pgpony.android.network.ProxyPrefs.setCustom(
+                        context, customHost,
+                        digits.toIntOrNull()
+                            ?: com.pgpony.android.network.ProxyPrefs.ORBOT_PORT
+                    )
+                    com.pgpony.android.network.HttpClientFactory.invalidate()
+                },
+                singleLine = true,
+                label = { Text(stringResource(R.string.settings_proxy_custom_port)) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+
+    if (mode != com.pgpony.android.network.ProxyPrefs.MODE_OFF) {
+        SettingsToggle(
+            title = stringResource(R.string.settings_proxy_onion_title),
+            subtitle = stringResource(R.string.settings_proxy_onion_subtitle),
+            icon = Icons.Filled.Lock,
+            iconTint = Color(0xFF8B5CF6),
+            checked = onion,
+            onCheckedChange = {
+                onion = it
+                com.pgpony.android.network.ProxyPrefs.setOnionMirror(context, it)
+            }
+        )
+        Text(
+            stringResource(R.string.settings_proxy_failclosed_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 36.dp, top = 4.dp)
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CardPinCacheSection() {
     var enabled by remember {
@@ -986,11 +1306,23 @@ private fun CardPinCacheSection() {
                 60 to stringResource(R.string.settings_card_pin_cache_1min),
                 300 to stringResource(R.string.settings_card_pin_cache_5min),
                 900 to stringResource(R.string.settings_card_pin_cache_15min),
-                3600 to stringResource(R.string.settings_card_pin_cache_1hr)
+                3600 to stringResource(R.string.settings_card_pin_cache_1hr),
+                // 4.0.0 Phase 9 — iOS-parity superset: hold with no
+                // timer. Wrong-PIN / manual Clear / process death still
+                // clear it; only the countdown goes away.
+                com.pgpony.android.crypto.card.CardPinCache.DURATION_UNTIL_CLEARED to
+                    stringResource(R.string.settings_card_pin_cache_until_cleared)
             )
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                choices.forEachIndexed { index, (secs, label) ->
-                    SegmentedButton(
+            // 4.0.0 Phase 9 — five choices no longer fit a segmented row
+            // ("1 hour" already ellipsized on narrow devices with four).
+            // FilterChips in a FlowRow wrap naturally and survive longer
+            // locale strings; selection semantics are unchanged.
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                choices.forEach { (secs, label) ->
+                    FilterChip(
                         selected = durationSec == secs,
                         onClick = {
                             durationSec = secs
@@ -999,35 +1331,57 @@ private fun CardPinCacheSection() {
                             // honor the new duration on the next tick.
                             remainingMs = com.pgpony.android.crypto.card.CardPinCache.remainingMs()
                         },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = choices.size)
-                    ) {
-                        Text(label, maxLines = 1)
-                    }
+                        label = { Text(label, maxLines = 1) }
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
             if (remainingMs > 0) {
-                val totalSec = remainingMs / 1000
-                val mm = totalSec / 60
-                val ss = totalSec % 60
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        stringResource(
-                            R.string.settings_card_pin_cache_countdown_format,
-                            String.format("%d:%02d", mm, ss)
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = {
-                        com.pgpony.android.crypto.card.CardPinCache.clear()
-                        remainingMs = 0
-                    }) {
-                        Text(stringResource(R.string.settings_card_pin_cache_clear))
+                // 4.0.0 Phase 9 — under the "Until I clear it" sentinel a
+                // held PIN reports Long.MAX_VALUE, so show the held state
+                // instead of a (nonsense) countdown. Clear now works the
+                // same in both branches.
+                if (com.pgpony.android.crypto.card.CardPinCache.isUntilCleared()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(R.string.settings_card_pin_cache_held_until_cleared),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = {
+                            com.pgpony.android.crypto.card.CardPinCache.clear()
+                            remainingMs = 0
+                        }) {
+                            Text(stringResource(R.string.settings_card_pin_cache_clear))
+                        }
+                    }
+                } else {
+                    val totalSec = remainingMs / 1000
+                    val mm = totalSec / 60
+                    val ss = totalSec % 60
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(
+                                R.string.settings_card_pin_cache_countdown_format,
+                                String.format("%d:%02d", mm, ss)
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = {
+                            com.pgpony.android.crypto.card.CardPinCache.clear()
+                            remainingMs = 0
+                        }) {
+                            Text(stringResource(R.string.settings_card_pin_cache_clear))
+                        }
                     }
                 }
             } else {

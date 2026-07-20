@@ -12,3 +12,12 @@ signed.asc
 android_icons/
 A13_PROGRESS.md
 UPDATE_LOG_*.md
+PHASE_*.md
+SCOPE_*.md
+PLANNING_ADDENDA*.md
+BACKUP_FORMAT*.md
+NorseHorse_Android_Update_Log.md
+docs/DEV_NOTE_*.md
+pqc_interop_fixtures/
+local.properties
+_to_delete/

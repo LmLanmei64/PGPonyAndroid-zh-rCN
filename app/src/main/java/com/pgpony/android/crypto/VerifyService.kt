@@ -280,6 +280,88 @@ class VerifyService private constructor() {
     }
 
     /**
+     * 4.0.0 Phase P2d (additive) — streaming detached verify for the
+     * OpenPGP API provider: the signed content is read in 64 KiB chunks
+     * (never fully buffered), optionally teed to [tee] so the provider
+     * can pass multipart/signed content through to the client while
+     * verifying. The stream is ALWAYS consumed to the end — even for an
+     * unknown signer — so a tee receives the complete content.
+     * Verdict semantics identical to [verifyDetached].
+     */
+    fun verifyDetachedStream(
+        signatureBytes: ByteArray,
+        signedStream: java.io.InputStream,
+        publicKeyRings: List<PGPPublicKeyRing>,
+        tee: java.io.OutputStream? = null
+    ): VerificationResult {
+        val sig = try {
+            parseFirstSignatureBytes(signatureBytes)
+        } catch (e: Exception) {
+            // Still drain the stream so a tee passthrough completes.
+            drainStream(signedStream, tee, null)
+            return VerificationResult.Invalid(
+                reason = "Could not parse signature: ${e.message}",
+                signerKeyID = null,
+                signedContent = null
+            )
+        }
+        val keyIdHex = String.format("%016X", sig.keyID)
+        val claimedFingerprint = extractClaimedFingerprint(sig)
+
+        val signerKey = findSignerKey(sig.keyID, publicKeyRings)
+        if (signerKey == null) {
+            drainStream(signedStream, tee, null)
+            return VerificationResult.UnknownSigner(
+                signerKeyID = keyIdHex,
+                claimedFingerprint = claimedFingerprint,
+                signedContent = null
+            )
+        }
+
+        val verified = try {
+            sig.init(BcPGPContentVerifierBuilderProvider(), signerKey)
+            drainStream(signedStream, tee, sig)
+            sig.verify()
+        } catch (e: Exception) {
+            return VerificationResult.Invalid(
+                reason = "Verification error: ${e.message}",
+                signerKeyID = keyIdHex,
+                signedContent = null
+            )
+        }
+        if (!verified) {
+            return VerificationResult.Invalid(
+                reason = "Signature does not match the signed content",
+                signerKeyID = keyIdHex,
+                signedContent = null
+            )
+        }
+        val (signerName, signerEmail, signerFingerprint) =
+            resolveSignerIdentity(sig.keyID, publicKeyRings)
+        return VerificationResult.Verified(
+            signerKeyID = keyIdHex,
+            signerFingerprint = signerFingerprint,
+            signerName = signerName,
+            signerEmail = signerEmail,
+            signedContent = null
+        )
+    }
+
+    private fun drainStream(
+        input: java.io.InputStream,
+        tee: java.io.OutputStream?,
+        sig: PGPSignature?
+    ) {
+        val buf = ByteArray(1 shl 16)
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            sig?.update(buf, 0, n)
+            tee?.write(buf, 0, n)
+        }
+    }
+
+    /**
      * Shared verify core for both detached overloads: resolve the signer in
      * the supplied rings, run the cryptographic check over [signedBytes], and
      * map to PASS / FAIL / UNKNOWN-SIGNER.

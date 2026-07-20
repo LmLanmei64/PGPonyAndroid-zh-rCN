@@ -101,6 +101,8 @@ fun KeyDetailScreen(
     // immediately after writing to the clipboard without round-tripping
     // through the VM's state machine).
     val scope = rememberCoroutineScope()
+    // 4.0.0 Phase 5a — multi-server publish sheet overlay flag.
+    var showPublish by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
 
     // Phase A9 Fix1 — pendingContactAction + contactPermissionLauncher
     // removed. The Compose launcher crashed on FragmentActivity-hosted
@@ -213,8 +215,13 @@ fun KeyDetailScreen(
             }
             KeyDetailActionIds.SET_AS_DEFAULT  -> viewModel.setAsDefault()
             KeyDetailActionIds.CHANGE_CARD_PIN -> onChangeCardPin()
-            KeyDetailActionIds.UPLOAD_TO_KEY_SERVER -> viewModel.uploadToKeyServer()
+            // 4.0.0 Phase 5a — the old single-server upload is replaced
+            // by the multi-server PublishSheet (per-server checkboxes,
+            // verification status, key-type compat warnings).
+            KeyDetailActionIds.UPLOAD_TO_KEY_SERVER -> showPublish = true
             KeyDetailActionIds.CHECK_KEY_SERVER -> viewModel.checkKeyServer()
+            // 4.0.0 Phase 2 (iOS v7.1.1 F5) — keyserver refresh-and-merge.
+            KeyDetailActionIds.REFRESH_KEY_SERVER -> viewModel.refreshFromKeyServer()
             KeyDetailActionIds.DELETE_KEY          -> viewModel.showDeleteConfirm()
             // Phase A6 — Revoke Key now wires to the real flow. Pre-A6
             // this was a stub routing to viewModel.showComingSoon.
@@ -279,6 +286,17 @@ fun KeyDetailScreen(
                 onEditExpiry = { viewModel.showExpirySheet() }
             )
         }
+    }
+
+    // 4.0.0 Phase 5a — multi-server publish sheet. Top-level sibling of
+    // the other sheet overlays (was mistakenly nested inside the QR
+    // sheet's conditional, so it only rendered while the QR sheet showed
+    // — the "upload does nothing" bug).
+    if (showPublish) {
+        com.pgpony.android.ui.keydetail.PublishSheet(
+            fingerprint = fingerprint,
+            onDismiss = { showPublish = false }
+        )
     }
 
     // QR sheet — overlaid on top of the screen content.
@@ -871,6 +889,12 @@ private fun LoadedBody(
                 onCopy = onCopyFingerprint
             )
         }
+        // 4.0.0 Phase 2 (iOS v7.1.1 F4) — every User ID on the key.
+        // Rendered only when there's more than one; a single ID is
+        // already the header above.
+        if (state.userIds.size > 1) {
+            item { UserIdsSection(userIds = state.userIds) }
+        }
         item {
             DetailsSection(
                 key = key,
@@ -894,7 +918,10 @@ private fun LoadedBody(
         item {
             ActionsSection(
                 key = key,
-                onComingSoon = onComingSoon
+                onComingSoon = onComingSoon,
+                // 4.0.0 Phase 2 — inline spinners for the two keyserver rows.
+                isCheckingKeyServer = state.isCheckingKeyServer,
+                isRefreshingFromKeyServer = state.isRefreshingFromKeyServer
             )
         }
         item {

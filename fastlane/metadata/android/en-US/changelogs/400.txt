@@ -1,0 +1,5 @@
+Post-quantum encryption: ML-KEM-768 + X25519 composite keys in both the IETF (v6) and GnuPG/LibrePGP (v5) formats — keygen, encrypt, and decrypt, so your messages resist future quantum attacks.
+
+Use PGPony as your OpenPGP engine in Thunderbird for Android, K-9 Mail, and Password Store.
+
+Also: pick a default signing key, route traffic through Orbot/Tor, and back up or restore your keyring as an encrypted file.

@@ -69,6 +69,7 @@ package com.pgpony.android
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -82,10 +83,14 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.background
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
@@ -174,6 +179,9 @@ val bottomNavScreens = listOf(
 class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
     private var pendingAction = mutableStateOf<IntentAction>(IntentAction.None)
+    // 4.0.0 Phase 3 — bytes of a .pgpony backup opened via VIEW intent,
+    // consumed by the "backup" restore route.
+    private var pendingRestoreBytes = mutableStateOf<ByteArray?>(null)
     private lateinit var billingService: BillingService
 
     // ── Phase A9 Fix1: Runtime permission helper ──────────────────────
@@ -588,6 +596,18 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // ── 4.0.0 Phase 9 (G8): blank the Recents snapshot on API 33+ ──
+        //
+        // setRecentsScreenshotEnabled(false) makes the app switcher show
+        // the launcher-theme splash for this task instead of a live
+        // screenshot, WITHOUT FLAG_SECURE — so in-app screenshots (QR
+        // key sharing) keep working. Pre-33 devices rely on the ON_PAUSE
+        // privacy cover mounted below, which is also what their snapshot
+        // captures. FLAG_SECURE itself stays scoped to PassEntryScreen.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            setRecentsScreenshotEnabled(false)
+        }
+
         val prefs = getSharedPreferences("pgpony_prefs", MODE_PRIVATE)
         billingService = BillingService(this, prefs)
         billingService.connect()
@@ -597,10 +617,17 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         setContent {
             PGPonyTheme {
                 CompositionLocalProvider(LocalBillingService provides billingService) {
-                    PGPonyMainScreen(
-                        pendingAction,
-                        isAutoLockSuppressed = { suppressAutoLock }
-                    )
+                    // 4.0.0 Phase 9 (G8) — the privacy cover draws OVER
+                    // everything (tabs, sheets, even the lock screen), so
+                    // it sits last in a Box at the content root.
+                    Box {
+                        PGPonyMainScreen(
+                            pendingAction,
+                            pendingRestoreBytes,
+                            isAutoLockSuppressed = { suppressAutoLock }
+                        )
+                        PrivacyCover(isSuppressed = { suppressAutoLock })
+                    }
                 }
             }
         }
@@ -697,6 +724,7 @@ fun PGPonyLegacyDarkTheme(content: @Composable () -> Unit) {
 @Composable
 fun PGPonyMainScreen(
     pendingAction: MutableState<IntentAction>,
+    pendingRestoreBytes: MutableState<ByteArray?>,
     isAutoLockSuppressed: () -> Boolean = { false }
 ) {
     val app = PGPonyApp.instance
@@ -727,13 +755,28 @@ fun PGPonyMainScreen(
         mutableStateOf(prefs.getBoolean("onboarding_completed", false))
     }
 
+    // 4.0.0 Phase 3 — onboarding "Restore from a backup" defers its
+    // navigation: the NavHost isn't composed during onboarding (early
+    // return below), so we flag it and navigate once the main graph exists.
+    var pendingOpenBackup by rememberSaveable { mutableStateOf(false) }
+
     if (!onboardingDone) {
+        val finishOnboarding = {
+            prefs.edit().putBoolean("onboarding_completed", true).apply()
+            onboardingDone = true
+        }
         OnboardingScreen(
             prefs = prefs,
             keyringVm = keyringVm,
-            onComplete = {
-                prefs.edit().putBoolean("onboarding_completed", true).apply()
-                onboardingDone = true
+            onComplete = finishOnboarding,
+            onImportExisting = {
+                // Land in the keyring with the import sheet open.
+                keyringVm.showImport()
+                finishOnboarding()
+            },
+            onRestoreBackup = {
+                pendingOpenBackup = true
+                finishOnboarding()
             }
         )
         return
@@ -799,6 +842,16 @@ fun PGPonyMainScreen(
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+
+    // Consume the onboarding "restore backup" request once the NavHost is
+    // up (the LaunchedEffect body runs after this composition, so the nav
+    // graph is set by then).
+    LaunchedEffect(pendingOpenBackup) {
+        if (pendingOpenBackup) {
+            pendingOpenBackup = false
+            navController.navigate("backup")
+        }
+    }
 
     // Handle pending intent actions
     val action = pendingAction.value
@@ -902,11 +955,31 @@ fun PGPonyMainScreen(
                 }
                 pendingAction.value = IntentAction.None
             }
+            is IntentAction.RestoreBackup -> {
+                pendingRestoreBytes.value = action.data
+                navController.navigate("backup") {
+                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                }
+                pendingAction.value = IntentAction.None
+            }
             IntentAction.None -> { /* no-op */ }
         }
     }
 
     Scaffold(
+        // 4.0.0 Phase 6c (GitHub Issue B) — edge-to-edge. The window
+        // background is black (themes.xml); enableEdgeToEdge() makes the
+        // system bars transparent, so any area the app doesn't paint
+        // shows through as a black strip. This root Scaffold previously
+        // consumed the system-bar insets and padded the whole NavHost
+        // inward, leaving the status- and nav-bar regions unpainted —
+        // the reporter's dead black bands. Setting contentWindowInsets
+        // to zero here hands inset handling DOWN: each screen's own
+        // Scaffold/TopAppBar draws its surface behind the status bar,
+        // and the NavigationBar below draws its surface behind the
+        // navigation bar. Content now fills the display; no black strips.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar {
                 bottomNavScreens.forEach { screen ->
@@ -1070,11 +1143,83 @@ fun PGPonyMainScreen(
             composable(Screen.Decrypt.route) { DecryptScreen(viewModel = encDecVm) }
             composable(Screen.Exchange.route) { ExchangeScreen(viewModel = exchangeVm) }
             composable(Screen.Contacts.route) { ContactsScreen(viewModel = contactsVm) }
+            composable("backup") {
+                // Consume the pending bytes exactly once so navigating
+                // back and forth doesn't re-trigger the restore.
+                val initial = remember {
+                    pendingRestoreBytes.value.also { pendingRestoreBytes.value = null }
+                }
+                com.pgpony.android.ui.backup.BackupScreen(
+                    onDismiss = { navController.popBackStack() },
+                    initialRestoreBytes = initial,
+                    onRestored = { keyringVm.loadKeys() }
+                )
+            }
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     viewModel = settingsVm,
                     onReplayOnboarding = { onboardingDone = false },
-                    onOpenPassStore = { navController.navigate("pass_store") }
+                    onOpenPassStore = { navController.navigate("pass_store") },
+                    onKeysChanged = { keyringVm.loadKeys() }
+                )
+            }
+        }
+    }
+}
+
+// ── 4.0.0 Phase 9 (G8): privacy cover ──────────────────────────────────
+//
+// Full-screen cover shown while the activity is paused, so the app
+// switcher / Recents shows branding instead of keys or plaintext.
+// ON_PAUSE raises it unless a suppressed excursion (our own document /
+// photo pickers, save flows, NFC — the same suppressAutoLock flag the
+// ON_STOP app-lock honors) caused the pause; ON_RESUME drops it. On
+// API 33+ setRecentsScreenshotEnabled(false) in onCreate blanks the
+// snapshot outright and this cover is the belt-and-suspenders visual
+// during the switcher transition; pre-33 the cover IS what the
+// snapshot captures. FLAG_SECURE deliberately stays scoped to
+// PassEntryScreen — applied globally it would break in-app screenshots
+// of QR key sharing.
+//
+// Succession note (Phases 3/4): ProviderInteractionActivity coming to
+// the front pauses MainActivity, and the cover behind an activity that
+// covers the whole screen anyway is harmless — no suppression needed.
+// If a provider surface ever renders MainActivity partially visible,
+// wrap its launch in the same suppress pattern the pickers use.
+@Composable
+private fun PrivacyCover(isSuppressed: () -> Boolean) {
+    var visible by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> if (!isSuppressed()) visible = true
+                Lifecycle.Event.ON_RESUME -> visible = false
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    if (visible) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = Color(0xFF8B5CF6),
+                    modifier = Modifier.size(56.dp)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = stringResource(R.string.app_name),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }

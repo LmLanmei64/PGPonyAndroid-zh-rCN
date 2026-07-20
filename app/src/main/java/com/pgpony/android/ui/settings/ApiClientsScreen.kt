@@ -1,0 +1,207 @@
+// ApiClientsScreen.kt
+// PGPony Android — 4.0.0 Succession Phase 1 (OpenPGP API provider)
+//
+// Settings → Connected apps: the management/revocation UI for OpenPGP
+// API clients (plan §5: "a revocation UI is non-negotiable"). Lists
+// every package the user has authorized, with its app label, package
+// name, and grant date; a delete action revokes instantly — the very
+// next provider call from that package lands back in the consent flow.
+//
+// Presented as a full-height ModalBottomSheet, same pattern as the
+// SecurityInfoScreen / LanguagePickerScreen / LicensesScreen overlays
+// in this package. Self-contained (reads the DAO via PGPonyApp.instance
+// like CardPinCacheSection reads its cache) — no SettingsViewModel
+// changes needed.
+
+package com.pgpony.android.ui.settings
+
+import android.content.pm.PackageManager
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.pgpony.android.PGPonyApp
+import com.pgpony.android.R
+import com.pgpony.android.data.ApiClientEntity
+import kotlinx.coroutines.launch
+import java.text.DateFormat
+import java.util.Date
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ApiClientsScreen(onDismiss: () -> Unit) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
+    val dao = remember { PGPonyApp.instance.database.apiClientDao() }
+    val scope = rememberCoroutineScope()
+
+    var clients by remember { mutableStateOf<List<ApiClientEntity>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
+    // Bumped after every revoke so the list re-reads.
+    var refresh by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(refresh) {
+        clients = dao.getAll()
+        loaded = true
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            // ── Header ──────────────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Filled.Link,
+                    contentDescription = null,
+                    tint = Color(0xFF8B5CF6),
+                    modifier = Modifier.size(36.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    stringResource(R.string.provider_clients_title),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Text(
+                stringResource(R.string.provider_clients_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 20.dp)
+            )
+
+            if (loaded && clients.isEmpty()) {
+                // ── Empty state: how a client gets here ─────────────────
+                Text(
+                    stringResource(R.string.provider_clients_empty_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                Text(
+                    stringResource(R.string.provider_clients_empty_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            clients.forEachIndexed { index, client ->
+                ApiClientRow(
+                    client = client,
+                    label = rememberAppLabel(client.packageName),
+                    onRevoke = {
+                        scope.launch {
+                            dao.deleteByPackage(client.packageName)
+                            refresh++
+                        }
+                    }
+                )
+                if (index != clients.lastIndex) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun rememberAppLabel(packageName: String): String {
+    val context = LocalContext.current
+    return remember(packageName) {
+        try {
+            val info = context.packageManager.getApplicationInfo(packageName, 0)
+            context.packageManager.getApplicationLabel(info).toString()
+        } catch (e: PackageManager.NameNotFoundException) {
+            // App was uninstalled but the grant row remains — show the
+            // package so the user can still clean it up.
+            packageName
+        }
+    }
+}
+
+@Composable
+private fun ApiClientRow(
+    client: ApiClientEntity,
+    label: String,
+    onRevoke: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.Extension,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                client.packageName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                stringResource(
+                    R.string.provider_clients_granted_format,
+                    DateFormat.getDateInstance(DateFormat.MEDIUM)
+                        .format(Date(client.grantedAt))
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = onRevoke) {
+            Icon(
+                Icons.Filled.Delete,
+                contentDescription = stringResource(R.string.provider_clients_revoke),
+                tint = MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}

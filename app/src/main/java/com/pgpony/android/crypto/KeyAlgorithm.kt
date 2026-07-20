@@ -27,7 +27,19 @@ enum class KeyAlgorithm(
     V6_ED25519("Ed25519 (v6)", "Ed25519 v6", 256, isV6 = true),
     V6_X25519("X25519 (v6)", "X25519 v6", 256, isV6 = true),
     V6_ED448("Ed448 (v6)", "Ed448 v6", 448, isV6 = true),
-    V6_X448("X448 (v6)", "X448 v6", 448, isV6 = true);
+    V6_X448("X448 (v6)", "X448 v6", 448, isV6 = true),
+
+    // 4.0.0 Phase 2b — IETF post-quantum composite (draft-ietf-openpgp-pqc,
+    // algorithm 35): ML-KEM-768 + X25519 on a v6 encryption subkey. The
+    // primary is Ed25519; this labels the whole key when such a subkey is
+    // present. Import + encrypt/decrypt supported; not offered for keygen.
+    MLKEM768_X25519_V6("ML-KEM-768+X25519 (v6)", "ML-KEM v6", 0, isV6 = true),
+
+    // 4.0.0 Phase 2b — LibrePGP post-quantum composite (draft-koch-librepgp,
+    // algorithm 8): Kyber/ML-KEM-768 + X25519 on a v5 encryption subkey
+    // under a v4 EdDSA primary (GnuPG 2.5.x keys). Import + encrypt
+    // supported (validated against gpg 2.5.21); not offered for keygen.
+    MLKEM768_X25519_LIBREPGP("ML-KEM-768+X25519 (LibrePGP)", "ML-KEM v5", 0);
 
     /**
      * Whether this algorithm uses native Curve25519 for encryption (ECDH subkey).
@@ -38,7 +50,10 @@ enum class KeyAlgorithm(
 
     companion object {
         /** Algorithms that can be selected in the key generation UI. */
-        val generatable = listOf(RSA_2048, RSA_4096, ED25519_CV25519, V6_ED25519)
+        val generatable = listOf(
+            RSA_2048, RSA_4096, ED25519_CV25519, V6_ED25519,
+            MLKEM768_X25519_V6, MLKEM768_X25519_LIBREPGP
+        )
 
         /**
          * Map an OpenPGP algorithm ID + key version to a KeyAlgorithm.
@@ -47,8 +62,13 @@ enum class KeyAlgorithm(
          * Mirrors iOS KeyAlgorithm.from(algorithmID:keyVersion:).
          */
         fun from(algorithmID: Int, keyVersion: Int = 4): KeyAlgorithm? {
+            if (keyVersion == 5 && algorithmID == 8) {
+                // LibrePGP Kyber+X25519 composite subkey (GnuPG 2.5.x)
+                return MLKEM768_X25519_LIBREPGP
+            }
             return if (keyVersion == 6) {
                 when (algorithmID) {
+                    35 -> MLKEM768_X25519_V6 // ML-KEM-768+X25519 composite
                     27 -> V6_ED25519       // Ed25519 signing key
                     25 -> V6_X25519        // X25519 encryption subkey
                     28 -> V6_ED448         // Ed448 signing key

@@ -93,10 +93,17 @@ object MimeBuilder {
      */
     fun wrapEncrypted(
         armored: String,
-        boundary: String = randomBoundary()
+        boundary: String = randomBoundary(),
+        autocryptHeader: String? = null
     ): ByteArray {
         val sb = StringBuilder()
         sb.append("MIME-Version: 1.0").append(CRLF)
+        // 4.0.0 Phase 4 — optional top-level Autocrypt header (Level 1).
+        // Only reaches the recipient when the .eml is sent verbatim; most
+        // mail apps rebuild the outer headers on share.
+        if (!autocryptHeader.isNullOrBlank()) {
+            sb.append(autocryptHeader.replace("\r\n", "\n").replace("\n", CRLF)).append(CRLF)
+        }
         sb.append("Content-Type: multipart/encrypted;").append(CRLF)
         sb.append(" protocol=\"application/pgp-encrypted\";").append(CRLF)
         sb.append(" boundary=\"").append(boundary).append("\"").append(CRLF)

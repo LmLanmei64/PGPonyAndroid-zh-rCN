@@ -96,7 +96,7 @@ fun ExchangeScreen(viewModel: ExchangeViewModel) {
     }
 }
 
-// ── Show Key Section ───────────────────────────────────────────────────
+// ââ Show Key Section âââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @Composable
 private fun ShowKeySection(
@@ -189,7 +189,7 @@ private fun ShowKeySection(
     }
 }
 
-// ── Scan Key Section ───────────────────────────────────────────────────
+// ââ Scan Key Section âââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @Composable
 private fun ScanKeySection(state: ExchangeUiState, viewModel: ExchangeViewModel) {
@@ -232,7 +232,7 @@ private fun ScanKeySection(state: ExchangeUiState, viewModel: ExchangeViewModel)
     }
 }
 
-// ── Key Server Section ─────────────────────────────────────────────────
+// ââ Key Server Section âââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @Composable
 private fun KeyServerSection(state: ExchangeUiState, viewModel: ExchangeViewModel) {
@@ -241,24 +241,35 @@ private fun KeyServerSection(state: ExchangeUiState, viewModel: ExchangeViewMode
             .padding(horizontal = 16.dp)
     ) {
         Spacer(modifier = Modifier.height(8.dp))
-        Text("Search keys.openpgp.org", style = MaterialTheme.typography.labelLarge)
+        Text("Search key servers (WKD → keys.pgpony.app → keys.openpgp.org)", style = MaterialTheme.typography.labelLarge)
         Spacer(modifier = Modifier.height(4.dp))
         OutlinedTextField(
             value = state.searchQuery,
             onValueChange = { viewModel.updateSearchQuery(it) },
             label = { Text(stringResource(R.string.exchange_keyserver_query_label)) },
             modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            trailingIcon = {
-                if (state.isSearching) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                } else {
-                    IconButton(onClick = { viewModel.searchKeyServer() }) {
-                        Icon(Icons.Filled.Search, stringResource(R.string.exchange_keyserver_search_cd))
-                    }
-                }
-            }
+            singleLine = true
         )
+        Spacer(modifier = Modifier.height(12.dp))
+        Button(
+            onClick = { viewModel.searchKeyServer() },
+            enabled = state.searchQuery.isNotBlank() && !state.isSearching,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (state.isSearching) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.exchange_keyserver_searching))
+            } else {
+                Icon(Icons.Filled.Search, null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.exchange_keyserver_search_button))
+            }
+        }
         Spacer(modifier = Modifier.height(12.dp))
         // Search result
         state.searchResult?.let { armored ->
@@ -292,7 +303,7 @@ private fun KeyServerSection(state: ExchangeUiState, viewModel: ExchangeViewMode
         Spacer(modifier = Modifier.height(24.dp))
     }
 
-    // ── First-visit tooltip (Phase 4) ───────────────────────────────────
+    // ââ First-visit tooltip (Phase 4) âââââââââââââââââââââââââââââââââââ
     ScreenTooltip(
         tooltipKey = "exchange_qr",
         message = stringResource(R.string.exchange_tooltip_qr)
