@@ -19,11 +19,11 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.pgpony.android"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.pgpony.android"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         // A16 — Bump for v1.0 Play Store launch.
         //
         // versionCode jumps from 7 (last shipped: A1, v1.5.0) to 100. The
@@ -71,8 +71,13 @@ android {
         // engine for Thunderbird for Android / K-9 Mail / Password Store),
         // default-signer selection, Orbot/Tor SOCKS, and encrypted keyring
         // backup/restore. versionCode jumps to the 4xx band for the 4.0 line.
-        versionCode = 400
-        versionName = "4.0.0"
+        //
+        // v4.0.1 — localization + platform release. Complete de / es / fr / ja /
+        // pt-BR translations (all 368 strings added since the last localization
+        // pass, every 4.0.0 surface covered) and compile/target SDK 36
+        // (Android 16). Crypto core unchanged from 4.0.0. F-Droid-targeted.
+        versionCode = 401
+        versionName = "4.0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

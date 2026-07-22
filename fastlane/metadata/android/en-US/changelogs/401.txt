@@ -1,0 +1,3 @@
+PGPony now speaks your language: complete German, Spanish, French, Japanese, and Brazilian Portuguese translations across the whole app — post-quantum keys, the OpenPGP provider, backup and restore, hardware-key management, and Password Store included. Now targets Android 16.
+
+Plus everything from 4.0.0: post-quantum ML-KEM encryption, use PGPony as the OpenPGP engine in Thunderbird and K-9 Mail, Orbot/Tor routing, and encrypted keyring backup.
