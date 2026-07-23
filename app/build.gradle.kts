@@ -76,8 +76,13 @@ android {
         // pt-BR translations (all 368 strings added since the last localization
         // pass, every 4.0.0 surface covered) and compile/target SDK 36
         // (Android 16). Crypto core unchanged from 4.0.0. F-Droid-targeted.
-        versionCode = 402
-        versionName = "4.0.2"
+        //
+        // v4.0.3 — security patch. All passphrase / PIN / recovery-code
+        // fields now set KeyboardType.Password so IMEs (Gboard) do not
+        // learn or suggest typed secrets. Masking alone did not set the
+        // password input type; reported by a Play review. 26 fields fixed.
+        versionCode = 403
+        versionName = "4.0.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

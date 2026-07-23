@@ -24,6 +24,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -134,6 +136,7 @@ fun CardPinChangeScreen(onBack: () -> Unit, onDone: () -> Unit = {}) {
                             value = current,
                             onValueChange = { current = it },
                             label = { Text(stringResource(R.string.card_pin_change_current_label)) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             visualTransformation = PasswordVisualTransformation(),
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
@@ -144,6 +147,7 @@ fun CardPinChangeScreen(onBack: () -> Unit, onDone: () -> Unit = {}) {
                             value = newPin,
                             onValueChange = { newPin = it },
                             label = { Text(stringResource(R.string.card_pin_change_new_label)) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             visualTransformation = PasswordVisualTransformation(),
                             singleLine = true,
                             isError = newTooShort,
@@ -158,6 +162,7 @@ fun CardPinChangeScreen(onBack: () -> Unit, onDone: () -> Unit = {}) {
                             value = confirm,
                             onValueChange = { confirm = it },
                             label = { Text(stringResource(R.string.card_pin_change_confirm_label)) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             visualTransformation = PasswordVisualTransformation(),
                             singleLine = true,
                             isError = mismatch,

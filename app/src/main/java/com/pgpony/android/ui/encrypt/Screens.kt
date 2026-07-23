@@ -56,6 +56,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.content.FileProvider
 import java.io.File
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -537,6 +539,7 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                         value = cardSignPin,
                         onValueChange = { cardSignPin = it },
                         label = { Text(stringResource(R.string.card_sign_pin_label)) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -1482,6 +1485,7 @@ private fun PasswordModeBody(state: EncryptUiState, viewModel: EncryptDecryptVie
         onValueChange = { viewModel.updatePasswordPassphrase(it) },
         label = { Text(stringResource(R.string.encrypt_password_passphrase_label)) },
         singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         visualTransformation = transformation,
         modifier = Modifier.fillMaxWidth()
     )
@@ -1492,6 +1496,7 @@ private fun PasswordModeBody(state: EncryptUiState, viewModel: EncryptDecryptVie
         onValueChange = { viewModel.updatePasswordConfirm(it) },
         label = { Text(stringResource(R.string.encrypt_password_confirm_label)) },
         singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         visualTransformation = transformation,
         isError = state.passwordConfirm.isNotEmpty() &&
             state.passwordConfirm != state.passwordPassphrase,
@@ -1907,6 +1912,7 @@ private fun FileSection(state: EncryptUiState, viewModel: EncryptDecryptViewMode
             onValueChange = { viewModel.updatePasswordPassphrase(it) },
             label = { Text(stringResource(R.string.encrypt_password_passphrase_label)) },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             visualTransformation = transformation,
             modifier = Modifier.fillMaxWidth()
         )
@@ -1916,6 +1922,7 @@ private fun FileSection(state: EncryptUiState, viewModel: EncryptDecryptViewMode
             onValueChange = { viewModel.updatePasswordConfirm(it) },
             label = { Text(stringResource(R.string.encrypt_password_confirm_label)) },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             visualTransformation = transformation,
             isError = state.passwordConfirm.isNotEmpty() &&
                 state.passwordConfirm != state.passwordPassphrase,
@@ -2216,6 +2223,7 @@ private fun SignPassphraseDialog(
                     value = state.signPassphrase,
                     onValueChange = { viewModel.updateSignPassphrase(it) },
                     label = { Text(stringResource(R.string.encrypt_passphrase_label)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -2348,6 +2356,7 @@ private fun DecryptPassphraseDialog(
                     value = state.passphrase,
                     onValueChange = { viewModel.updatePassphrase(it) },
                     label = { Text(stringResource(R.string.encrypt_passphrase_label)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -2419,6 +2428,7 @@ private fun LegacySignPassphraseDialog(
                     value = state.signPassphrase,
                     onValueChange = { viewModel.updateSignPassphrase(it) },
                     label = { Text(stringResource(R.string.encrypt_passphrase_label)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -2475,6 +2485,7 @@ private fun LegacyDecryptPassphraseDialog(
                 value = state.passphrase,
                 onValueChange = { viewModel.updatePassphrase(it) },
                 label = { Text("Enter passphrase") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true
             )
@@ -2589,6 +2600,7 @@ private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewMo
                 value = state.signFilePassphrase,
                 onValueChange = { viewModel.setSignFilePassphrase(it) },
                 label = { Text(stringResource(R.string.sign_file_passphrase_label)) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -3113,6 +3125,7 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                     value = cardDecryptPin,
                     onValueChange = { cardDecryptPin = it },
                     label = { Text(stringResource(R.string.card_decrypt_pin_label)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
@@ -3140,6 +3153,7 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                     value = state.passphrase,
                     onValueChange = { viewModel.updatePassphrase(it) },
                     label = { Text(stringResource(R.string.decrypt_password_passphrase_label)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
@@ -3207,6 +3221,7 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                     value = state.passphrase,
                     onValueChange = { viewModel.updatePassphrase(it) },
                     label = { Text(stringResource(R.string.decrypt_passphrase_optional_label)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true

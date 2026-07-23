@@ -26,6 +26,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -504,6 +506,7 @@ private fun GenerateKeySheet(state: KeyringUiState, viewModel: KeyringViewModel)
                 value = state.generatePassphrase,
                 onValueChange = { viewModel.updateGeneratePassphrase(it) },
                 label = { Text(stringResource(R.string.keyring_generate_passphrase_label)) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
@@ -514,6 +517,7 @@ private fun GenerateKeySheet(state: KeyringUiState, viewModel: KeyringViewModel)
                 value = state.generateConfirmPassphrase,
                 onValueChange = { viewModel.updateGenerateConfirmPassphrase(it) },
                 label = { Text(stringResource(R.string.keyring_generate_passphrase_confirm_label)) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true

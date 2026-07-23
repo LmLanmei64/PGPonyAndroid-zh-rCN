@@ -17,6 +17,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -194,6 +196,7 @@ private fun FormBody(
     OutlinedTextField(
         value = adminPin, onValueChange = onAdminPin,
         label = { Text(stringResource(R.string.card_keygen_field_admin_pin)) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         visualTransformation = PasswordVisualTransformation(),
         singleLine = true, modifier = Modifier.fillMaxWidth(),
     )
@@ -201,6 +204,7 @@ private fun FormBody(
     OutlinedTextField(
         value = userPin, onValueChange = onUserPin,
         label = { Text(stringResource(R.string.card_keygen_field_user_pin)) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         visualTransformation = PasswordVisualTransformation(),
         singleLine = true, modifier = Modifier.fillMaxWidth(),
     )

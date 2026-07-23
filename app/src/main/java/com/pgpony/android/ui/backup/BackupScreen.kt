@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudUpload
@@ -240,7 +241,7 @@ private fun ShowCodeBody(
         supportingText = { Text(stringResource(R.string.backup_confirm_hint)) },
         isError = state.confirmMismatch,
         singleLine = true,
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, capitalization = KeyboardCapitalization.Characters),
         modifier = Modifier.fillMaxWidth()
     )
     if (state.confirmMismatch) {
@@ -289,7 +290,7 @@ private fun EnterCodeBody(
         onValueChange = onCodeChange,
         label = { Text(stringResource(R.string.restore_code_label)) },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, capitalization = KeyboardCapitalization.Characters),
         modifier = Modifier.fillMaxWidth()
     )
     Spacer(Modifier.height(16.dp))
