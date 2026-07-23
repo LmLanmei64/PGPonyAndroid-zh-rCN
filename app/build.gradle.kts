@@ -76,8 +76,8 @@ android {
         // pt-BR translations (all 368 strings added since the last localization
         // pass, every 4.0.0 surface covered) and compile/target SDK 36
         // (Android 16). Crypto core unchanged from 4.0.0. F-Droid-targeted.
-        versionCode = 401
-        versionName = "4.0.1"
+        versionCode = 402
+        versionName = "4.0.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
