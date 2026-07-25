@@ -967,7 +967,20 @@ class PGPCryptoService private constructor() {
         enableCompression: Boolean = true,
         cardSession: OpenPgpCardSession? = null,
         cardPin: ByteArray? = null,
-        cardSigningPublicKey: PGPPublicKey? = null
+        cardSigningPublicKey: PGPPublicKey? = null,
+        // ── 4.0.4: optional password (SKESK) recipient ────────────────
+        //
+        // Set to produce a `gpg -c` style message, alone or alongside
+        // public-key recipients. The S2K choice mirrors [encryptSymmetric]
+        // exactly so the two produce interoperable output: Argon2id (S2K
+        // type 4) by default, iterated-salted SHA-256 (type 3) when
+        // [useArgon2] is false for readers older than BC 1.79.
+        //
+        // This exists so the Encrypt tab's Password mode can stream a
+        // large file instead of buffering it (issue #6); encryptSymmetric
+        // takes and returns whole ByteArrays and cannot.
+        messagePassword: String? = null,
+        useArgon2: Boolean = true
     ) {
         // 1) Build the signer FIRST. Software: unlock up front (clean
         //    output guarantee). Card: the content-signer defers the tap
@@ -1058,6 +1071,30 @@ class PGPCryptoService private constructor() {
                         org.bouncycastle.openpgp.operator.bc.BcPublicKeyKeyEncryptionMethodGenerator(encKey)
                     )
                 }
+            }
+
+            // 4.0.4 — password (SKESK) recipient, if one was supplied. Added
+            // after the public-key methods so a message can carry both.
+            if (messagePassword != null) {
+                encryptedGen.addMethod(
+                    if (useArgon2) {
+                        org.bouncycastle.openpgp.operator.bc.BcPBEKeyEncryptionMethodGenerator(
+                            messagePassword.toCharArray(),
+                            org.bouncycastle.bcpg.S2K.Argon2Params.memoryConstrainedParameters()
+                        )
+                    } else {
+                        org.bouncycastle.openpgp.operator.bc.BcPBEKeyEncryptionMethodGenerator(
+                            messagePassword.toCharArray(),
+                            org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider()
+                                .get(HashAlgorithmTags.SHA256),
+                            0xFF
+                        )
+                    }
+                )
+            }
+
+            if (recipientPublicKeys.isEmpty() && messagePassword == null) {
+                throw PGPCryptoError.EncryptionFailed("No recipients and no password")
             }
 
             val encryptedOut = encryptedGen.open(targetOut, ByteArray(1 shl 16))
@@ -1350,6 +1387,17 @@ class PGPCryptoService private constructor() {
                             if (decryptedStream != null) continue
                             val secretKey = findSecretKey(obj.keyID, secretKeyRings)
                             if (secretKey != null) {
+                                // 4.0.4: a protected key with no passphrase in
+                                // hand is PassphraseRequired, not a wrong one.
+                                // extractPrivateKey below throws a checksum
+                                // PGPException for both cases, and the catch
+                                // maps that to InvalidPassphrase — so without
+                                // this guard a cold start (empty cache) opened
+                                // the prompt already flagged "wrong passphrase"
+                                // before the user had typed anything.
+                                if (secretKey.s2KUsage.toInt() != 0 && passphrase.isNullOrEmpty()) {
+                                    throw PGPCryptoError.PassphraseRequired()
+                                }
                                 val decryptor = org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyDecryptorBuilder(
                                     org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider()
                                 ).build(passphrase?.toCharArray() ?: charArrayOf())
@@ -1505,6 +1553,13 @@ class PGPCryptoService private constructor() {
                         if (decryptedStream != null) continue
                         val secretKey = findSecretKey(obj.keyID, secretKeyRings)
                         if (secretKey != null) {
+                            // 4.0.4: see the matching guard in [decrypt]. This
+                            // is the path the OpenPGP API provider takes, so
+                            // it is the one that produced the spurious "wrong
+                            // passphrase" on a cold-started PGPony.
+                            if (secretKey.s2KUsage.toInt() != 0 && passphrase.isNullOrEmpty()) {
+                                throw PGPCryptoError.PassphraseRequired()
+                            }
                             val decryptor = org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyDecryptorBuilder(
                                 org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider()
                             ).build(passphrase?.toCharArray() ?: charArrayOf())
@@ -1733,14 +1788,27 @@ class PGPCryptoService private constructor() {
      * password-encrypted message to the passphrase prompt instead of the
      * key picker. Returns no recipients / not-password for unparseable input.
      */
-    fun inspectEncryptedMessage(encryptedData: ByteArray): MessageEncryptionInfo {
+    fun inspectEncryptedMessage(encryptedData: ByteArray): MessageEncryptionInfo =
+        inspectEncryptedMessage(ByteArrayInputStream(encryptedData))
+
+    /**
+     * 4.0.4 — streaming counterpart. The session-key packets (PKESK/SKESK)
+     * sit at the very front of an OpenPGP message and BC parses them
+     * lazily, so this touches only the head of [input] no matter how large
+     * the message is; the SEIPD body is never read. That is what lets the
+     * Decrypt tab route a picked file (card recipient vs. passphrase vs.
+     * software key) without first pulling the whole thing into memory.
+     *
+     * Armor detection is PGPUtil.getDecoderStream's job here rather than
+     * the ByteArray [isArmored] sniff — it reads the stream head itself,
+     * and it is the same detection decryptStream already relies on.
+     *
+     * Does not close [input]; the caller owns it.
+     */
+    fun inspectEncryptedMessage(input: java.io.InputStream): MessageEncryptionInfo {
         return try {
-            val input = if (isArmored(encryptedData)) {
-                ArmoredInputStream(ByteArrayInputStream(encryptedData))
-            } else {
-                ByteArrayInputStream(encryptedData)
-            }
-            val encData = findEncryptedData(JcaPGPObjectFactory(input))
+            val decoder = org.bouncycastle.openpgp.PGPUtil.getDecoderStream(input)
+            val encData = findEncryptedData(JcaPGPObjectFactory(decoder))
                 ?: return MessageEncryptionInfo(emptyList(), false)
             val ids = mutableListOf<Long>()
             var hasPbe = false

@@ -38,6 +38,8 @@
 package com.pgpony.android.ui.encrypt
 
 import androidx.lifecycle.ViewModel
+import com.pgpony.android.ui.util.ProgressInputStream
+import com.pgpony.android.ui.util.ScratchFiles
 import androidx.lifecycle.viewModelScope
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
@@ -58,6 +60,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -151,10 +154,31 @@ data class EncryptUiState(
     // keep file size small and match standard .pgp convention). The
     // file save flow in FileEncryptionResultScreen writes these bytes
     // to a content:// URI obtained via ACTION_CREATE_DOCUMENT.
+    //
+    // ── 4.0.4 ─────────────────────────────────────────────────────────
+    //
+    // The note above about holding bytes rather than a URI ("larger
+    // files would warrant streaming — out of scope for A10b") is now
+    // only true up to INLINE_FILE_LIMIT. Past it, selectedFileUri
+    // carries the input and encryptedFile carries the ciphertext, and
+    // PGPCryptoService.encryptStream() runs between them so neither
+    // side is ever fully in memory. Same fork, same reasoning, as the
+    // decrypt side — see DecryptUiState.
+    //
+    // The URI read-grant caveat above still applies: it is scoped to
+    // the activity and does not survive process death. Neither did the
+    // bytes, which lived in ViewModel state, so nothing regresses.
     val selectedFileName: String? = null,
     val selectedFileSize: Long? = null,
     val selectedFileBytes: ByteArray? = null,
+    val selectedFileUri: android.net.Uri? = null,
     val encryptedFileBytes: ByteArray? = null,
+    val encryptedFile: java.io.File? = null,
+    // 4.0.4 — streamed progress. Both zero means "no measurable
+    // progress to show", which is the case for every buffered
+    // operation; those finish too fast to be worth reporting.
+    val processedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
     // Result-sheet visibility. Mutually exclusive in practice — only
     // one of them is ever true at a time — but kept as separate flags
     // so the screen layer can render two distinct Composables without
@@ -217,7 +241,22 @@ data class EncryptUiState(
     val signFileResultBytes: ByteArray? = null,
     val signFileResultName: String? = null,
     val signFileProcessing: Boolean = false,
-)
+) {
+    /**
+     * 4.0.4 — "the user has picked a file", regardless of which side of
+     * INLINE_FILE_LIMIT it fell on. Button-enablement checks must use
+     * this rather than `selectedFileBytes != null`, which is null by
+     * design for a large file and would leave Encrypt greyed out.
+     */
+    val hasSelectedFile: Boolean get() = selectedFileBytes != null || selectedFileUri != null
+
+    /**
+     * True when the picked file was too large to buffer, which is what a
+     * card operation needs — the NFC session holds the card for the whole
+     * operation, so the card paths cannot stream.
+     */
+    val fileTooLargeForCard: Boolean get() = selectedFileBytes == null && selectedFileUri != null
+}
 
 data class DecryptUiState(
     val inputText: String = "",
@@ -266,21 +305,44 @@ data class DecryptUiState(
     val pendingUnknownClaimedFingerprint: String? = null,
     // ── Phase A10c: file-mode decrypt state ────────────────────────
     //
-    // Mirrors the encrypt-side fields on EncryptUiState. The picked
-    // .pgp/.gpg/.asc input is read into memory at pick time
-    // (selectedFileBytes) — same in-memory-only approach as A10b
-    // encrypt. PGPCryptoService.decrypt() sniffs whether the bytes
-    // are ASCII-armored or binary, so we don't need a separate path
-    // per format. decryptedFileBytes holds the plaintext until the
-    // user saves or shares it; decryptedOutputFilename pre-seeds the
-    // save-dialog suggestion (encrypted name minus .pgp/.gpg/.asc
-    // extension, or "decrypted_<name>" if there was no recognized
-    // extension to strip).
+    // Mirrors the encrypt-side fields on EncryptUiState.
+    // decryptedOutputFilename pre-seeds the save-dialog suggestion
+    // (encrypted name minus .pgp/.gpg/.asc extension, or
+    // "decrypted_<name>" if there was no recognized extension to strip).
+    //
+    // ── 4.0.4: two paths, chosen by input size ─────────────────────
+    //
+    // Up to INLINE_FILE_LIMIT the behaviour is exactly what it was:
+    // the picked file is read into selectedFileBytes at pick time,
+    // PGPCryptoService.decrypt() sniffs armored vs. binary, and the
+    // plaintext lands in decryptedFileBytes. That keeps the RFC 3156
+    // envelope unwrap, MIME routing to the structured sheet, the
+    // inline preview and clipboard copy all working as before, which
+    // is what nearly every real message needs.
+    //
+    // Above that limit none of it fits in memory. Issue #6: a 13 MB
+    // file meant ~13 MB of ciphertext in state, a ByteArrayOutputStream
+    // doubling its way to ~13 MB of plaintext plus a full copy on
+    // toByteArray(), and another ~13 MB back in state — roughly 60 MB
+    // of mostly contiguous allocation, which OOMs on a modest heap. So
+    // the large path holds only selectedFileUri, streams through
+    // PGPCryptoService.decryptStream() into decryptedFile under
+    // cacheDir/scratch, and the result sheet saves and shares straight
+    // from that file. Peak memory is the 64 KiB chunk buffer.
+    //
+    // Exactly one of (selectedFileBytes, selectedFileUri) drives a
+    // given decrypt, and exactly one of (decryptedFileBytes,
+    // decryptedFile) carries its output.
     val mode: DecryptMode = DecryptMode.TEXT,
     val selectedFileName: String? = null,
     val selectedFileSize: Long? = null,
     val selectedFileBytes: ByteArray? = null,
+    val selectedFileUri: android.net.Uri? = null,
     val decryptedFileBytes: ByteArray? = null,
+    val decryptedFile: java.io.File? = null,
+    /** 4.0.4 — streamed progress; see EncryptUiState. */
+    val processedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
     val decryptedOutputFilename: String? = null,
     val showFileDecryptResultSheet: Boolean = false,
     // ── Phase A3: "Verify a file" (detached signature) sheet ───────────
@@ -297,7 +359,49 @@ data class DecryptUiState(
     val verifyFileSigBytes: ByteArray? = null,
     val verifyFileResult: VerificationResult? = null,
     val verifyFileProcessing: Boolean = false,
-)
+) {
+    /**
+     * 4.0.4 — "the user has picked a file", regardless of which side of
+     * INLINE_FILE_LIMIT it fell on. Button-enablement checks must use
+     * this rather than `selectedFileBytes != null`, which is null by
+     * design for a large file and would leave Decrypt greyed out.
+     */
+    val hasSelectedFile: Boolean get() = selectedFileBytes != null || selectedFileUri != null
+
+    /** True when the picked file is too large to hand to a card operation. */
+    val fileTooLargeForCard: Boolean get() = selectedFileBytes == null && selectedFileUri != null
+}
+
+/**
+ * 4.0.4 — the cut-off between "read the whole file into memory" and
+ * "stream it through a scratch file" on the Encrypt and Decrypt tabs.
+ *
+ * Below this, the buffered paths run exactly as they did before, which
+ * keeps the RFC 3156 envelope unwrap, MIME routing, the inline preview
+ * and clipboard copy all working. Above it, none of that fits in a
+ * modest heap anyway (issue #6), so the streaming paths take over.
+ *
+ * 4 MiB is chosen so that the worst case for the buffered path — the
+ * input array, a ByteArrayOutputStream at 2x while it doubles, its
+ * toByteArray() copy, and the output array — stays comfortably inside
+ * even a 128 MB heap with Compose resident.
+ */
+internal const val INLINE_FILE_LIMIT: Long = 4L * 1024 * 1024
+
+/**
+ * 4.0.4 — above this, file encrypt skips ZLIB.
+ *
+ * Deflate runs single-threaded over every byte and is the slowest stage
+ * in the pipeline by a wide margin — well behind AES and the integrity
+ * hash. On the files that get this big (video, photos, archives,
+ * anything already compressed) it buys close to nothing, so paying
+ * minutes for it is a bad trade. PGPCryptoService.encryptStream already
+ * took enableCompression as a parameter for the card path, which skips
+ * it for the same reason: to keep the card-held time short.
+ *
+ * Decrypt is unaffected — it decompresses whatever it is given.
+ */
+internal const val COMPRESSION_LIMIT: Long = 16L * 1024 * 1024
 
 class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
@@ -572,8 +676,15 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     // dialog: when the user can't recall the signing-key passphrase
     // (or just doesn't want to sign), they tap "Encrypt without
     // signing" and we proceed with the recipient set, skipping the
-    // signing leg. signMessage is flipped off in state and encrypt()
-    // is dispatched without a passphrase.
+    // signing leg. signMessage is flipped off in state and the encrypt
+    // is re-dispatched without a passphrase.
+    //
+    // 4.0.4 — dispatch by mode. This unconditionally called encrypt(),
+    // the TEXT-mode entry point, whatever mode the user was actually
+    // in. From the Encrypt tab in FILE mode it therefore ran the text
+    // encryptor over the (empty) message box instead of the picked
+    // file, and the same for BUNDLE. The dialog's primary button has
+    // always dispatched by mode; this is the same when-block.
     fun encryptWithoutSigning() {
         _encryptState.value = _encryptState.value.copy(
             signMessage = false,
@@ -581,7 +692,15 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             signPassphrase = "",
             errorMessage = null,
         )
-        encrypt(passphrase = null)
+        when (_encryptState.value.mode) {
+            EncryptMode.FILE -> encryptFile(passphrase = null)
+            EncryptMode.BUNDLE -> encryptBundle(passphrase = null)
+            // SIGN is signing-only — "without signing" is meaningless
+            // there, and Screens.kt hides the button for that mode.
+            // PASSWORD never involves a signing key.
+            EncryptMode.SIGN, EncryptMode.PASSWORD -> Unit
+            EncryptMode.TEXT -> encrypt(passphrase = null)
+        }
     }
 
     /**
@@ -633,6 +752,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         _encryptState.value = _encryptState.value.copy(
             encryptedFileBytes = bytes,
             isProcessing = false,
+            // 4.0.4 — see encryptFile(): dismiss the sign-passphrase
+            // prompt so it can't sit over the result sheet.
+            showSignPassphraseDialog = false,
+            signPassphrase = "",
             showFileEncryptResultSheet = true
         )
         _events.tryEmit(Event.EncryptSuccess)
@@ -661,7 +784,20 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         }
 
         viewModelScope.launch {
-            _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
+            _encryptState.value = _encryptState.value.copy(
+                isProcessing = true,
+                errorMessage = null,
+                // 4.0.4 — close the passphrase prompt as soon as the
+                // work starts, not when it finishes. The unlock has
+                // already happened by the time anything slow runs, so
+                // leaving the dialog up just hid the progress bar behind
+                // a modal for the whole operation — on a large file that
+                // is tens of seconds of apparent hang. If the passphrase
+                // turns out to be wrong, the catch below puts the dialog
+                // straight back with an error, which is the only case
+                // where it should reappear.
+                showSignPassphraseDialog = false,
+            )
             try {
                 val secRing = repo.loadSecretKeyRing(signingKey.fingerprint)
                     ?: throw SigningError.NoSigningKey()
@@ -747,7 +883,20 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         // reached only for software signing keys or no signing.
 
         viewModelScope.launch {
-            _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
+            _encryptState.value = _encryptState.value.copy(
+                isProcessing = true,
+                errorMessage = null,
+                // 4.0.4 — close the passphrase prompt as soon as the
+                // work starts, not when it finishes. The unlock has
+                // already happened by the time anything slow runs, so
+                // leaving the dialog up just hid the progress bar behind
+                // a modal for the whole operation — on a large file that
+                // is tens of seconds of apparent hang. If the passphrase
+                // turns out to be wrong, the catch below puts the dialog
+                // straight back with an error, which is the only case
+                // where it should reappear.
+                showSignPassphraseDialog = false,
+            )
             try {
                 // 4.0.4 — off the main thread. Only the symmetric and
                 // bundle encrypt paths were dispatched; the ordinary
@@ -775,6 +924,16 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 _encryptState.value = _encryptState.value.copy(
                     outputText = String(encrypted, Charsets.UTF_8),
                     isProcessing = false,
+                    // 4.0.4 — dismiss the sign-passphrase prompt on
+                    // success. signOnly() was the only mode that did
+                    // this; every other one left the AlertDialog on
+                    // screen, sitting over the result sheet it had just
+                    // opened, so entering a correct passphrase and
+                    // pressing Encrypt looked like it did nothing.
+                    // Only reachable with a passphrase-protected
+                    // signing key, which is why it went unnoticed.
+                    showSignPassphraseDialog = false,
+                    signPassphrase = "",
                     // Phase A10b: also flip the sheet flag so the
                     // dedicated EncryptionResultScreen renders. Inline
                     // result block in Screens.kt keeps rendering too —
@@ -807,10 +966,27 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     signPassphrase = "",
                     errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase_retry)
                 )
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // 4.0.4 — Throwable, not Exception. A streamed operation
+                // can fail with an Error (OutOfMemoryError above all), and
+                // an Error escaping this catch left isProcessing true with
+                // nothing to clear it: the spinner ran forever, so a
+                // failed operation was indistinguishable from a hung one.
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_ENCRYPT)
+                // Cancellation is not identifiable by exception type here
+                // — encryptStream wraps the cancelling
+                // InterruptedIOException in its own error type — but the
+                // Job is, and cancelFileOperation() owns the UI reset.
+                if (!isActive) return@launch
                 _encryptState.value = _encryptState.value.copy(
                     isProcessing = false,
-                    errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    errorMessage = if (e is OutOfMemoryError) {
+                        PGPonyApp.instance.getString(R.string.encdec_error_file_too_large)
+                    } else {
+                        PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    }
                 )
             }
         }
@@ -837,18 +1013,126 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             selectedFileName = name,
             selectedFileSize = size,
             selectedFileBytes = bytes,
+            selectedFileUri = null,
             encryptedFileBytes = null,
+            encryptedFile = null,
             errorMessage = null
         )
     }
 
+    /**
+     * 4.0.4 — URI-taking counterpart, mirroring setFileToDecrypt. Small
+     * inputs are read here so the buffered path runs unchanged; large
+     * ones stay on disk until encryptFile() streams them.
+     */
+    fun setFileToEncrypt(name: String, size: Long, uri: android.net.Uri) {
+        val inline: ByteArray? = if (size <= INLINE_FILE_LIMIT) {
+            readAtMost(uri, INLINE_FILE_LIMIT)
+        } else {
+            null
+        }
+        _encryptState.value = _encryptState.value.copy(
+            selectedFileName = name,
+            selectedFileSize = size,
+            selectedFileBytes = inline,
+            selectedFileUri = if (inline == null) uri else null,
+            encryptedFileBytes = null,
+            encryptedFile = null,
+            errorMessage = null
+        )
+    }
+
+    /**
+     * 4.0.4 — the in-flight streamed file operation, so the user can
+     * cancel one. Only ever one at a time: the Encrypt and Decrypt tabs
+     * both disable their action button while isProcessing.
+     */
+    private var fileOpJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * 4.0.4 — abandon a running streamed encrypt or decrypt.
+     *
+     * Cancelling the Job alone would not stop it. The crypto call is a
+     * blocking loop that never suspends, so it never hits a cancellation
+     * point; ProgressInputStream is what actually breaks the loop, by
+     * checking the Job on each chunk and throwing. Cancel here, and the
+     * read aborts within one 64 KiB chunk.
+     */
+    fun cancelFileOperation() {
+        fileOpJob?.cancel()
+        fileOpJob = null
+        ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_ENCRYPT)
+        ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
+        _encryptState.value = _encryptState.value.copy(
+            isProcessing = false, processedBytes = 0L, totalBytes = 0L
+        )
+        _decryptState.value = _decryptState.value.copy(
+            isProcessing = false, processedBytes = 0L, totalBytes = 0L
+        )
+    }
+
+    /**
+     * 4.0.4 — shared by both large-file encrypt entry points. Streams
+     * the picked URI through PGPCryptoService.encryptStream() into a
+     * scratch file. [messagePassword] set means Password mode (SKESK);
+     * null means the recipients in [recipientRings].
+     *
+     * armor = false matches the buffered file path: file mode produces
+     * binary .pgp, and armoring a large file would inflate it by a
+     * third for no benefit.
+     */
+    private suspend fun streamEncryptToScratch(
+        uri: android.net.Uri,
+        outName: String,
+        recipientRings: List<org.bouncycastle.openpgp.PGPPublicKeyRing>,
+        signingRing: org.bouncycastle.openpgp.PGPSecretKeyRing?,
+        signPassphrase: String?,
+        literalFilename: String?,
+        messagePassword: String?,
+        totalBytes: Long
+    ): java.io.File = withContext(Dispatchers.IO) {
+        val job = coroutineContext[kotlinx.coroutines.Job]
+        val out = ScratchFiles.allocate(PGPonyApp.instance, outName, ScratchFiles.SCOPE_ENCRYPT)
+        val resolver = PGPonyApp.instance.contentResolver
+        val raw = resolver.openInputStream(uri)
+            ?: throw java.io.IOException("Could not open the selected file")
+        val input = ProgressInputStream(
+            delegate = raw,
+            isCancelled = { job?.isActive == false },
+        ) { read ->
+            _encryptState.value = _encryptState.value.copy(processedBytes = read)
+        }
+        input.use { source ->
+            out.outputStream().buffered().use { sink ->
+                crypto.encryptStream(
+                    input = source,
+                    output = sink,
+                    recipientPublicKeys = recipientRings,
+                    signingSecretKey = signingRing,
+                    passphrase = signPassphrase,
+                    filename = literalFilename,
+                    armor = false,
+                    // 4.0.4 — see COMPRESSION_LIMIT. Deflate over a
+                    // 105 MB archive costs minutes and saves nothing.
+                    enableCompression = totalBytes in 0..COMPRESSION_LIMIT,
+                    messagePassword = messagePassword
+                )
+            }
+        }
+        out
+    }
+
     /** Phase A10b: clear the picked file. */
     fun clearFile() {
+        // 4.0.4 — also drops any streamed ciphertext from cacheDir.
+        ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_ENCRYPT)
         _encryptState.value = _encryptState.value.copy(
             selectedFileName = null,
             selectedFileSize = null,
             selectedFileBytes = null,
+            selectedFileUri = null,
             encryptedFileBytes = null,
+            encryptedFile = null,
             errorMessage = null
         )
     }
@@ -862,8 +1146,15 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      */
     fun encryptFile(passphrase: String? = null) {
         val s = _encryptState.value
+        // 4.0.4 — one file operation at a time. Nothing stopped a second
+        // tap from launching another job: each got its own
+        // ProgressInputStream writing to the same processedBytes, so the
+        // progress bar jumped between two independent counts, and the
+        // losing job's completion could overwrite the winner's result.
+        if (fileOpJob?.isActive == true) return
         val bytes = s.selectedFileBytes
-        if (bytes == null) {
+        val srcUri = s.selectedFileUri
+        if (bytes == null && srcUri == null) {
             _encryptState.value = s.copy(errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_no_file_to_encrypt))
             return
         }
@@ -877,8 +1168,23 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         // the card path by the Encrypt screen (PGPCryptoService.encrypt with
         // cardSession set, armor=false) before encryptFile() is called. This
         // software path handles software signing keys or no signing.
-        viewModelScope.launch {
-            _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
+        fileOpJob = viewModelScope.launch {
+            _encryptState.value = _encryptState.value.copy(
+                isProcessing = true,
+                errorMessage = null,
+                processedBytes = 0L,
+                totalBytes = if (srcUri != null) (s.selectedFileSize ?: 0L) else 0L,
+                // 4.0.4 — close the passphrase prompt as soon as the
+                // work starts, not when it finishes. The unlock has
+                // already happened by the time anything slow runs, so
+                // leaving the dialog up just hid the progress bar behind
+                // a modal for the whole operation — on a large file that
+                // is tens of seconds of apparent hang. If the passphrase
+                // turns out to be wrong, the catch below puts the dialog
+                // straight back with an error, which is the only case
+                // where it should reappear.
+                showSignPassphraseDialog = false,
+            )
             try {
                 // 4.0.4 — off the main thread; see encryptText above. File
                 // encrypt is the worse of the two, because the payload is
@@ -892,19 +1198,48 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     } else null
                 }
 
-                val encrypted = withContext(Dispatchers.Default) {
-                    crypto.encrypt(
-                        data = bytes,
-                        recipientPublicKeys = recipientRings,
-                        signingSecretKey = signingRing,
-                        passphrase = passphrase,
-                        filename = s.selectedFileName,
-                        armor = false
+                // 4.0.4 — buffered below INLINE_FILE_LIMIT (unchanged),
+                // streamed above it (issue #6).
+                val encrypted = if (bytes != null) {
+                    withContext(Dispatchers.Default) {
+                        crypto.encrypt(
+                            data = bytes,
+                            recipientPublicKeys = recipientRings,
+                            signingSecretKey = signingRing,
+                            passphrase = passphrase,
+                            filename = s.selectedFileName,
+                            armor = false
+                        )
+                    }
+                } else null
+                val streamedOut = if (bytes == null) {
+                    streamEncryptToScratch(
+                        uri = srcUri!!,
+                        outName = "${s.selectedFileName ?: "file"}.gpg",
+                        recipientRings = recipientRings,
+                        signingRing = signingRing,
+                        signPassphrase = passphrase,
+                        literalFilename = s.selectedFileName,
+                        messagePassword = null,
+                        totalBytes = s.selectedFileSize ?: 0L
                     )
-                }
+                } else null
                 _encryptState.value = _encryptState.value.copy(
                     encryptedFileBytes = encrypted,
+                    encryptedFile = streamedOut,
                     isProcessing = false,
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    // 4.0.4 — dismiss the sign-passphrase prompt on
+                    // success. signOnly() was the only mode that did
+                    // this; every other one left the AlertDialog on
+                    // screen, sitting over the result sheet it had just
+                    // opened, so entering a correct passphrase and
+                    // pressing Encrypt looked like it did nothing.
+                    // Only reachable with a passphrase-protected
+                    // signing key, which is why it went unnoticed.
+                    showSignPassphraseDialog = false,
+                    signPassphrase = "",
                     // 3.1.0 Phase 2 (C4): recipient encrypt resets the
                     // password badge on the result sheet.
                     fileEncryptedWithPassword = false,
@@ -916,11 +1251,21 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 // text-mode encrypt. Dialog confirm in Screens.kt
                 // dispatches back to encryptFile(passphrase) by
                 // reading state.mode == FILE.
+                //
+                // 4.0.4 — say something when this is a RETRY. The first
+                // attempt passes no passphrase, so landing here is
+                // expected and the bare prompt is right. Arriving here
+                // again after the user typed one meant the field simply
+                // blanked with no message: the button looked dead.
                 _encryptState.value = _encryptState.value.copy(
                     isProcessing = false,
+                    processedBytes = 0L,
+                    totalBytes = 0L,
                     showSignPassphraseDialog = true,
                     signPassphrase = "",
-                    errorMessage = null
+                    errorMessage = if (passphrase.isNullOrEmpty()) null else {
+                        PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase_retry)
+                    }
                 )
             } catch (e: SigningError.InvalidPassphrase) {
                 _encryptState.value = _encryptState.value.copy(
@@ -929,10 +1274,27 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     signPassphrase = "",
                     errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase_retry)
                 )
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // 4.0.4 — Throwable, not Exception. A streamed operation
+                // can fail with an Error (OutOfMemoryError above all), and
+                // an Error escaping this catch left isProcessing true with
+                // nothing to clear it: the spinner ran forever, so a
+                // failed operation was indistinguishable from a hung one.
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_ENCRYPT)
+                // Cancellation is not identifiable by exception type here
+                // — encryptStream wraps the cancelling
+                // InterruptedIOException in its own error type — but the
+                // Job is, and cancelFileOperation() owns the UI reset.
+                if (!isActive) return@launch
                 _encryptState.value = _encryptState.value.copy(
                     isProcessing = false,
-                    errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    errorMessage = if (e is OutOfMemoryError) {
+                        PGPonyApp.instance.getString(R.string.encdec_error_file_too_large)
+                    } else {
+                        PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    }
                 )
             }
         }
@@ -992,10 +1354,27 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     showEncryptResultSheet = true
                 )
                 _events.tryEmit(Event.EncryptSuccess)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // 4.0.4 — Throwable, not Exception. A streamed operation
+                // can fail with an Error (OutOfMemoryError above all), and
+                // an Error escaping this catch left isProcessing true with
+                // nothing to clear it: the spinner ran forever, so a
+                // failed operation was indistinguishable from a hung one.
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_ENCRYPT)
+                // Cancellation is not identifiable by exception type here
+                // — encryptStream wraps the cancelling
+                // InterruptedIOException in its own error type — but the
+                // Job is, and cancelFileOperation() owns the UI reset.
+                if (!isActive) return@launch
                 _encryptState.value = _encryptState.value.copy(
                     isProcessing = false,
-                    errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    errorMessage = if (e is OutOfMemoryError) {
+                        PGPonyApp.instance.getString(R.string.encdec_error_file_too_large)
+                    } else {
+                        PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    }
                 )
             }
         }
@@ -1025,8 +1404,11 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      */
     fun encryptFileWithPassword() {
         val s = _encryptState.value
+        // 4.0.4 — see encryptFile(): one file operation at a time.
+        if (fileOpJob?.isActive == true) return
         val bytes = s.selectedFileBytes
-        if (bytes == null) {
+        val srcUri = s.selectedFileUri
+        if (bytes == null && srcUri == null) {
             _encryptState.value = s.copy(errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_no_file_to_encrypt))
             return
         }
@@ -1040,21 +1422,47 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         }
 
         viewModelScope.launch {
-            _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
+            _encryptState.value = _encryptState.value.copy(
+                isProcessing = true,
+                errorMessage = null,
+                processedBytes = 0L,
+                totalBytes = if (srcUri != null) (s.selectedFileSize ?: 0L) else 0L,
+            )
             try {
                 // Off the main thread: Argon2id key derivation (64 MiB,
                 // 3 passes) takes real time by design.
-                val encrypted = withContext(Dispatchers.Default) {
-                    crypto.encryptSymmetric(
-                        data = bytes,
-                        passphrase = s.passwordPassphrase,
-                        filename = s.selectedFileName,
-                        armor = false
+                // 4.0.4 — buffered below INLINE_FILE_LIMIT, streamed above.
+                // encryptStream's messagePassword uses the same Argon2id S2K
+                // parameters as encryptSymmetric, so the two produce
+                // interchangeable output.
+                val encrypted = if (bytes != null) {
+                    withContext(Dispatchers.Default) {
+                        crypto.encryptSymmetric(
+                            data = bytes,
+                            passphrase = s.passwordPassphrase,
+                            filename = s.selectedFileName,
+                            armor = false
+                        )
+                    }
+                } else null
+                val streamedOut = if (bytes == null) {
+                    streamEncryptToScratch(
+                        uri = srcUri!!,
+                        outName = "${s.selectedFileName ?: "file"}.gpg",
+                        recipientRings = emptyList(),
+                        signingRing = null,
+                        signPassphrase = null,
+                        literalFilename = s.selectedFileName,
+                        messagePassword = s.passwordPassphrase,
+                        totalBytes = s.selectedFileSize ?: 0L
                     )
-                }
+                } else null
                 _encryptState.value = _encryptState.value.copy(
                     encryptedFileBytes = encrypted,
+                    encryptedFile = streamedOut,
                     isProcessing = false,
+                    processedBytes = 0L,
+                    totalBytes = 0L,
                     fileEncryptedWithPassword = true,
                     // Clear the secret from state once it has done its job.
                     passwordPassphrase = "",
@@ -1063,10 +1471,27 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     showFileEncryptResultSheet = true
                 )
                 _events.tryEmit(Event.EncryptSuccess)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // 4.0.4 — Throwable, not Exception. A streamed operation
+                // can fail with an Error (OutOfMemoryError above all), and
+                // an Error escaping this catch left isProcessing true with
+                // nothing to clear it: the spinner ran forever, so a
+                // failed operation was indistinguishable from a hung one.
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_ENCRYPT)
+                // Cancellation is not identifiable by exception type here
+                // — encryptStream wraps the cancelling
+                // InterruptedIOException in its own error type — but the
+                // Job is, and cancelFileOperation() owns the UI reset.
+                if (!isActive) return@launch
                 _encryptState.value = _encryptState.value.copy(
                     isProcessing = false,
-                    errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    errorMessage = if (e is OutOfMemoryError) {
+                        PGPonyApp.instance.getString(R.string.encdec_error_file_too_large)
+                    } else {
+                        PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    }
                 )
             }
         }
@@ -1147,7 +1572,20 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         }
         DefaultRecipientPrefs.recordLastUsed(appPrefs, s.selectedRecipients.firstOrNull()?.fingerprint)
         viewModelScope.launch {
-            _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
+            _encryptState.value = _encryptState.value.copy(
+                isProcessing = true,
+                errorMessage = null,
+                // 4.0.4 — close the passphrase prompt as soon as the
+                // work starts, not when it finishes. The unlock has
+                // already happened by the time anything slow runs, so
+                // leaving the dialog up just hid the progress bar behind
+                // a modal for the whole operation — on a large file that
+                // is tens of seconds of apparent hang. If the passphrase
+                // turns out to be wrong, the catch below puts the dialog
+                // straight back with an error, which is the only case
+                // where it should reappear.
+                showSignPassphraseDialog = false,
+            )
             try {
                 // 4.0.4 — the crypto below was already on Dispatchers.Default,
                 // but the ring loads feeding it were not.
@@ -1179,6 +1617,16 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 _encryptState.value = _encryptState.value.copy(
                     encryptedBundleArmored = String(encrypted, Charsets.UTF_8),
                     isProcessing = false,
+                    // 4.0.4 — dismiss the sign-passphrase prompt on
+                    // success. signOnly() was the only mode that did
+                    // this; every other one left the AlertDialog on
+                    // screen, sitting over the result sheet it had just
+                    // opened, so entering a correct passphrase and
+                    // pressing Encrypt looked like it did nothing.
+                    // Only reachable with a passphrase-protected
+                    // signing key, which is why it went unnoticed.
+                    showSignPassphraseDialog = false,
+                    signPassphrase = "",
                     showBundleResultSheet = true
                 )
                 _events.tryEmit(Event.EncryptSuccess)
@@ -1196,10 +1644,27 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     signPassphrase = "",
                     errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase_retry)
                 )
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // 4.0.4 — Throwable, not Exception. A streamed operation
+                // can fail with an Error (OutOfMemoryError above all), and
+                // an Error escaping this catch left isProcessing true with
+                // nothing to clear it: the spinner ran forever, so a
+                // failed operation was indistinguishable from a hung one.
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_ENCRYPT)
+                // Cancellation is not identifiable by exception type here
+                // — encryptStream wraps the cancelling
+                // InterruptedIOException in its own error type — but the
+                // Job is, and cancelFileOperation() owns the UI reset.
+                if (!isActive) return@launch
                 _encryptState.value = _encryptState.value.copy(
                     isProcessing = false,
-                    errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    errorMessage = if (e is OutOfMemoryError) {
+                        PGPonyApp.instance.getString(R.string.encdec_error_file_too_large)
+                    } else {
+                        PGPonyApp.instance.getString(R.string.encdec_error_encryption_failed_format, e.message ?: "")
+                    }
                 )
             }
         }
@@ -1238,12 +1703,16 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * [clearEncryptInputsIfEnabled] so the wipe honors the new setting.
      */
     private fun clearEncryptInputsForPrivacy() {
+        // 4.0.4 — a streamed ciphertext is an input artefact too.
+        ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_ENCRYPT)
         _encryptState.value = _encryptState.value.copy(
             inputText = "",
             outputText = "",
             selectedFileName = null,
             selectedFileSize = null,
             selectedFileBytes = null,
+            selectedFileUri = null,
+            encryptedFile = null,
             bundleBody = "",
             bundleAttachments = emptyList(),
             passwordPassphrase = "",
@@ -1259,9 +1728,12 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * user has either saved/shared the ciphertext or they haven't.
      */
     fun dismissFileEncryptResult() {
+        // 4.0.4 — the streaming path put the ciphertext on disk.
+        ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_ENCRYPT)
         _encryptState.value = _encryptState.value.copy(
             showFileEncryptResultSheet = false,
-            encryptedFileBytes = null
+            encryptedFileBytes = null,
+            encryptedFile = null
         )
         // 3.1.0 Phase 5 (privacy): see clearEncryptInputsForPrivacy.
         // 4.0.0 Phase 9b: honors the "Clear inputs after encrypting" setting.
@@ -1757,6 +2229,37 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         )
     }
 
+    /**
+     * 4.0.4 — the DecryptStreamResult counterpart. Identical logic to
+     * [buildVerificationResultForEncrypted]; it exists only because the
+     * streaming result carries no plaintext to hand to Unsigned (the
+     * plaintext is on disk, and signedContent is unused for file mode
+     * in either path).
+     */
+    private suspend fun buildVerificationResultForStream(
+        result: com.pgpony.android.crypto.DecryptStreamResult
+    ): VerificationResult {
+        val signerKeyId = result.signerKeyID
+        if (signerKeyId == null) {
+            return VerificationResult.Unsigned("")
+        }
+        if (!result.signatureVerified) {
+            return VerificationResult.Invalid(
+                reason = PGPonyApp.instance.getString(R.string.encdec_error_signer_not_in_keyring),
+                signerKeyID = signerKeyId,
+                signedContent = null
+            )
+        }
+        val signer = resolveSignerEntity(signerKeyId)
+        return VerificationResult.Verified(
+            signerKeyID = signerKeyId,
+            signerFingerprint = signer?.fingerprint ?: "",
+            signerName = signer?.userName?.ifBlank { null },
+            signerEmail = signer?.userEmail?.ifBlank { null },
+            signedContent = null
+        )
+    }
+
     // ── Phase A10c: file-mode decrypt actions ──────────────────────────
     //
     // Parallel to the A10b encrypt-side helpers. UI hands raw bytes
@@ -1787,8 +2290,11 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             cardMessageKeyName = null,
             decryptedFilename = null,
             decryptedFileBytes = null,
+            decryptedFile = null,
             showFileDecryptResultSheet = false
         )
+        // 4.0.4 — a mode switch abandons any streamed plaintext.
+        ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
     }
 
     /**
@@ -1801,10 +2307,123 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             selectedFileName = name,
             selectedFileSize = size,
             selectedFileBytes = bytes,
+            selectedFileUri = null,
             decryptedFileBytes = null,
+            decryptedFile = null,
             errorMessage = null
         )
         detectCardRecipientFile(bytes)
+    }
+
+    /**
+     * 4.0.4 — URI-taking counterpart, and the one the file picker and
+     * the share/view intent handlers now call.
+     *
+     * Small inputs are read here so everything downstream sees the
+     * pre-4.0.4 shape and behaves identically. Large ones are left on
+     * disk and carried as a URI; nothing reads them until
+     * decryptFile() streams through them. [size] is the picker's
+     * metadata, which can be absent or wrong for some
+     * DocumentsProviders, so the read is additionally bounded and
+     * falls back to the streaming path if the file turns out to be
+     * bigger than advertised.
+     */
+    fun setFileToDecrypt(name: String, size: Long, uri: android.net.Uri) {
+        val inline: ByteArray? = if (size <= INLINE_FILE_LIMIT) {
+            // Covers a negative/absent size too: some DocumentsProviders
+            // don't report one, and readAtMost is bounded anyway.
+            readAtMost(uri, INLINE_FILE_LIMIT)
+        } else {
+            null
+        }
+        _decryptState.value = _decryptState.value.copy(
+            selectedFileName = name,
+            selectedFileSize = size,
+            selectedFileBytes = inline,
+            selectedFileUri = if (inline == null) uri else null,
+            decryptedFileBytes = null,
+            decryptedFile = null,
+            errorMessage = null
+        )
+        if (inline != null) {
+            detectCardRecipientFile(inline)
+        } else {
+            detectCardRecipientFileStreaming(uri)
+        }
+    }
+
+    /**
+     * Read [uri] fully, but only if it comes in at or under [limit];
+     * returns null the moment it goes over. Avoids trusting the
+     * picker's reported size, and avoids allocating a 13 MB array to
+     * discover the file is 13 MB.
+     */
+    private fun readAtMost(uri: android.net.Uri, limit: Long): ByteArray? {
+        return try {
+            PGPonyApp.instance.contentResolver.openInputStream(uri)?.use { input ->
+                val buffer = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(64 * 1024)
+                var total = 0L
+                var overLimit = false
+                while (true) {
+                    val n = input.read(chunk)
+                    if (n <= 0) break
+                    total += n
+                    if (total > limit) {
+                        overLimit = true
+                        break
+                    }
+                    buffer.write(chunk, 0, n)
+                }
+                if (overLimit) null else buffer.toByteArray()
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 4.0.4 — card-recipient detection for the large path. The
+     * session-key packets sit at the front of the message, so this
+     * reads a few KB off the stream instead of the whole file.
+     */
+    private fun detectCardRecipientFileStreaming(uri: android.net.Uri) {
+        viewModelScope.launch {
+            var isPassword = false
+            val match: PGPKeyEntity? = try {
+                val info = withContext(Dispatchers.IO) {
+                    PGPonyApp.instance.contentResolver.openInputStream(uri)?.use { input ->
+                        crypto.inspectEncryptedMessage(input)
+                    }
+                }
+                isPassword = info?.isSymmetricOnly ?: false
+                val recipientIds = info?.publicKeyIDs ?: emptyList()
+                if (recipientIds.isEmpty()) {
+                    null
+                } else {
+                    withContext(Dispatchers.IO) {
+                        val cardEntities = repo.getAllKeys().filter {
+                            it.isCardBacked && it.armoredPublicKey != null
+                        }
+                        cardEntities.firstOrNull { entity ->
+                            val ring = repo.loadPublicKeyRing(entity.fingerprint)
+                            ring != null && ringContainsAnyKeyId(ring, recipientIds)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                isPassword = false
+                null
+            }
+            if (_decryptState.value.selectedFileUri == uri) {
+                _decryptState.value = _decryptState.value.copy(
+                    isCardMessage = match != null,
+                    cardMessageKeyFingerprint = match?.fingerprint,
+                    cardMessageKeyName = match?.let { it.userName.ifBlank { it.userEmail } },
+                    isPasswordMessage = isPassword
+                )
+            }
+        }
     }
 
     /**
@@ -1892,11 +2511,15 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
     /** Phase A10c: clear the picked encrypted file. */
     fun clearDecryptFile() {
+        // 4.0.4 — also drops any streamed plaintext from cacheDir.
+        ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
         _decryptState.value = _decryptState.value.copy(
             selectedFileName = null,
             selectedFileSize = null,
             selectedFileBytes = null,
+            selectedFileUri = null,
             decryptedFileBytes = null,
+            decryptedFile = null,
             errorMessage = null,
             // HW Phase 3 — drop any card-message detection from the cleared file.
             isCardMessage = false,
@@ -1918,15 +2541,180 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      */
     fun decryptFile(passphrase: String? = null) {
         val s = _decryptState.value
+        // 4.0.4 — see encryptFile(): one file operation at a time.
+        if (fileOpJob?.isActive == true) return
         val bytes = s.selectedFileBytes
-        if (bytes == null) {
+        val uri = s.selectedFileUri
+        if (bytes == null && uri == null) {
             _decryptState.value = s.copy(errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_no_file_to_decrypt))
             return
         }
         if (passphrase != null) {
             _decryptState.value = s.copy(passphrase = passphrase)
         }
-        decryptFileAndVerifyPath(_decryptState.value, bytes)
+        if (bytes != null) {
+            decryptFileAndVerifyPath(_decryptState.value, bytes)
+        } else {
+            decryptFileStreamingPath(_decryptState.value, uri!!)
+        }
+    }
+
+    /**
+     * 4.0.4 — the large-file counterpart to decryptFileAndVerifyPath.
+     *
+     * Streams the picked URI through PGPCryptoService.decryptStream()
+     * into a scratch file and never materialises either side. What it
+     * gives up relative to the buffered path, all of which needs the
+     * whole plaintext in memory and none of which is meaningful at
+     * this size:
+     *
+     *   • the RFC 3156 .eml envelope unwrap (an encrypted email is
+     *     not tens of megabytes; if one ever is, it decrypts to a
+     *     file the user can save and open)
+     *   • MIME routing to the structured attachments sheet
+     *   • outputText / outputData, so the text box stays empty
+     *
+     * Signature verification is unaffected: decryptStream() runs the
+     * same decompress-before-verify walk and the same mandatory
+     * integrity gate as decrypt().
+     */
+    private fun decryptFileStreamingPath(s: DecryptUiState, uri: android.net.Uri) {
+        fileOpJob = viewModelScope.launch {
+            _decryptState.value = _decryptState.value.copy(
+                isProcessing = true,
+                errorMessage = null,
+                processedBytes = 0L,
+                totalBytes = s.selectedFileSize ?: 0L,
+            )
+            var scratch: java.io.File? = null
+            try {
+                val selectedFirst = s.selectedKeyFingerprint
+                val orderedKeys = if (selectedFirst != null) {
+                    val selected = s.availableKeys.filter { it.fingerprint == selectedFirst }
+                    val rest = s.availableKeys.filter { it.fingerprint != selectedFirst }
+                    selected + rest
+                } else {
+                    s.availableKeys
+                }
+                val secretRings = withContext(Dispatchers.IO) {
+                    orderedKeys.mapNotNull { repo.loadSecretKeyRing(it.fingerprint) }
+                }
+                val verifyRings = withContext(Dispatchers.IO) {
+                    repo.getAllKeys().mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
+                }
+
+                val provisionalName = s.selectedFileName?.let { stripPgpExtension(it) }
+                    ?: s.selectedFileName?.let { "decrypted_$it" }
+                    ?: "decrypted_output"
+
+                val result = withContext(Dispatchers.IO) {
+                    val job = coroutineContext[kotlinx.coroutines.Job]
+                    val out = ScratchFiles.allocate(
+                        PGPonyApp.instance, provisionalName, ScratchFiles.SCOPE_DECRYPT
+                    )
+                    scratch = out
+                    val resolver = PGPonyApp.instance.contentResolver
+                    val raw = resolver.openInputStream(uri)
+                        ?: throw java.io.IOException("Could not open the selected file")
+                    // 4.0.4 — counts ciphertext bytes consumed, which is
+                    // the only figure we can report: the plaintext size
+                    // is unknown until the literal packet ends.
+                    val input = ProgressInputStream(
+                        delegate = raw,
+                        isCancelled = { job?.isActive == false },
+                    ) { read ->
+                        _decryptState.value = _decryptState.value.copy(processedBytes = read)
+                    }
+                    input.use { source ->
+                        out.outputStream().buffered().use { sink ->
+                            crypto.decryptStream(
+                                input = source,
+                                output = sink,
+                                secretKeyRings = secretRings,
+                                passphrase = s.passphrase.ifBlank { null },
+                                verificationKeys = verifyRings
+                            )
+                        }
+                    }
+                }
+
+                // The literal-data packet carries the original name; prefer
+                // it over the stripped ciphertext name now that we have it.
+                // ScratchFiles.allocate sanitises the name, and this rename
+                // stays inside the same slot directory.
+                val literalName = result.filename?.takeIf { it.isNotBlank() }
+                val outFile = if (literalName != null && literalName != provisionalName) {
+                    val renamed = java.io.File(
+                        scratch!!.parentFile,
+                        literalName.substringAfterLast('/').substringAfterLast('\\')
+                    )
+                    if (withContext(Dispatchers.IO) { scratch!!.renameTo(renamed) }) renamed else scratch!!
+                } else {
+                    scratch!!
+                }
+
+                val verResult = buildVerificationResultForStream(result)
+
+                _decryptState.value = _decryptState.value.copy(
+                    outputText = "",
+                    outputData = null,
+                    isProcessing = false,
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    signatureVerified = result.signatureVerified,
+                    signerKeyID = result.signerKeyID,
+                    decryptedFilename = result.filename,
+                    showPassphraseDialog = false,
+                    verificationResult = verResult,
+                    decryptedFileBytes = null,
+                    decryptedFile = outFile,
+                    decryptedOutputFilename = outFile.name,
+                    mimeBody = null,
+                    mimeAttachments = emptyList(),
+                    showStructuredResultSheet = false,
+                    showFileDecryptResultSheet = true
+                )
+                _events.tryEmit(Event.DecryptSuccess)
+                recordDecryptUsage(s.selectedKeyFingerprint)
+            } catch (e: com.pgpony.android.crypto.PGPCryptoError.PassphraseRequired) {
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
+                _decryptState.value = _decryptState.value.copy(
+                    isProcessing = false,
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    showPassphraseDialog = true,
+                    errorMessage = null
+                )
+            } catch (e: com.pgpony.android.crypto.PGPCryptoError.InvalidPassphrase) {
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
+                _decryptState.value = _decryptState.value.copy(
+                    isProcessing = false,
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase)
+                )
+            } catch (e: Throwable) {
+                // 4.0.4 — Throwable, not Exception: an Error escaping here
+                // would leave isProcessing true with nothing to clear it,
+                // so a failed decrypt would present as a hung one.
+                // A partially-written plaintext must never survive either.
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
+                // Cancellation is not identifiable by exception type —
+                // decryptStream wraps it — but the Job tells us, and
+                // cancelFileOperation() has already reset the UI.
+                if (!isActive) return@launch
+                _decryptState.value = _decryptState.value.copy(
+                    isProcessing = false,
+                    processedBytes = 0L,
+                    totalBytes = 0L,
+                    errorMessage = if (e is OutOfMemoryError) {
+                        PGPonyApp.instance.getString(R.string.encdec_error_file_too_large)
+                    } else {
+                        PGPonyApp.instance.getString(R.string.encdec_error_decryption_failed_format, e.message ?: "")
+                    }
+                )
+            }
+        }
     }
 
     /**
@@ -1936,9 +2724,15 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * decrypted material lingering in memory longer than necessary.
      */
     fun dismissFileDecryptResult() {
+        // 4.0.4 — the streaming path put the plaintext on disk, so
+        // dropping the reference is no longer enough. Same intent as
+        // before: once the sheet closes, the user has either saved or
+        // shared it or they haven't, and we don't keep it around.
+        ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
         _decryptState.value = _decryptState.value.copy(
             showFileDecryptResultSheet = false,
-            decryptedFileBytes = null
+            decryptedFileBytes = null,
+            decryptedFile = null
         )
     }
 

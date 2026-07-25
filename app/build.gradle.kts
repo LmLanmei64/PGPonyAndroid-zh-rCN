@@ -82,16 +82,30 @@ android {
         // learn or suggest typed secrets. Masking alone did not set the
         // password input type; reported by a Play review. 26 fields fixed.
         //
-        // v4.0.4 — four fixes, three of them silent failures:
+        // v4.0.4 — seven fixes, four of them silent failures:
         //   • R8 was renaming the org.openintents.openpgp contract, which
         //     crashed every release-build API client on decrypt (K-9,
-        //     Thunderbird, FairEmail). Keep rules added.
+        //     Thunderbird, FairEmail). Keep rules added. [issue #5]
+        //   • Encrypt and Decrypt round-tripped whole files through memory:
+        //     input array in UI state, a ByteArrayOutputStream doubling its
+        //     way to the output plus a copy on toByteArray(), then the
+        //     result back in state. ~60 MB of largely contiguous allocation
+        //     for a 13 MB file, which OOMs on a modest heap. Both now fork
+        //     at INLINE_FILE_LIMIT and stream past it, via encryptStream /
+        //     decryptStream into cacheDir/scratch. Covers the two tabs, the
+        //     open/share intent entry points, and the Quick Action.
+        //     [issue #6]
         //   • Decrypt ran the whole keyring load + the decryption itself on
-        //     the main thread — an ANR on slower devices.
+        //     the main thread — an ANR on slower devices. This was the first
+        //     half of #6: it explains the freeze, not the crash.
         //   • A multi-key file (gpg --export a b c) imported only its first
         //     key and reported success.
         //   • OpenPGP cards with kdf-setup enabled got a plain PIN and
         //     answered 0x6982.
+        //   • The API passphrase prompt opened already flagged "wrong
+        //     passphrase" on a cold start, before anything was typed.
+        //   • That prompt returned a bare RESULT_OK, so the client had
+        //     nothing to re-execute and needed a second Unlock press.
         //
         // -rc1 while the card fix is verified on real hardware; drop the
         // suffix (versionCode unchanged) for the public release.

@@ -533,10 +533,10 @@ class PGPonyOpenPgpService : Service() {
             }
             successResult()
         } catch (e: SigningError.PassphraseRequired) {
-            passphraseRequiredResult(signKeyId, signKeyLabel, wasWrong = false)
+            passphraseRequiredResult(data, signKeyId, signKeyLabel, wasWrong = false)
         } catch (e: SigningError.InvalidPassphrase) {
             ProviderPassphraseCache.clear(signKeyId)
-            passphraseRequiredResult(signKeyId, signKeyLabel, wasWrong = true)
+            passphraseRequiredResult(data, signKeyId, signKeyLabel, wasWrong = true)
         } catch (e: Exception) {
             errorResult(OpenPgpError.GENERIC_ERROR, e.message ?: "Encryption failed")
         }
@@ -572,10 +572,10 @@ class PGPonyOpenPgpService : Service() {
             writeAll(output, signed.toByteArray(Charsets.UTF_8))
             successResult()
         } catch (e: SigningError.PassphraseRequired) {
-            passphraseRequiredResult(ok.keyId, ok.label, wasWrong = false)
+            passphraseRequiredResult(data, ok.keyId, ok.label, wasWrong = false)
         } catch (e: SigningError.InvalidPassphrase) {
             ProviderPassphraseCache.clear(ok.keyId)
-            passphraseRequiredResult(ok.keyId, ok.label, wasWrong = true)
+            passphraseRequiredResult(data, ok.keyId, ok.label, wasWrong = true)
         } catch (e: Exception) {
             errorResult(OpenPgpError.GENERIC_ERROR, e.message ?: "Signing failed")
         }
@@ -645,10 +645,10 @@ class PGPonyOpenPgpService : Service() {
                 putExtra(OpenPgpApi.RESULT_SIGNATURE_MICALG, "pgp-sha256")
             }
         } catch (e: SigningError.PassphraseRequired) {
-            passphraseRequiredResult(ok.keyId, ok.label, wasWrong = false)
+            passphraseRequiredResult(data, ok.keyId, ok.label, wasWrong = false)
         } catch (e: SigningError.InvalidPassphrase) {
             ProviderPassphraseCache.clear(ok.keyId)
-            passphraseRequiredResult(ok.keyId, ok.label, wasWrong = true)
+            passphraseRequiredResult(data, ok.keyId, ok.label, wasWrong = true)
         } catch (e: Exception) {
             errorResult(OpenPgpError.GENERIC_ERROR, e.message ?: "Signing failed")
         }
@@ -957,10 +957,10 @@ class PGPonyOpenPgpService : Service() {
                 )
             }
         } catch (e: PGPCryptoError.PassphraseRequired) {
-            return passphraseRequiredResult(matchedKeyId, matchedEntity.userID, wasWrong = false)
+            return passphraseRequiredResult(data, matchedKeyId, matchedEntity.userID, wasWrong = false)
         } catch (e: PGPCryptoError.InvalidPassphrase) {
             ProviderPassphraseCache.clear(matchedKeyId)
-            return passphraseRequiredResult(matchedKeyId, matchedEntity.userID, wasWrong = true)
+            return passphraseRequiredResult(data, matchedKeyId, matchedEntity.userID, wasWrong = true)
         } catch (e: Exception) {
             return errorResult(OpenPgpError.GENERIC_ERROR, e.message ?: "Decryption failed")
         }
@@ -1376,6 +1376,7 @@ class PGPonyOpenPgpService : Service() {
     }
 
     private fun passphraseRequiredResult(
+        data: Intent,
         keyId: Long,
         keyLabel: String,
         wasWrong: Boolean
@@ -1384,7 +1385,17 @@ class PGPonyOpenPgpService : Service() {
             putExtra(ProviderPassphraseActivity.EXTRA_KEY_ID, keyId)
             putExtra(ProviderPassphraseActivity.EXTRA_KEY_LABEL, keyLabel)
             putExtra(ProviderPassphraseActivity.EXTRA_WRONG, wasWrong)
-            setData(android.net.Uri.parse("pgpony-api-passphrase://$keyId/$wasWrong"))
+            // 4.0.4: the client re-executes the original request with the
+            // intent this PendingIntent returns, exactly as it does for the
+            // key picker. Returning a bare RESULT_OK left clients (FairEmail)
+            // with nothing to retry, so the message only appeared after the
+            // user pressed Unlock a second time. Echo the request back.
+            putExtra(ProviderPassphraseActivity.EXTRA_API_DATA, data)
+            setData(
+                android.net.Uri.parse(
+                    "pgpony-api-passphrase://$keyId/$wasWrong/${data.action}"
+                )
+            )
         }
         val pendingIntent = PendingIntent.getActivity(
             this,

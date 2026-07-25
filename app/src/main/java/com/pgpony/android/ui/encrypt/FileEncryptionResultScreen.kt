@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.pgpony.android.ui.util.ScratchFiles
 import com.pgpony.android.R
 import com.pgpony.android.MainActivity
 import java.io.File
@@ -65,7 +66,11 @@ fun FileEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
     // 3.1.0 Phase 1 (C2) — binary ciphertext is a real .gpg file, matching
     // iOS 7.1.0 and what gpg itself produces (was "$origName.pgp").
     val encryptedName = "$origName.gpg"
-    val encryptedBytes = state.encryptedFileBytes ?: ByteArray(0)
+    // 4.0.4 — two carriers, as on the decrypt sheet: bytes from the
+    // buffered path, a cacheDir/scratch file from the streamed one.
+    val encryptedBytes = state.encryptedFileBytes
+    val streamed = state.encryptedFile
+    val encryptedSize = encryptedBytes?.size?.toLong() ?: streamed?.length() ?: 0L
 
     // Save-status banner state. Same one-shot UI flair pattern as the
     // text-mode sheet — kept local since it has no business value.
@@ -154,7 +159,7 @@ stringResource(R.string.file_enc_result_title),
                             maxLines = 1
                         )
                         Text(
-                            formatFileSize(encryptedBytes.size.toLong()),
+                            formatFileSize(encryptedSize),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -229,9 +234,16 @@ stringResource(R.string.file_enc_result_badge_can_decrypt),
                             return@startDocumentCreator
                         }
                         try {
-                            context.contentResolver.openOutputStream(uri)?.use {
-                                it.write(encryptedBytes)
-                                it.flush()
+                            context.contentResolver.openOutputStream(uri)?.use { sink ->
+                                // 4.0.4 — chunked copy on the streamed branch.
+                                if (encryptedBytes != null) {
+                                    sink.write(encryptedBytes)
+                                } else if (streamed != null) {
+                                    streamed.inputStream().buffered().use { src ->
+                                        src.copyTo(sink)
+                                    }
+                                }
+                                sink.flush()
                             }
                             saveStatus = SaveStatus.Saved
                         } catch (e: Exception) {
@@ -254,14 +266,22 @@ stringResource(R.string.file_enc_result_badge_can_decrypt),
                         // other apps can read the file. Cache dir is
                         // OS-cleaned automatically; FileProvider grants
                         // one-shot read URIs via FLAG_GRANT_READ_URI_PERMISSION.
-                        val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
-                        val outFile = File(exportsDir, encryptedName)
-                        outFile.writeBytes(encryptedBytes)
-                        val shareUri = FileProvider.getUriForFile(
-                            context,
-                            "${context.packageName}.fileprovider",
-                            outFile
-                        )
+                        //
+                        // 4.0.4 — the streamed ciphertext already lives in
+                        // cacheDir/scratch, which file_paths.xml exposes, so
+                        // it is shared in place rather than copied again.
+                        val shareUri = if (streamed != null) {
+                            ScratchFiles.uriFor(context, streamed)
+                        } else {
+                            val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
+                            val outFile = File(exportsDir, encryptedName)
+                            outFile.writeBytes(encryptedBytes ?: ByteArray(0))
+                            FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                outFile
+                            )
+                        }
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "application/pgp-encrypted"
                             putExtra(Intent.EXTRA_STREAM, shareUri)

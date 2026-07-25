@@ -461,6 +461,13 @@
     <string name="encdec_error_password_mismatch">Passphrases don\'t match</string>
     <string name="encdec_error_no_file_to_encrypt">Pick a file to encrypt first</string>
     <string name="encdec_error_no_file_to_decrypt">Pick an encrypted file to decrypt first</string>
+    <!-- 4.0.4 — byte progress for a streamed file operation, e.g. "12.4 MB of 105 MB". -->
+    <string name="encdec_progress_format">%1$s of %2$s</string>
+    <!-- 4.0.4 — card operations hold the NFC session open for the whole
+         operation, so they cannot stream and still need the file buffered. -->
+    <string name="encdec_error_file_too_large_for_card">This file is too large to use with a hardware key. Use a software key for files this size.</string>
+    <!-- 4.0.4 — last-resort message if even the streaming path runs out of memory. -->
+    <string name="encdec_error_file_too_large">This file is too large for the available memory. Try closing other apps and running it again.</string>
     <string name="encdec_error_no_decrypt_input">Paste an encrypted or signed message</string>
     <string name="encdec_error_incorrect_passphrase">Incorrect passphrase</string>
     <string name="encdec_error_incorrect_passphrase_retry">Incorrect passphrase. Try again.</string>
@@ -1281,6 +1288,8 @@
 
     <!-- Errors -->
     <string name="share_target_error_no_input">No content was shared — nothing to act on.</string>
+    <!-- 4.0.4 — streamed Quick Action decrypt hit a protected key. -->
+    <string name="share_target_decrypt_passphrase_required">That key is passphrase-protected. Enter its passphrase and try again.</string>
     <string name="share_target_error_locked">Unlock PGPony to use Quick Action.</string>
     <string name="share_target_error_not_pgp_for_decrypt">This does not look like a PGP message — paste content that starts with -----BEGIN PGP MESSAGE-----.</string>
     <string name="share_target_error_generic_format">Something went wrong: %1$s</string>

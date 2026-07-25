@@ -899,11 +899,23 @@ fun PGPonyMainScreen(
                 // file manually, so card detection, the password-message
                 // note, and the passphrase prompt all work unchanged.
                 encDecVm.setDecryptMode(DecryptMode.FILE)
-                encDecVm.setFileToDecrypt(
-                    name = action.filename ?: "encrypted_file",
-                    size = action.data.size.toLong(),
-                    bytes = action.data
-                )
+                // 4.0.4 — a large share arrives as a URI with no bytes;
+                // the VM streams it instead of buffering.
+                val decBytes = action.data
+                if (decBytes != null) {
+                    encDecVm.setFileToDecrypt(
+                        name = action.filename ?: "encrypted_file",
+                        size = decBytes.size.toLong(),
+                        bytes = decBytes
+                    )
+                } else if (action.uri != null) {
+                    encDecVm.setFileToDecrypt(
+                        name = action.filename ?: "encrypted_file",
+                        size = com.pgpony.android.intent.DocumentBytes
+                            .declaredSize(PGPonyApp.instance.contentResolver, action.uri) ?: -1L,
+                        uri = action.uri
+                    )
+                }
                 navController.navigate(Screen.Decrypt.route) {
                     popUpTo(navController.graph.startDestinationId) { saveState = true }
                     launchSingleTop = true
@@ -917,11 +929,22 @@ fun PGPonyMainScreen(
                 // with recipients ready" parity — the default-recipient
                 // preselection already runs in the Encrypt screen).
                 encDecVm.setMode(EncryptMode.FILE)
-                encDecVm.setFileToEncrypt(
-                    name = action.filename ?: "shared_file",
-                    size = action.data.size.toLong(),
-                    bytes = action.data
-                )
+                // 4.0.4 — see the DecryptFile branch above.
+                val encBytes = action.data
+                if (encBytes != null) {
+                    encDecVm.setFileToEncrypt(
+                        name = action.filename ?: "shared_file",
+                        size = encBytes.size.toLong(),
+                        bytes = encBytes
+                    )
+                } else if (action.uri != null) {
+                    encDecVm.setFileToEncrypt(
+                        name = action.filename ?: "shared_file",
+                        size = com.pgpony.android.intent.DocumentBytes
+                            .declaredSize(PGPonyApp.instance.contentResolver, action.uri) ?: -1L,
+                        uri = action.uri
+                    )
+                }
                 navController.navigate(Screen.Encrypt.route) {
                     popUpTo(navController.graph.startDestinationId) { saveState = true }
                     launchSingleTop = true

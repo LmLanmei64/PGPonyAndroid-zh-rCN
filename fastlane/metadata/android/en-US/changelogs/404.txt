@@ -1,0 +1,13 @@
+Fixes for problems reported on GitHub.
+
+Large files no longer crash or freeze. Encrypt and Decrypt now stream files straight to and from disk instead of holding them in memory, so a multi-megabyte file works the same as a small one. This covers the Encrypt and Decrypt tabs, files opened or shared into PGPony, and the Quick Action share sheet.
+
+Other apps can decrypt again. Release builds were renaming part of the OpenPGP API, which crashed every mail app that asked PGPony to decrypt (FairEmail, K-9, Thunderbird).
+
+The passphrase prompt no longer opens already saying the passphrase was wrong, and entering it once is now enough — apps used to need a second Unlock press before showing the message.
+
+Importing a file with several keys in it now imports all of them. Before, only the first was imported and PGPony still reported success.
+
+OpenPGP cards with KDF enabled (kdf-setup) now work. Their PIN is hashed as the card expects instead of being sent as plain text.
+
+Decrypting no longer blocks the interface while it works, which was causing freezes on some devices.

@@ -98,4 +98,45 @@ object DocumentBytes {
 
     fun read(resolver: ContentResolver, uri: Uri): ByteArray? =
         readDetailed(resolver, uri).bytes
+
+    /**
+     * 4.0.4 — the provider's declared size, or null when it doesn't
+     * report one. Used to decide whether a shared file can be read into
+     * memory at all before anything tries to (issue #6).
+     */
+    fun declaredSize(resolver: ContentResolver, uri: Uri): Long? = try {
+        resolver.query(
+            uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null
+        )?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * 4.0.4 — read at most [maxBytes] from the front of [uri].
+     *
+     * Deliberately the plain stream only, not the full typed-descriptor
+     * ladder above: this is for classifying a file too big to hold in
+     * memory, and every marker that classification looks at (armor
+     * headers, RFC 3156 boundaries, OpenPGP session-key packets) sits at
+     * the very front. A provider that needs the typed ladder is serving
+     * a converted document, which is not the large-binary case this
+     * exists for. Returns null if the stream can't be opened.
+     */
+    fun readHead(resolver: ContentResolver, uri: Uri, maxBytes: Int): ByteArray? = try {
+        resolver.openInputStream(uri)?.use { input ->
+            val buf = ByteArray(maxBytes)
+            var total = 0
+            while (total < maxBytes) {
+                val n = input.read(buf, total, maxBytes - total)
+                if (n <= 0) break
+                total += n
+            }
+            buf.copyOf(total)
+        }
+    } catch (e: Exception) {
+        null
+    }
 }

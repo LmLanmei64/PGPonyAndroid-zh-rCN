@@ -52,7 +52,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
+import com.pgpony.android.crypto.PGPCryptoError
 import com.pgpony.android.crypto.PGPCryptoService
+import com.pgpony.android.ui.util.ScratchFiles
 import com.pgpony.android.data.PGPKeyEntity
 import com.pgpony.android.data.repository.KeyRepository
 import com.pgpony.android.intent.ShareIntentContent
@@ -119,9 +121,16 @@ data class ShareTargetUiState(
     // Phase A2: binary file-encrypt output (EncryptFileResult phase). Held in
     // memory until the user shares it; never stringified.
     val encryptedFileBytes: ByteArray? = null,
+    // 4.0.4 — the streaming counterpart. Set instead of
+    // encryptedFileBytes when the shared file was too large to buffer;
+    // the ciphertext lives under cacheDir/scratch and is shared from
+    // there in place. Exactly one of the two is ever set.
+    val encryptedFile: java.io.File? = null,
     val encryptedFileName: String? = null,
     // Phase A2 (decrypt side): recovered binary file (DecryptFileResult phase).
     val decryptedFileBytes: ByteArray? = null,
+    /** 4.0.4 — streaming counterpart to decryptedFileBytes. */
+    val decryptedFile: java.io.File? = null,
     // 3.1.0 Phase 6 (J6) — set when the decrypted content was PGP/MIME
     // WITH attachments: the Quick Action shows the body plus this note;
     // the full attachment view lives in the main app (iOS
@@ -343,8 +352,191 @@ class ShareTargetViewModel(
 
     // ── Encrypt action ─────────────────────────────────────────────────
 
+    /**
+     * 4.0.4 — encrypt a shared file straight from its URI into a scratch
+     * file. Binary output (armor = false), matching the buffered file
+     * path: the Quick Action's file result is a .gpg the user shares on,
+     * and armoring a large file inflates it by a third for nothing.
+     */
+    private fun performEncryptStreaming(uri: android.net.Uri, sourceFilename: String?) {
+        val current = _state.value
+        if (current.selectedRecipients.isEmpty()) {
+            _state.update {
+                it.copy(
+                    phase = ShareTargetPhase.Error,
+                    errorMessage = PGPonyApp.instance.getString(
+                        R.string.share_target_encrypt_recipients_empty
+                    ),
+                )
+            }
+            return
+        }
+        _state.update { it.copy(phase = ShareTargetPhase.Processing, errorMessage = null) }
+        viewModelScope.launch {
+            try {
+                val recipientRings = withContext(Dispatchers.IO) {
+                    current.selectedRecipients.mapNotNull { fp ->
+                        repository.loadPublicKeyRing(fp)
+                    }
+                }
+                if (recipientRings.isEmpty()) {
+                    _state.update {
+                        it.copy(
+                            phase = ShareTargetPhase.Error,
+                            errorMessage = PGPonyApp.instance.getString(
+                                R.string.share_target_encrypt_recipients_empty
+                            ),
+                        )
+                    }
+                    return@launch
+                }
+                // 3.1.0 Phase 1 (C2) — .gpg for binary output.
+                val outName = "${sourceFilename ?: "shared_file"}.gpg"
+                val out = withContext(Dispatchers.IO) {
+                    val dest = ScratchFiles.allocate(PGPonyApp.instance, outName, ScratchFiles.SCOPE_QUICK)
+                    val input = PGPonyApp.instance.contentResolver.openInputStream(uri)
+                        ?: throw java.io.IOException("Could not open the shared file")
+                    input.use { source ->
+                        dest.outputStream().buffered().use { sink ->
+                            PGPCryptoService.shared.encryptStream(
+                                input = source,
+                                output = sink,
+                                recipientPublicKeys = recipientRings,
+                                signingSecretKey = null,
+                                passphrase = null,
+                                filename = sourceFilename,
+                                armor = false,
+                            )
+                        }
+                    }
+                    dest
+                }
+                _state.update {
+                    it.copy(
+                        phase = ShareTargetPhase.EncryptFileResult,
+                        encryptedFileBytes = null,
+                        encryptedFile = out,
+                        encryptedFileName = outName,
+                    )
+                }
+            } catch (e: Exception) {
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_QUICK)
+                _state.update {
+                    it.copy(
+                        phase = ShareTargetPhase.Error,
+                        errorMessage = e.message ?: PGPonyApp.instance.getString(
+                            R.string.share_target_error_no_input
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 4.0.4 — decrypt a shared file straight from its URI into a scratch
+     * file. The Quick Action has no inline preview for a file result, so
+     * nothing here needs the plaintext in memory.
+     */
+    private fun performDecryptStreaming(uri: android.net.Uri, sourceFilename: String?) {
+        val current = _state.value
+        _state.update { it.copy(phase = ShareTargetPhase.Processing, errorMessage = null) }
+        viewModelScope.launch {
+            try {
+                val tryRings = withContext(Dispatchers.IO) {
+                    val rings = mutableListOf<org.bouncycastle.openpgp.PGPSecretKeyRing>()
+                    current.selectedDecryptKey?.let { entity ->
+                        repository.loadSecretKeyRing(entity.fingerprint)?.let { rings.add(it) }
+                    }
+                    current.availableKeyPairs.forEach { pair ->
+                        repository.loadSecretKeyRing(pair.fingerprint)?.let { ring ->
+                            if (rings.none { it.publicKey.fingerprint contentEquals ring.publicKey.fingerprint }) {
+                                rings.add(ring)
+                            }
+                        }
+                    }
+                    rings.toList()
+                }
+                if (tryRings.isEmpty()) {
+                    _state.update {
+                        it.copy(
+                            phase = ShareTargetPhase.Error,
+                            errorMessage = PGPonyApp.instance.getString(
+                                R.string.share_target_decrypt_no_key_pairs
+                            ),
+                        )
+                    }
+                    return@launch
+                }
+                val outName = sourceFilename?.let { stripPgpExtension(it) } ?: "decrypted_file"
+                val (out, result) = withContext(Dispatchers.IO) {
+                    val dest = ScratchFiles.allocate(PGPonyApp.instance, outName, ScratchFiles.SCOPE_QUICK)
+                    val input = PGPonyApp.instance.contentResolver.openInputStream(uri)
+                        ?: throw java.io.IOException("Could not open the shared file")
+                    val r = input.use { source ->
+                        dest.outputStream().buffered().use { sink ->
+                            PGPCryptoService.shared.decryptStream(
+                                input = source,
+                                output = sink,
+                                secretKeyRings = tryRings,
+                                passphrase = current.passphrase.ifEmpty { null },
+                                verificationKeys = null,
+                            )
+                        }
+                    }
+                    dest to r
+                }
+                val signerName = result.signerKeyID?.let { keyId ->
+                    _state.value.availableRecipients.firstOrNull { k ->
+                        k.longKeyId.equals(keyId, ignoreCase = true)
+                    }?.userID
+                }
+                _state.update {
+                    it.copy(
+                        phase = ShareTargetPhase.DecryptFileResult,
+                        decryptedFileBytes = null,
+                        decryptedFile = out,
+                        decryptedFileName = result.filename?.takeIf { n -> n.isNotBlank() } ?: outName,
+                        signatureVerified = result.signatureVerified,
+                        signerKeyId = result.signerKeyID,
+                        signerName = signerName,
+                    )
+                }
+            } catch (e: PGPCryptoError.PassphraseRequired) {
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_QUICK)
+                _state.update {
+                    it.copy(
+                        phase = ShareTargetPhase.Error,
+                        errorMessage = PGPonyApp.instance.getString(
+                            R.string.share_target_decrypt_passphrase_required
+                        ),
+                    )
+                }
+            } catch (e: Exception) {
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_QUICK)
+                _state.update {
+                    it.copy(
+                        phase = ShareTargetPhase.Error,
+                        errorMessage = e.message ?: PGPonyApp.instance.getString(
+                            R.string.share_target_error_no_input
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
     fun performEncrypt() {
         val current = _state.value
+
+        // 4.0.4 — a shared file too large to buffer never had its bytes
+        // read, so it takes the streaming path instead of the byte
+        // assembly below (issue #6).
+        val largeIn = current.content as? ShareIntentContent.PgpFile
+        if (largeIn != null && largeIn.data == null && largeIn.uri != null) {
+            performEncryptStreaming(largeIn.uri, largeIn.filename)
+            return
+        }
 
         // A2: a shared FILE is encrypted as raw bytes and produces a file
         // result; only plain TEXT (and PGP files that actually parsed as armored
@@ -368,7 +560,12 @@ class ShareTargetViewModel(
                 if (isBinaryFile) {
                     // Raw bytes, never stringified. Embed the original filename
                     // in the literal packet so decryption can restore the name.
-                    plaintextBytes = c.data
+                    //
+                    // 4.0.4 — data is non-null here: the streaming branch at
+                    // the top of performEncrypt already returned for the
+                    // null-data case. The elvis keeps the compiler happy
+                    // without an assertion that could crash.
+                    plaintextBytes = c.data ?: ByteArray(0)
                     literalFilename = c.filename
                     produceFileResult = true
                     // 3.1.0 Phase 1 (C2) — .gpg for binary output (was .pgp).
@@ -488,7 +685,24 @@ class ShareTargetViewModel(
             is ShareIntentContent.PgpFile -> c.armoredText ?: run {
                 // Binary PGP path — decrypt the raw bytes instead.
                 // Use decrypt() instead of decryptArmored().
-                performDecryptBinary(c.data, c.filename)
+                //
+                // 4.0.4 — a file too large to buffer has no bytes; stream
+                // it from the URI instead (issue #6).
+                val bin = c.data
+                if (bin != null) {
+                    performDecryptBinary(bin, c.filename)
+                } else if (c.uri != null) {
+                    performDecryptStreaming(c.uri, c.filename)
+                } else {
+                    _state.update {
+                        it.copy(
+                            phase = ShareTargetPhase.Error,
+                            errorMessage = PGPonyApp.instance.getString(
+                                R.string.share_target_error_no_input
+                            ),
+                        )
+                    }
+                }
                 return
             }
             ShareIntentContent.Empty -> {

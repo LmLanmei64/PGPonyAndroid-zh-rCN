@@ -26,4 +26,15 @@
     <cache-path
         name="exports"
         path="exports/" />
+    <!--
+      4.0.4 — scratch/ backs the streaming file paths. Decrypt writes
+      plaintext here and Encrypt writes ciphertext here instead of
+      holding either in memory, and the result sheets share straight
+      out of it (no second copy). See ui/util/ScratchFiles.kt for the
+      lifecycle: the directory is wiped on app start and whenever a
+      result sheet is dismissed.
+    -->
+    <cache-path
+        name="scratch"
+        path="scratch/" />
 </paths>

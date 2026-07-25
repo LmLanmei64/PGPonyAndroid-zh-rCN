@@ -6,12 +6,15 @@
 // sign/encrypt call throws PassphraseRequired / InvalidPassphrase (NOT
 // exported). On confirm the passphrase goes into
 // ProviderPassphraseCache (in-process only — never back across the
-// binder), the activity returns RESULT_OK, and the client retries its
-// call, which now finds the cached passphrase.
+// binder), the activity returns RESULT_OK with the client's original
+// request intent echoed back, and the client re-executes that call,
+// which now finds the cached passphrase.
 
 package com.pgpony.android.provider
 
 import android.app.Activity
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -42,11 +45,20 @@ class ProviderPassphraseActivity : ComponentActivity() {
         const val EXTRA_KEY_ID = "com.pgpony.android.provider.PASSPHRASE_KEY_ID"
         const val EXTRA_KEY_LABEL = "com.pgpony.android.provider.PASSPHRASE_KEY_LABEL"
         const val EXTRA_WRONG = "com.pgpony.android.provider.PASSPHRASE_WRONG"
+
+        /** The client's original API request intent, echoed back on unlock. */
+        const val EXTRA_API_DATA = "com.pgpony.android.provider.PASSPHRASE_API_DATA"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        @Suppress("DEPRECATION")
+        val apiData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(EXTRA_API_DATA, Intent::class.java)
+        } else {
+            intent.getParcelableExtra(EXTRA_API_DATA)
+        }
         val keyId = intent.getLongExtra(EXTRA_KEY_ID, 0L)
         val keyLabel = intent.getStringExtra(EXTRA_KEY_LABEL) ?: ""
         val wasWrong = intent.getBooleanExtra(EXTRA_WRONG, false)
@@ -100,7 +112,12 @@ class ProviderPassphraseActivity : ComponentActivity() {
                             enabled = passphrase.isNotEmpty(),
                             onClick = {
                                 ProviderPassphraseCache.put(keyId, passphrase)
-                                setResult(Activity.RESULT_OK)
+                                // 4.0.4: hand the original request back so the
+                                // client can re-execute it immediately, the
+                                // same contract ProviderKeyPickerActivity uses.
+                                // A bare RESULT_OK made FairEmail wait for a
+                                // second Unlock press before showing the mail.
+                                setResult(Activity.RESULT_OK, Intent(apiData ?: Intent()))
                                 finish()
                             }
                         ) { Text(stringResource(R.string.provider_passphrase_unlock)) }

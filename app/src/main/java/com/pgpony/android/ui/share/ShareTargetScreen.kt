@@ -59,6 +59,7 @@ import com.pgpony.android.MainActivity
 import com.pgpony.android.R
 import com.pgpony.android.intent.ShareIntentContent
 import androidx.core.content.FileProvider
+import com.pgpony.android.ui.util.ScratchFiles
 import java.io.File
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.crypto.card.CardDecryptService
@@ -78,6 +79,7 @@ fun ShareTargetScreen(
     // HW Phase 3 — strings captured here; the NFC op lambda runs on a
     // binder thread and can't call stringResource.
     val cardNfcUnavailMsg = stringResource(R.string.card_scan_nfc_unavailable)
+    val cardTooLargeMsg = stringResource(R.string.encdec_error_file_too_large_for_card)
     val cardPairFirstMsg = stringResource(R.string.card_sign_pair_first)
     val cardDecFailedMsg = stringResource(R.string.card_sign_failed_generic)
 
@@ -150,8 +152,15 @@ fun ShareTargetScreen(
                             val pin = state.cardPin
                             val cardFp = state.cardDecryptKeyFingerprint
                             val bytes = vm.encryptedBytesForCardDecrypt()
+                            // 4.0.4 — a card operation holds the NFC session
+                            // open throughout, so it cannot stream; a file
+                            // too large to buffer has no bytes to give it.
+                            val tooLargeForCard = bytes == null &&
+                                (state.content as? ShareIntentContent.PgpFile)?.uri != null
                             if (cardActivity == null || cardFp == null || bytes == null) {
-                                vm.onCardDecryptFailure(cardNfcUnavailMsg)
+                                vm.onCardDecryptFailure(
+                                    if (tooLargeForCard) cardTooLargeMsg else cardNfcUnavailMsg
+                                )
                             } else {
                                 vm.onCardDecryptStarted()
                                 val started = cardActivity.startCardOperation({ session ->
@@ -190,7 +199,8 @@ fun ShareTargetScreen(
                     onShare = {
                         shareFile(
                             context,
-                            state.encryptedFileBytes ?: ByteArray(0),
+                            state.encryptedFileBytes,
+                            state.encryptedFile,
                             // 3.1.0 Phase 1 (C2) — .gpg fallback (was .pgp).
                             state.encryptedFileName ?: "encrypted.gpg",
                         )
@@ -211,7 +221,8 @@ fun ShareTargetScreen(
                         val fname = state.decryptedFileName ?: "decrypted_file"
                         shareFile(
                             context,
-                            state.decryptedFileBytes ?: ByteArray(0),
+                            state.decryptedFileBytes,
+                            state.decryptedFile,
                             fname,
                             guessMimeType(fname),
                         )
@@ -351,10 +362,22 @@ fun ShareInputPreview(content: ShareIntentContent) {
                             )
                         }
                     } else {
+                        // 4.0.4 — a file too large to buffer has no bytes;
+                        // ask the provider for its size instead. Remembered
+                        // so the query doesn't run on every recomposition.
+                        val previewCtx = LocalContext.current
+                        val inputSize = remember(content) {
+                            content.data?.size?.toLong()
+                                ?: content.uri?.let {
+                                    com.pgpony.android.intent.DocumentBytes
+                                        .declaredSize(previewCtx.contentResolver, it)
+                                }
+                                ?: 0L
+                        }
                         Text(
                             text = stringResource(
                                 R.string.share_target_input_binary_format,
-                                content.data.size,
+                                inputSize,
                             ),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -598,7 +621,8 @@ private fun ShareEncryptFileResultContent(
 ) {
     // 3.1.0 Phase 1 (C2) — .gpg fallback (was .pgp).
     val name = state.encryptedFileName ?: "encrypted.gpg"
-    val size = state.encryptedFileBytes?.size ?: 0
+    // 4.0.4 — whichever carrier is populated.
+    val size = state.encryptedFileBytes?.size?.toLong() ?: state.encryptedFile?.length() ?: 0L
     Text(
         text = stringResource(R.string.share_target_encrypt_file_result_subtitle),
         style = MaterialTheme.typography.bodySmall,
@@ -665,7 +689,8 @@ private fun ShareDecryptFileResultContent(
     onDone: () -> Unit,
 ) {
     val name = state.decryptedFileName ?: "decrypted_file"
-    val size = state.decryptedFileBytes?.size ?: 0
+    // 4.0.4 — whichever carrier is populated.
+    val size = state.decryptedFileBytes?.size?.toLong() ?: state.decryptedFile?.length() ?: 0L
     val signerLabel = when {
         state.signatureVerified && state.signerName != null ->
             stringResource(R.string.share_target_decrypt_result_signed_format, state.signerName)
@@ -879,19 +904,27 @@ private fun copyToClipboard(context: Context, text: String, encrypt: Boolean) {
  */
 private fun shareFile(
     context: Context,
-    bytes: ByteArray,
+    bytes: ByteArray?,
+    scratch: File?,
     filename: String,
     mimeType: String = "application/pgp-encrypted",
 ) {
     try {
-        val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
-        val outFile = File(exportsDir, filename)
-        outFile.writeBytes(bytes)
-        val shareUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            outFile,
-        )
+        // 4.0.4 — a streamed result already sits in cacheDir/scratch,
+        // which file_paths.xml exposes, so it is shared in place. Only
+        // the buffered branch still needs a copy written for it.
+        val shareUri = if (scratch != null) {
+            ScratchFiles.uriFor(context, scratch)
+        } else {
+            val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
+            val outFile = File(exportsDir, filename)
+            outFile.writeBytes(bytes ?: ByteArray(0))
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                outFile,
+            )
+        }
         val send = Intent(Intent.ACTION_SEND).apply {
             type = mimeType
             putExtra(Intent.EXTRA_STREAM, shareUri)

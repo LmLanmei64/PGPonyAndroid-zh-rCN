@@ -121,7 +121,7 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
             title = { Text(stringResource(R.string.encrypt_screen_title)) },
             actions = {
                 val hasContent = state.inputText.isNotBlank() ||
-                    state.outputText.isNotBlank() || state.selectedFileBytes != null
+                    state.outputText.isNotBlank() || state.hasSelectedFile
                 IconButton(onClick = { viewModel.clearEncrypt() }, enabled = hasContent) {
                     Icon(Icons.Filled.Clear, contentDescription = stringResource(R.string.common_clear))
                 }
@@ -316,7 +316,7 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                             // mid-encrypt → same PIN dialog. Otherwise the VM
                             // file path (software key or no signing).
                             val cardSign = state.signMessage && state.signingKey?.isCardBacked == true
-                            if (cardSign && state.selectedRecipients.isNotEmpty() && state.selectedFileBytes != null) {
+                            if (cardSign && state.selectedRecipients.isNotEmpty() && state.hasSelectedFile) {
                                 cardSignPin = ""
                                 showCardSignPin = true
                             } else {
@@ -373,7 +373,7 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                         EncryptMode.FILE -> state.fileEncryptMethod == FileEncryptMethod.RECIPIENTS &&
                             state.signMessage &&
                             state.signingKey?.isCardBacked == true &&
-                            state.selectedRecipients.isNotEmpty() && state.selectedFileBytes != null
+                            state.selectedRecipients.isNotEmpty() && state.hasSelectedFile
                         // Phase A1: password mode never signs with a card.
                         EncryptMode.PASSWORD -> false
                         // 3.1.0 Phase 5 (J3): Bundle v1 never card-signs.
@@ -403,9 +403,9 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                     // the VM validates the passphrase + confirm on tap.
                     EncryptMode.FILE ->
                         if (state.fileEncryptMethod == FileEncryptMethod.PASSWORD)
-                            state.selectedFileBytes != null
+                            state.hasSelectedFile
                         else
-                            state.selectedFileBytes != null
+                            state.hasSelectedFile
                                 && state.selectedRecipients.isNotEmpty()
                     // 3.1.0 Phase 5 (J3): a Bundle needs recipients and
                     // something to send (body or at least one attachment).
@@ -424,6 +424,14 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                         EncryptMode.FILE -> stringResource(R.string.encrypt_action_encrypt_file)
                         else -> stringResource(R.string.encrypt_action_encrypt)
                     }
+                )
+            }
+            // 4.0.4 — byte progress + Cancel for a streamed file encrypt.
+            if (state.isProcessing) {
+                StreamProgressRow(
+                    processed = state.processedBytes,
+                    total = state.totalBytes,
+                    onCancel = { viewModel.cancelFileOperation() },
                 )
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -522,6 +530,7 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
     val cardSignFailedMsg = stringResource(R.string.card_sign_failed_generic)
     val cardNoRecipientsMsg = stringResource(R.string.encdec_error_no_recipients)
     val cardNoFileMsg = stringResource(R.string.encdec_error_no_file_to_encrypt)
+    val cardTooLargeMsg = stringResource(R.string.encdec_error_file_too_large_for_card)
 
     if (showCardSignPin) {
         AlertDialog(
@@ -565,6 +574,7 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                         // startCardOperation call.
                         val started: Boolean? = if (state.mode == EncryptMode.FILE) {
                             val fileBytes = state.selectedFileBytes
+                            val tooLargeForCard = state.fileTooLargeForCard
                             val fileName = state.selectedFileName
                             cardActivity?.startCardOperation({ session ->
                                 session.select()
@@ -575,7 +585,11 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                                 val pubRing = PGPonyApp.instance.keyRepository
                                     .loadPublicKeyRingByCardFingerprint(fp)
                                     ?: throw OpenPgpCardException.Malformed(cardPairFirstMsg)
-                                if (fileBytes == null) throw OpenPgpCardException.Malformed(cardNoFileMsg)
+                                // 4.0.4 — null here now means either no file
+                                // or one too large to buffer for the card.
+                                if (fileBytes == null) throw OpenPgpCardException.Malformed(
+                                    if (tooLargeForCard) cardTooLargeMsg else cardNoFileMsg
+                                )
                                 val recipientRings = recipientFps.mapNotNull {
                                     PGPonyApp.instance.keyRepository.loadPublicKeyRing(it)
                                 }
@@ -723,7 +737,10 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
             onDismiss = { viewModel.dismissBundleResult() }
         )
     }
-    if (state.showFileEncryptResultSheet && state.encryptedFileBytes != null) {
+    // 4.0.4 — either carrier will do (see FileEncryptionResultScreen).
+    if (state.showFileEncryptResultSheet &&
+        (state.encryptedFileBytes != null || state.encryptedFile != null)
+    ) {
         FileEncryptionResultScreen(
             state = state,
             onDismiss = { viewModel.dismissFileEncryptResult() }
@@ -1748,20 +1765,21 @@ private fun FileSection(state: EncryptUiState, viewModel: EncryptDecryptViewMode
             arrayOf("*/*")
         ) { uri ->
             if (uri != null) {
-                // Read the file bytes and metadata. We do this on the
-                // main thread because the typical encrypt-target file
-                // (a document, photo, archive) is well under 10 MB
-                // and finishes in <100 ms; larger files would warrant
-                // moving this off-thread.
+                // 4.0.4 — hand the VM the URI, not the bytes. It reads
+                // small files eagerly (the note below still applies to
+                // those) and leaves large ones on disk to be streamed at
+                // encrypt time, so picking a 13 MB file no longer costs
+                // 13 MB of heap before the user has even tapped Encrypt.
+                //
+                // The eager read for small files is still on the main
+                // thread: a document, photo or archive under
+                // INLINE_FILE_LIMIT finishes in well under 100 ms.
                 try {
                     val (name, size) = queryDocumentMetadata(context, uri)
-                    val bytes = context.contentResolver.openInputStream(uri)?.use {
-                        it.readBytes()
-                    } ?: ByteArray(0)
                     viewModel.setFileToEncrypt(
                         name = name ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file",
-                        size = size ?: bytes.size.toLong(),
-                        bytes = bytes
+                        size = size ?: -1L,
+                        uri = uri
                     )
                 } catch (e: Exception) {
                     // openInputStream failed (permission revoked,
@@ -2061,6 +2079,56 @@ private fun queryDocumentMetadata(
  * default, which is what users will compare against when looking at
  * the same file on macOS Finder.
  */
+
+/**
+ * 4.0.4 — progress readout and Cancel for a streamed file operation.
+ *
+ * Renders nothing unless there is a byte count to show, so the buffered
+ * paths (anything under INLINE_FILE_LIMIT) look exactly as they did:
+ * they finish too fast for progress to mean anything.
+ *
+ * This exists because streaming removed the ceiling on file size. A
+ * 105 MB file takes real time — AES and the integrity hash run over
+ * every byte, single-threaded, on a phone — and against an indeterminate
+ * spinner "slow" and "dead" look identical. Reported as exactly that:
+ * "starts encrypting but never finishes".
+ */
+@Composable
+internal fun StreamProgressRow(
+    processed: Long,
+    total: Long,
+    onCancel: () -> Unit,
+) {
+    if (total <= 0L) return
+    val fraction = (processed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+    Spacer(modifier = Modifier.height(12.dp))
+    Column(modifier = Modifier.fillMaxWidth()) {
+        LinearProgressIndicator(
+            progress = { fraction },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(
+                    R.string.encdec_progress_format,
+                    formatFileSize(processed),
+                    formatFileSize(total),
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onCancel) {
+                Text(stringResource(R.string.common_button_cancel))
+            }
+        }
+    }
+}
+
 internal fun formatFileSize(bytes: Long): String {
     if (bytes < 1000) return "$bytes B"
     val kb = bytes / 1000.0
@@ -2249,6 +2317,11 @@ private fun SignPassphraseDialog(
                 horizontalAlignment = Alignment.End
             ) {
                 TextButton(
+                    // 4.0.4 — an empty passphrase re-raises
+                    // PassphraseRequired, which just re-opens this same
+                    // dialog: the button appeared to do nothing. Nothing
+                    // to submit, nothing to press.
+                    enabled = state.signPassphrase.isNotEmpty() && !state.isProcessing,
                     onClick = {
                         when (state.mode) {
                             EncryptMode.SIGN -> viewModel.signOnly(passphrase = state.signPassphrase)
@@ -2822,13 +2895,21 @@ private fun DecryptFileSection(state: DecryptUiState, viewModel: EncryptDecryptV
             if (uri != null) {
                 try {
                     val (name, size) = queryDocumentMetadata(context, uri)
-                    val bytes = context.contentResolver.openInputStream(uri)?.use {
-                        it.readBytes()
-                    } ?: ByteArray(0)
+                    // 4.0.4 — hand the VM the URI, not the bytes. It reads
+                    // small files eagerly (unchanged behaviour) and leaves
+                    // large ones on disk to be streamed at decrypt time.
+                    // Reading a 13 MB file here was the first of the three
+                    // full-size copies behind issue #6.
+                    //
+                    // The read grant on an ACTION_OPEN_DOCUMENT URI lasts as
+                    // long as this activity, and the decrypt happens inside
+                    // it, so deferring the read is safe. It does not survive
+                    // process death — but neither did the picked file, which
+                    // lived in ViewModel state.
                     viewModel.setFileToDecrypt(
                         name = name ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file",
-                        size = size ?: bytes.size.toLong(),
-                        bytes = bytes
+                        size = size ?: -1L,
+                        uri = uri
                     )
                 } catch (e: Exception) {
                     // Silent — user taps Browse again.
@@ -2952,6 +3033,7 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
     val cardDecNfcUnavailMsg = stringResource(R.string.card_scan_nfc_unavailable)
     val cardDecFailedMsg = stringResource(R.string.card_sign_failed_generic)
     val cardDecNoKeyMsg = stringResource(R.string.card_sign_no_sig_key)
+    val cardDecTooLargeMsg = stringResource(R.string.encdec_error_file_too_large_for_card)
 
     // ── Phase A11: Biometric gate for the Decrypt action ─────────────
     //
@@ -3026,7 +3108,7 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
             title = { Text(stringResource(R.string.decrypt_screen_title)) },
             actions = {
                 val hasContent = state.inputText.isNotBlank() ||
-                    state.outputText.isNotBlank() || state.selectedFileBytes != null
+                    state.outputText.isNotBlank() || state.hasSelectedFile
                 IconButton(onClick = { viewModel.clearDecrypt() }, enabled = hasContent) {
                     Icon(Icons.Filled.Clear, contentDescription = stringResource(R.string.common_clear))
                 }
@@ -3254,6 +3336,7 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                         // own startCardOperation call.
                         val started: Boolean? = if (state.mode == DecryptMode.FILE) {
                             val fileBytes = state.selectedFileBytes
+                            val tooLargeForCard = state.fileTooLargeForCard
                             decryptActivity?.startCardOperation({ session ->
                                 session.select()
                                 val fp = cardFp
@@ -3264,7 +3347,10 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                                 val pubRing = PGPonyApp.instance.keyRepository
                                     .loadPublicKeyRingByCardFingerprint(fp)
                                     ?: throw OpenPgpCardException.Malformed(cardDecPairFirstMsg)
-                                if (fileBytes == null) throw OpenPgpCardException.Malformed(cardDecNoKeyMsg)
+                                // 4.0.4 — see the encrypt-side counterpart.
+                                if (fileBytes == null) throw OpenPgpCardException.Malformed(
+                                    if (tooLargeForCard) cardDecTooLargeMsg else cardDecNoKeyMsg
+                                )
                                 CardDecryptService.shared.decryptBytes(
                                     session, pubRing, pin.toByteArray(Charsets.UTF_8), fileBytes,
                                     viewModel.cardVerificationRings()
@@ -3325,8 +3411,8 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.isProcessing && when {
                     state.isCardMessage -> cardDecryptPin.isNotEmpty() &&
-                        (state.mode != DecryptMode.FILE || state.selectedFileBytes != null)
-                    state.mode == DecryptMode.FILE -> state.selectedFileBytes != null
+                        (state.mode != DecryptMode.FILE || state.hasSelectedFile)
+                    state.mode == DecryptMode.FILE -> state.hasSelectedFile
                     else -> true
                 }
             ) {
@@ -3339,6 +3425,14 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                         DecryptMode.FILE -> stringResource(R.string.decrypt_action_decrypt_file)
                         else -> stringResource(R.string.decrypt_action_decrypt)
                     }
+                )
+            }
+            // 4.0.4 — byte progress + Cancel for a streamed file decrypt.
+            if (state.isProcessing) {
+                StreamProgressRow(
+                    processed = state.processedBytes,
+                    total = state.totalBytes,
+                    onCancel = { viewModel.cancelFileOperation() },
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -3471,7 +3565,11 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
             onDismiss = { viewModel.dismissStructuredResult() }
         )
     }
-    if (state.showFileDecryptResultSheet && state.decryptedFileBytes != null) {
+    // 4.0.4 — either carrier will do: decryptedFileBytes for the
+    // buffered path, decryptedFile for the streamed one.
+    if (state.showFileDecryptResultSheet &&
+        (state.decryptedFileBytes != null || state.decryptedFile != null)
+    ) {
         FileDecryptionResultScreen(
             state = state,
             onDismiss = { viewModel.dismissFileDecryptResult() }

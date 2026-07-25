@@ -74,6 +74,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import com.pgpony.android.crypto.mime.MimeAttachment
+import com.pgpony.android.ui.encrypt.INLINE_FILE_LIMIT
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -81,14 +82,28 @@ sealed class IntentAction {
     data class EncryptText(val text: String) : IntentAction()
     data class DecryptText(val armoredMessage: String) : IntentAction()
     data class ImportKey(val armoredKey: String) : IntentAction()
-    data class DecryptFile(val data: ByteArray, val filename: String?) : IntentAction()
+    /**
+     * 4.0.4 — [data] carries the file for anything small enough to hold
+     * in memory, exactly as before. For a large file [data] is null and
+     * [uri] points at it instead, so the Decrypt tab can stream it
+     * rather than materialise it (issue #6). Exactly one is ever set.
+     */
+    data class DecryptFile(
+        val data: ByteArray?,
+        val uri: Uri?,
+        val filename: String?
+    ) : IntentAction()
     /** 4.0.0 Phase 3 — a PGPony (.pgpony) keyring backup → open Restore. */
     data class RestoreBackup(val data: ByteArray) : IntentAction()
 
     // 3.1.0 Phase 1 (C1) — a non-PGP file opened/shared into the app
     // routes to the Encrypt tab with the file preloaded, mirroring iOS
     // "everything else opens to Encrypt with recipients ready".
-    data class EncryptFile(val data: ByteArray, val filename: String?) : IntentAction()
+    data class EncryptFile(
+        val data: ByteArray?,
+        val uri: Uri?,
+        val filename: String?
+    ) : IntentAction()
 
     // 3.1.0 Phase 1 (C1) — a standalone detached signature (a
     // "-----BEGIN PGP SIGNATURE-----" block with no SIGNED MESSAGE
@@ -129,7 +144,12 @@ sealed class ShareIntentContent {
     // armoredText is non-null when bytes parsed as UTF-8 contained a
     // PGP marker block; otherwise the binary path is taken.
     data class PgpFile(
-        val data: ByteArray,
+        // 4.0.4 — [data] holds the file for anything small enough to keep
+        // in memory, as before. For a large file it is null and [uri]
+        // points at it instead, so the Quick Action can stream rather
+        // than buffer (issue #6). Exactly one of the two is ever set.
+        val data: ByteArray?,
+        val uri: Uri? = null,
         val filename: String?,
         val armoredText: String?,
         val looksLikePgpMessage: Boolean,
@@ -176,6 +196,13 @@ object IntentHandler {
     // (optionally after email headers), so 1KB is plenty.
     private const val TEXT_PREFILL_LIMIT = 32 * 1024
     private const val HEAD_SNIFF_BYTES = 1024
+
+    // 4.0.4 — how much of a too-large-to-buffer file is pulled in to
+    // classify it. Bigger than HEAD_SNIFF_BYTES because this head also
+    // has to satisfy BouncyCastle's session-key parse, not just a
+    // string search: a message with several recipients, or a PQC
+    // composite KEM packet, pushes the first SEIPD byte well past 1 KB.
+    private const val LARGE_HEAD_SNIFF_BYTES = 64 * 1024
 
     /**
      * 3.1.0 Phase 1 (C3) — decode just the head of [bytes] as UTF-8 for
@@ -357,6 +384,7 @@ object IntentHandler {
             attachments.size >= 2 -> IntentAction.ComposeBundle(attachments)
             attachments.size == 1 -> IntentAction.EncryptFile(
                 attachments[0].data,
+                null,
                 attachments[0].filename
             )
             else -> IntentAction.None
@@ -463,8 +491,76 @@ object IntentHandler {
      *   anything else   → EncryptFile (the C1 "everything else opens to
      *                     Encrypt" route)
      */
+    /**
+     * 4.0.4 — route a file too large to buffer, using only its head.
+     *
+     * Returns null when the head points at an outcome that needs the
+     * whole file (ImportKey, VerifyDetachedSignature, RestoreBackup,
+     * classifyText); the caller then falls back to the buffered path.
+     * All of those are small-file outcomes in practice — a multi-megabyte
+     * key block or detached signature does not occur in normal use.
+     */
+    private fun classifyLargeFileUri(uri: Uri, resolver: ContentResolver): IntentAction? {
+        val head = DocumentBytes.readHead(resolver, uri, LARGE_HEAD_SNIFF_BYTES)
+            ?: return null
+        if (head.isEmpty()) return null
+        val filename = displayName(uri, resolver)
+        val headStr = headText(head)
+
+        // Backups, key blocks, detached signatures and text all need the
+        // full bytes downstream — hand them back to the buffered path.
+        if (filename?.endsWith(".pgpony", ignoreCase = true) == true ||
+            headStr.contains("PGPony Backup", ignoreCase = true) ||
+            headStr.contains("Passphrase-Format", ignoreCase = true) ||
+            headStr.contains("-----BEGIN PGP PUBLIC KEY BLOCK-----") ||
+            headStr.contains("-----BEGIN PGP PRIVATE KEY BLOCK-----") ||
+            isDetachedSignature(headStr) ||
+            isBinaryDetachedSignature(head)
+        ) {
+            return null
+        }
+
+        // An RFC 3156 envelope or an armored message: decrypt from the URI.
+        if (headStr.contains("multipart/encrypted", ignoreCase = true) ||
+            headStr.contains("-----BEGIN PGP")
+        ) {
+            return IntentAction.DecryptFile(null, uri, filename)
+        }
+
+        // Binary: the session-key packets are at the front, so the same
+        // parse-don't-sniff test the buffered path uses works on the head.
+        val looksEncrypted = try {
+            val info = com.pgpony.android.crypto.PGPCryptoService.shared
+                .inspectEncryptedMessage(head)
+            info.publicKeyIDs.isNotEmpty() || info.isPasswordEncrypted
+        } catch (_: Exception) {
+            false
+        }
+        return if (looksEncrypted) {
+            IntentAction.DecryptFile(null, uri, filename)
+        } else {
+            IntentAction.EncryptFile(null, uri, filename)
+        }
+    }
+
     private fun handleFileUri(uri: Uri, resolver: ContentResolver): IntentAction {
         try {
+            // 4.0.4 — classify a large file from its head instead of
+            // reading it. Before this, sharing a 13 MB file into PGPony
+            // pulled the whole thing into memory here, before any of the
+            // app's own code ran, and that read was the first of the
+            // allocations behind issue #6.
+            val declared = DocumentBytes.declaredSize(resolver, uri)
+            if (declared != null && declared > INLINE_FILE_LIMIT) {
+                val large = classifyLargeFileUri(uri, resolver)
+                if (large != null) return large
+                // Fall through: the head said this is one of the routes
+                // that genuinely needs the whole file (a key block, a
+                // detached signature, a backup). Those are small by
+                // nature, so a file this size taking that branch is
+                // pathological — read it and let the normal path decide.
+            }
+
             // 3.1.0 Phase 8 Fix1: robust read (virtual/cloud docs).
             val bytes = DocumentBytes.read(resolver, uri) ?: return IntentAction.None
 
@@ -495,7 +591,7 @@ object IntentHandler {
             // armored block may sit beyond it. Route to file-mode decrypt;
             // the decrypt path unwraps the envelope.
             if (head.contains("multipart/encrypted", ignoreCase = true)) {
-                return IntentAction.DecryptFile(bytes, filename)
+                return IntentAction.DecryptFile(bytes, null, filename)
             }
 
             if (head.contains("-----BEGIN PGP")) {
@@ -519,7 +615,7 @@ object IntentHandler {
                 if (isDetachedSignature(head)) {
                     return IntentAction.VerifyDetachedSignature(bytes, filename)
                 }
-                return IntentAction.DecryptFile(bytes, filename)
+                return IntentAction.DecryptFile(bytes, null, filename)
             }
 
             // 3.1.0 Phase 1 Fix1 — a BINARY detached signature (gpg -b
@@ -545,9 +641,9 @@ object IntentHandler {
                 false
             }
             return if (looksEncrypted) {
-                IntentAction.DecryptFile(bytes, filename)
+                IntentAction.DecryptFile(bytes, null, filename)
             } else {
-                IntentAction.EncryptFile(bytes, filename)
+                IntentAction.EncryptFile(bytes, null, filename)
             }
         } catch (_: Exception) {
             return IntentAction.None
@@ -558,8 +654,66 @@ object IntentHandler {
      * Phase A15 — read a file URI and wrap into ShareIntentContent.
      * Mirrors handleFileUri but returns the richer struct.
      */
+    /**
+     * 4.0.4 — Quick Action counterpart to [classifyLargeFileUri].
+     *
+     * Returns null when the head points at a route that needs the whole
+     * file downstream (key import, detached-signature verify), letting
+     * the caller fall back to the buffered read. armoredText is always
+     * null here: it feeds a text editor, and a file this size must never
+     * become a String — the same reasoning as the existing
+     * TEXT_PREFILL_LIMIT guard, just applied earlier.
+     */
+    private fun classifyLargeFileForShare(uri: Uri, resolver: ContentResolver): ShareIntentContent? {
+        val head = DocumentBytes.readHead(resolver, uri, LARGE_HEAD_SNIFF_BYTES) ?: return null
+        if (head.isEmpty()) return null
+        val filename = displayName(uri, resolver)
+        val headStr = headText(head)
+
+        if (headStr.contains("-----BEGIN PGP PUBLIC KEY BLOCK-----") ||
+            headStr.contains("-----BEGIN PGP PRIVATE KEY BLOCK-----") ||
+            isDetachedSignature(headStr) ||
+            isBinaryDetachedSignature(head)
+        ) {
+            return null
+        }
+
+        val armoredMessage = headStr.contains("-----BEGIN PGP MESSAGE-----") ||
+            headStr.contains("-----BEGIN PGP SIGNED MESSAGE-----")
+        val looksEncrypted = armoredMessage ||
+            headStr.contains("multipart/encrypted", ignoreCase = true) ||
+            try {
+                val info = com.pgpony.android.crypto.PGPCryptoService.shared
+                    .inspectEncryptedMessage(head)
+                info.publicKeyIDs.isNotEmpty() || info.isPasswordEncrypted
+            } catch (_: Exception) {
+                false
+            }
+
+        return ShareIntentContent.PgpFile(
+            data = null,
+            uri = uri,
+            filename = filename,
+            armoredText = null,
+            looksLikePgpMessage = looksEncrypted,
+            looksLikePgpKey = false,
+            looksLikeDetachedSignature = false,
+        )
+    }
+
     private fun classifyFileForShare(uri: Uri, resolver: ContentResolver): ShareIntentContent {
         return try {
+            // 4.0.4 — a file too large to hold in memory is classified
+            // from its head and carried as a URI, same as handleFileUri.
+            val declared = DocumentBytes.declaredSize(resolver, uri)
+            if (declared != null && declared > INLINE_FILE_LIMIT) {
+                val large = classifyLargeFileForShare(uri, resolver)
+                if (large != null) return large
+                // Head pointed at a route needing the whole file (a key
+                // block, a detached signature). Pathological at this size;
+                // fall through and read it.
+            }
+
             // 3.1.0 Phase 8 Fix1: robust read (virtual/cloud docs).
             val bytes = DocumentBytes.read(resolver, uri) ?: return ShareIntentContent.Empty
 
@@ -589,6 +743,7 @@ object IntentHandler {
                 val carryArmored = isKey || bytes.size <= TEXT_PREFILL_LIMIT
                 ShareIntentContent.PgpFile(
                     data = bytes,
+                    uri = uri,
                     filename = filename,
                     armoredText = if (carryArmored) trimmed else null,
                     looksLikePgpMessage = trimmed.contains("-----BEGIN PGP MESSAGE-----")
@@ -614,6 +769,7 @@ object IntentHandler {
                 }
                 ShareIntentContent.PgpFile(
                     data = bytes,
+                    uri = uri,
                     filename = filename,
                     armoredText = null,
                     looksLikePgpMessage = looksEncrypted,

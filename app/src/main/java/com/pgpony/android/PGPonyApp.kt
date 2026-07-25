@@ -18,6 +18,7 @@ import com.pgpony.android.data.SecureKeyStore
 import com.pgpony.android.data.repository.KeyRepository
 import com.pgpony.android.notifications.KeyExpirationService
 import com.pgpony.android.ui.theme.ThemeState
+import com.pgpony.android.ui.util.ScratchFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,6 +47,12 @@ class PGPonyApp : Application() {
         // Register Bouncy Castle as the #1 security provider
         Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
         Security.insertProviderAt(BouncyCastleProvider(), 1)
+
+        // 4.0.4 — the streaming Encrypt/Decrypt file paths write their
+        // output to cacheDir/scratch. Anything still there at app start
+        // is debris from a crash or a kill, and for a decrypt it is
+        // plaintext, so drop it before doing anything else.
+        ScratchFiles.clearAll(applicationContext)
 
         // Initialize Room database
         // Phase A6: schema bumped to v2 to add revocation columns.

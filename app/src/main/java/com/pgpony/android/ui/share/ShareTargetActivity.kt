@@ -85,10 +85,15 @@ class ShareTargetActivity : AppCompatActivity() {
     private fun forwardDetachedSignatureIfNeeded(content: ShareIntentContent): Boolean {
         val file = content as? ShareIntentContent.PgpFile ?: return false
         if (!file.looksLikeDetachedSignature) return false
-        if (file.data.size > IntentHandler.FORWARD_SIZE_LIMIT) return false
+        // 4.0.4 — data is null only for a file too large to buffer, and
+        // classifyLargeFileForShare never flags one of those as a
+        // detached signature (it hands those back to the buffered path).
+        // Belt and braces: no bytes means nothing to forward.
+        val sigBytes = file.data ?: return false
+        if (sigBytes.size > IntentHandler.FORWARD_SIZE_LIMIT) return false
         val forward = android.content.Intent(this, com.pgpony.android.MainActivity::class.java).apply {
             action = IntentHandler.ACTION_VERIFY_DETACHED
-            putExtra(IntentHandler.EXTRA_SIGNATURE_BYTES, file.data)
+            putExtra(IntentHandler.EXTRA_SIGNATURE_BYTES, sigBytes)
             putExtra(IntentHandler.EXTRA_SIGNATURE_NAME, file.filename)
             // CLEAR_TOP + SINGLE_TOP: deliver to an existing MainActivity
             // via onNewIntent instead of stacking a second instance in

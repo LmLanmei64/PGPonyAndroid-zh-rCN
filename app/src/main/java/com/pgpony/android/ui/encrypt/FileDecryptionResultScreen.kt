@@ -57,6 +57,7 @@ import com.pgpony.android.MainActivity
 import com.pgpony.android.R
 import com.pgpony.android.ui.decrypt.VerificationBanner
 import com.pgpony.android.ui.util.ClipboardService
+import com.pgpony.android.ui.util.ScratchFiles
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -65,18 +66,46 @@ fun FileDecryptionResultScreen(state: DecryptUiState, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val activity = context.findDecryptResultMainActivity()
-    val bytes = state.decryptedFileBytes ?: ByteArray(0)
+    // ── 4.0.4: two carriers ──────────────────────────────────────
+    //
+    // The buffered path hands us the plaintext as a ByteArray, exactly
+    // as before. The streaming path (large files, issue #6) hands us a
+    // File under cacheDir/scratch instead and the bytes are null — the
+    // whole point is that they were never in memory. Everything below
+    // reads whichever one is present, and the streamed branch is
+    // careful to keep its reads bounded.
+    val bytes = state.decryptedFileBytes
+    val streamed = state.decryptedFile
     val outName = state.decryptedOutputFilename ?: stringResource(R.string.result_file_decrypt_default_filename)
+    val outSize = bytes?.size?.toLong() ?: streamed?.length() ?: 0L
 
-    // Try to decode the decrypted bytes as UTF-8. Used both to
-    // decide whether to show the preview block and to gate the
+    // Try to decode the decrypted output as UTF-8. Used both to decide
+    // whether to show the preview block and to gate the
     // Copy-to-Clipboard button. Matches iOS's same gate.
-    val asText = remember(bytes) {
-        runCatching { String(bytes, Charsets.UTF_8) }
-            .getOrNull()
-            ?.takeIf { it.isNotEmpty() && it.toByteArray(Charsets.UTF_8).contentEquals(bytes) }
+    //
+    // Buffered: decode the whole array, as before. Streamed: decode
+    // only the head, so a 13 MB plaintext costs a 64 KiB read and not
+    // a 13 MB String (which would reintroduce the very allocation this
+    // release removed).
+    val asText = remember(bytes, streamed) {
+        when {
+            bytes != null -> runCatching { String(bytes, Charsets.UTF_8) }
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() && it.toByteArray(Charsets.UTF_8).contentEquals(bytes) }
+            streamed != null -> ScratchFiles.previewText(streamed)
+            else -> null
+        }
     }
     val asTextShort = asText?.takeIf { it.length < 5000 }
+
+    // Clipboard needs the whole thing in memory, so it stays off for
+    // outputs that are too big to hold — the user saves or shares those.
+    val clipboardText = when {
+        bytes != null -> asText
+        streamed != null && ScratchFiles.isClipboardSized(streamed) ->
+            runCatching { streamed.readText(Charsets.UTF_8) }.getOrNull()
+        else -> null
+    }
 
     var saveStatus by remember { mutableStateOf<DecryptSaveStatus>(DecryptSaveStatus.Idle) }
     var copied by remember { mutableStateOf(false) }
@@ -178,7 +207,7 @@ fun FileDecryptionResultScreen(state: DecryptUiState, onDismiss: () -> Unit) {
                             maxLines = 1
                         )
                         Text(
-                            formatFileSize(bytes.size.toLong()),
+                            formatFileSize(outSize),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -195,9 +224,16 @@ fun FileDecryptionResultScreen(state: DecryptUiState, onDismiss: () -> Unit) {
                     ) { uri ->
                         if (uri == null) return@startDocumentCreator
                         try {
-                            context.contentResolver.openOutputStream(uri)?.use {
-                                it.write(bytes)
-                                it.flush()
+                            context.contentResolver.openOutputStream(uri)?.use { sink ->
+                                // 4.0.4 — the streamed branch copies in
+                                // chunks; writing a whole 13 MB array here
+                                // would undo the point of streaming it.
+                                if (bytes != null) {
+                                    sink.write(bytes)
+                                } else if (streamed != null) {
+                                    streamed.inputStream().buffered().use { it.copyTo(sink) }
+                                }
+                                sink.flush()
                             }
                             saveStatus = DecryptSaveStatus.Saved
                         } catch (e: Exception) {
@@ -217,14 +253,22 @@ fun FileDecryptionResultScreen(state: DecryptUiState, onDismiss: () -> Unit) {
             OutlinedButton(
                 onClick = {
                     try {
-                        val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
-                        val outFile = File(exportsDir, outName)
-                        outFile.writeBytes(bytes)
-                        val shareUri = FileProvider.getUriForFile(
-                            context,
-                            "${context.packageName}.fileprovider",
-                            outFile
-                        )
+                        // 4.0.4 — the streamed output already sits in
+                        // cacheDir/scratch, which file_paths.xml exposes,
+                        // so it can be shared in place. Only the buffered
+                        // branch still needs a file written for it.
+                        val shareUri = if (streamed != null) {
+                            ScratchFiles.uriFor(context, streamed)
+                        } else {
+                            val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
+                            val outFile = File(exportsDir, outName)
+                            outFile.writeBytes(bytes ?: ByteArray(0))
+                            FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                outFile
+                            )
+                        }
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "application/octet-stream"
                             putExtra(Intent.EXTRA_STREAM, shareUri)
@@ -244,8 +288,8 @@ fun FileDecryptionResultScreen(state: DecryptUiState, onDismiss: () -> Unit) {
                 Text(stringResource(R.string.result_file_decrypt_share_button))
             }
 
-            // ── 6. Copy to Clipboard (text-only) ─────────────────────
-            asText?.let { text ->
+            // ── 6. Copy to Clipboard (text-only, and small enough) ───
+            clipboardText?.let { text ->
                 OutlinedButton(
                     onClick = {
                         // Phase A12: route through ClipboardService for
