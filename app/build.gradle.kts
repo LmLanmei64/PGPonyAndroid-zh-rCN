@@ -107,10 +107,11 @@ android {
         //   • That prompt returned a bare RESULT_OK, so the client had
         //     nothing to re-execute and needed a second Unlock press.
         //
-        // -rc1 while the card fix is verified on real hardware; drop the
-        // suffix (versionCode unchanged) for the public release.
+        // The card KDF fix was verified on real hardware (YubiKey:
+        // decrypt, sign, and PIN change with the retry counter intact),
+        // which was the only thing the -rc1 suffix was waiting on.
         versionCode = 404
-        versionName = "4.0.4-rc1"
+        versionName = "4.0.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
