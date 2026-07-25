@@ -34,6 +34,7 @@ import com.pgpony.android.data.RevocationReason
 import com.pgpony.android.data.TrustLevel
 import com.pgpony.android.data.repository.KeyRepository
 import com.pgpony.android.network.KeyServerRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,6 +43,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 4.0.0 Phase 2 (iOS v7.1.1 F4) — one User ID (tag-13) off the key
@@ -570,9 +572,15 @@ class KeyDetailViewModel(
      * paired yet, storage hiccup) it falls back to the single stored
      * ID. Mirrors iOS PGPKeyModel.allUserIDs().
      */
-    private fun deriveUserIds(entity: PGPKeyEntity): List<KeyUserIdInfo> {
+    // 4.0.4 — suspend + dispatched. loadPublicKeyRing is a blocking
+    // EncryptedSharedPreferences read plus a Bouncy Castle parse, and all
+    // seven callers sit inside a viewModelScope.launch, i.e. on
+    // Dispatchers.Main.immediate. One key rather than the whole keyring, so
+    // this was jank rather than an ANR — but it is the same mistake.
+    private suspend fun deriveUserIds(entity: PGPKeyEntity): List<KeyUserIdInfo> {
         val fromRing = mutableListOf<KeyUserIdInfo>()
-        repo.loadPublicKeyRing(entity.fingerprint)?.publicKey?.userIDs?.let { ids ->
+        withContext(Dispatchers.IO) { repo.loadPublicKeyRing(entity.fingerprint) }
+            ?.publicKey?.userIDs?.let { ids ->
             while (ids.hasNext()) {
                 val raw = ids.next() as? String ?: continue
                 if (raw.isEmpty()) continue

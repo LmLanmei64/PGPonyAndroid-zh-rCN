@@ -369,8 +369,18 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             val allKeys = repo.getAllKeys()
             // Cache public rings so the card-decrypt NFC lambda (which runs
             // on a non-suspend binder thread) can verify embedded signatures
-            // synchronously. loadPublicKeyRing reads the in-memory store.
-            verifyRingsCache = allKeys.mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
+            // synchronously.
+            //
+            // 4.0.4 — this used to run undispatched, with a comment claiming
+            // loadPublicKeyRing "reads the in-memory store". It does not: it
+            // is an EncryptedSharedPreferences read (Tink AES-GCM per entry)
+            // plus a Base64 decode plus a Bouncy Castle parse, once per key.
+            // Building this cache therefore walked the ENTIRE keyring on the
+            // main thread — at startup, and again after every import or
+            // delete, before the user had done anything.
+            verifyRingsCache = withContext(Dispatchers.IO) {
+                allKeys.mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
+            }
             val keyPairs = allKeys.filter { it.isKeyPair }
 
             // Phase A6 — revoked keys are excluded from the encrypt-side
@@ -739,21 +749,29 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         viewModelScope.launch {
             _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
             try {
-                val recipientRings = s.selectedRecipients.mapNotNull {
-                    repo.loadPublicKeyRing(it.fingerprint)
+                // 4.0.4 — off the main thread. Only the symmetric and
+                // bundle encrypt paths were dispatched; the ordinary
+                // recipient encrypt ran its ring loads AND the encryption
+                // itself on Dispatchers.Main.
+                val recipientRings = withContext(Dispatchers.IO) {
+                    s.selectedRecipients.mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
                 }
-                val signingRing = if (s.signMessage && s.signingKey != null) {
-                    repo.loadSecretKeyRing(s.signingKey.fingerprint)
-                } else null
+                val signingRing = withContext(Dispatchers.IO) {
+                    if (s.signMessage && s.signingKey != null) {
+                        repo.loadSecretKeyRing(s.signingKey.fingerprint)
+                    } else null
+                }
 
-                val encrypted = crypto.encrypt(
-                    data = s.inputText.toByteArray(Charsets.UTF_8),
-                    recipientPublicKeys = recipientRings,
-                    signingSecretKey = signingRing,
-                    passphrase = passphrase,
-                    filename = s.filename,
-                    armor = true
-                )
+                val encrypted = withContext(Dispatchers.Default) {
+                    crypto.encrypt(
+                        data = s.inputText.toByteArray(Charsets.UTF_8),
+                        recipientPublicKeys = recipientRings,
+                        signingSecretKey = signingRing,
+                        passphrase = passphrase,
+                        filename = s.filename,
+                        armor = true
+                    )
+                }
                 _encryptState.value = _encryptState.value.copy(
                     outputText = String(encrypted, Charsets.UTF_8),
                     isProcessing = false,
@@ -862,21 +880,28 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         viewModelScope.launch {
             _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
             try {
-                val recipientRings = s.selectedRecipients.mapNotNull {
-                    repo.loadPublicKeyRing(it.fingerprint)
+                // 4.0.4 — off the main thread; see encryptText above. File
+                // encrypt is the worse of the two, because the payload is
+                // whatever the user picked rather than a text box.
+                val recipientRings = withContext(Dispatchers.IO) {
+                    s.selectedRecipients.mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
                 }
-                val signingRing = if (s.signMessage && s.signingKey != null) {
-                    repo.loadSecretKeyRing(s.signingKey.fingerprint)
-                } else null
+                val signingRing = withContext(Dispatchers.IO) {
+                    if (s.signMessage && s.signingKey != null) {
+                        repo.loadSecretKeyRing(s.signingKey.fingerprint)
+                    } else null
+                }
 
-                val encrypted = crypto.encrypt(
-                    data = bytes,
-                    recipientPublicKeys = recipientRings,
-                    signingSecretKey = signingRing,
-                    passphrase = passphrase,
-                    filename = s.selectedFileName,
-                    armor = false
-                )
+                val encrypted = withContext(Dispatchers.Default) {
+                    crypto.encrypt(
+                        data = bytes,
+                        recipientPublicKeys = recipientRings,
+                        signingSecretKey = signingRing,
+                        passphrase = passphrase,
+                        filename = s.selectedFileName,
+                        armor = false
+                    )
+                }
                 _encryptState.value = _encryptState.value.copy(
                     encryptedFileBytes = encrypted,
                     isProcessing = false,
@@ -1124,14 +1149,18 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         viewModelScope.launch {
             _encryptState.value = _encryptState.value.copy(isProcessing = true, errorMessage = null)
             try {
-                val recipientRings = s.selectedRecipients.mapNotNull {
-                    repo.loadPublicKeyRing(it.fingerprint)
+                // 4.0.4 — the crypto below was already on Dispatchers.Default,
+                // but the ring loads feeding it were not.
+                val recipientRings = withContext(Dispatchers.IO) {
+                    s.selectedRecipients.mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
                 }
-                val signingRing = if (
-                    s.signMessage && s.signingKey != null && s.signingKey.isCardBacked != true
-                ) {
-                    repo.loadSecretKeyRing(s.signingKey.fingerprint)
-                } else null
+                val signingRing = withContext(Dispatchers.IO) {
+                    if (
+                        s.signMessage && s.signingKey != null && s.signingKey.isCardBacked != true
+                    ) {
+                        repo.loadSecretKeyRing(s.signingKey.fingerprint)
+                    } else null
+                }
 
                 val encrypted = withContext(Dispatchers.Default) {
                     val mime = com.pgpony.android.crypto.mime.MimeBuilder.buildMixed(
@@ -1513,10 +1542,18 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     private fun verifyClearSignedPath(s: DecryptUiState) {
         viewModelScope.launch {
             _decryptState.value = s.copy(isProcessing = true, errorMessage = null)
-            val publicRings = repo.getAllKeys().mapNotNull {
-                repo.loadPublicKeyRing(it.fingerprint)
+            // 4.0.4 — off the main thread. viewModelScope.launch runs on
+            // Dispatchers.Main.immediate, and loadPublicKeyRing is a plain
+            // blocking call: an EncryptedSharedPreferences read (Tink
+            // AES-GCM per entry) plus a Bouncy Castle parse, repeated for
+            // EVERY key in the keyring. verifyDetached below already wraps
+            // this exact expression; these paths were missed.
+            val publicRings = withContext(Dispatchers.IO) {
+                repo.getAllKeys().mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
             }
-            val result = verify.verifyClearSigned(s.inputText, publicRings)
+            val result = withContext(Dispatchers.Default) {
+                verify.verifyClearSigned(s.inputText, publicRings)
+            }
 
             val outputText = when (result) {
                 is VerificationResult.Verified      -> result.signedContent.orEmpty()
@@ -1590,30 +1627,44 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 } else {
                     s.availableKeys
                 }
-                val secretRings = orderedKeys.mapNotNull {
-                    repo.loadSecretKeyRing(it.fingerprint)
+                // 4.0.4 — off the main thread. See the note in
+                // verifyClearSignedPath: every ring load is a blocking
+                // EncryptedSharedPreferences read plus a BC parse, and the
+                // verify list loads the WHOLE keyring before the decrypt
+                // even starts. The encrypt paths were already dispatched;
+                // decrypt was not, which is why decrypt was the side that
+                // froze.
+                val secretRings = withContext(Dispatchers.IO) {
+                    orderedKeys.mapNotNull { repo.loadSecretKeyRing(it.fingerprint) }
                 }
-                val verifyRings = repo.getAllKeys().mapNotNull {
-                    repo.loadPublicKeyRing(it.fingerprint)
+                val verifyRings = withContext(Dispatchers.IO) {
+                    repo.getAllKeys().mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
                 }
 
-                val result = crypto.decryptArmored(
-                    // 3.1.0 Phase 4 (J2): unwrap an RFC 3156 envelope
-                    // (pasted .eml) before dearmor; plain input passes
-                    // through unchanged.
-                    armoredMessage = effectiveDecryptInput(s.inputText),
-                    secretKeyRings = secretRings,
-                    passphrase = s.passphrase.ifBlank { null },
-                    verificationKeys = verifyRings
-                )
+                val result = withContext(Dispatchers.Default) {
+                    crypto.decryptArmored(
+                        // 3.1.0 Phase 4 (J2): unwrap an RFC 3156 envelope
+                        // (pasted .eml) before dearmor; plain input passes
+                        // through unchanged.
+                        armoredMessage = effectiveDecryptInput(s.inputText),
+                        secretKeyRings = secretRings,
+                        passphrase = s.passphrase.ifBlank { null },
+                        verificationKeys = verifyRings
+                    )
+                }
 
                 val verResult = buildVerificationResultForEncrypted(result)
 
                 // 3.1.0 Phase 4 (J1): content-based routing. Attachments →
                 // structured sheet; body-only MIME → readable body as the
                 // text result; non-MIME → unchanged.
-                val mime = mimeRouteWithAttachments(result.data)
-                val bodyOnly = if (mime == null) mimeBodyOnly(result.data) else null
+                // MIME parse of the full plaintext — also off main.
+                val mime = withContext(Dispatchers.Default) {
+                    mimeRouteWithAttachments(result.data)
+                }
+                val bodyOnly = if (mime == null) {
+                    withContext(Dispatchers.Default) { mimeBodyOnly(result.data) }
+                } else null
 
                 _decryptState.value = _decryptState.value.copy(
                     outputText = bodyOnly ?: result.plaintext,
@@ -1916,22 +1967,31 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 } else {
                     s.availableKeys
                 }
-                val secretRings = orderedKeys.mapNotNull {
-                    repo.loadSecretKeyRing(it.fingerprint)
+                // 4.0.4 — off the main thread. This is the path in the
+                // Android 12 / MIUI freeze report: file decrypt loaded every
+                // secret ring, then every public ring in the keyring, then
+                // ran the decryption itself, all on Dispatchers.Main.
+                // Seconds of UI-thread work is an ANR, which presents as
+                // either a freeze or a "close app" dialog depending on how
+                // aggressively the OEM's watchdog fires.
+                val secretRings = withContext(Dispatchers.IO) {
+                    orderedKeys.mapNotNull { repo.loadSecretKeyRing(it.fingerprint) }
                 }
-                val verifyRings = repo.getAllKeys().mapNotNull {
-                    repo.loadPublicKeyRing(it.fingerprint)
+                val verifyRings = withContext(Dispatchers.IO) {
+                    repo.getAllKeys().mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
                 }
 
-                val result = crypto.decrypt(
-                    // 3.1.0 Phase 4 (J2): an encrypted .eml opened as a
-                    // file carries the RFC 3156 envelope — unwrap to the
-                    // armored payload; binary/plain files pass through.
-                    encryptedData = effectiveDecryptFileBytes(bytes),
-                    secretKeyRings = secretRings,
-                    passphrase = s.passphrase.ifBlank { null },
-                    verificationKeys = verifyRings
-                )
+                val result = withContext(Dispatchers.Default) {
+                    crypto.decrypt(
+                        // 3.1.0 Phase 4 (J2): an encrypted .eml opened as a
+                        // file carries the RFC 3156 envelope — unwrap to the
+                        // armored payload; binary/plain files pass through.
+                        encryptedData = effectiveDecryptFileBytes(bytes),
+                        secretKeyRings = secretRings,
+                        passphrase = s.passphrase.ifBlank { null },
+                        verificationKeys = verifyRings
+                    )
+                }
 
                 val verResult = buildVerificationResultForEncrypted(result)
 
@@ -1949,7 +2009,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     ?: "decrypted_output"
 
                 // 3.1.0 Phase 4 (J1): content-based routing for file decrypt.
-                val fileMime = mimeRouteWithAttachments(result.data)
+                // MIME parse of the full plaintext — also off main.
+                val fileMime = withContext(Dispatchers.Default) {
+                    mimeRouteWithAttachments(result.data)
+                }
                 _decryptState.value = _decryptState.value.copy(
                     outputText = result.plaintext,
                     outputData = result.data,

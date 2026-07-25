@@ -120,6 +120,16 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
                 <data android:mimeType="application/octet-stream" />
+                <!-- 4.0.4 (origin: Meino) — armored keys and signatures are
+                     plain text, and plenty of providers type them exactly
+                     that way, which left tap-to-open with no matching
+                     filter at all. Deliberately kept inside THIS filter
+                     rather than given its own: the path patterns below
+                     apply to every mimeType listed here, so PGPony offers
+                     itself for a text/plain .asc but NOT for every .txt on
+                     the device. A bare text/plain VIEW filter would put us
+                     in the chooser for every text file the user opens. -->
+                <data android:mimeType="text/plain" />
                 <data android:pathPattern=".*\\.asc" />
                 <data android:pathPattern=".*\\.pgp" />
                 <data android:pathPattern=".*\\.gpg" />
@@ -250,6 +260,16 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
                 <data android:mimeType="application/octet-stream" />
+                <!-- 4.0.4 (origin: Meino) — armored keys and signatures are
+                     plain text, and plenty of providers type them exactly
+                     that way, which left tap-to-open with no matching
+                     filter at all. Deliberately kept inside THIS filter
+                     rather than given its own: the path patterns below
+                     apply to every mimeType listed here, so PGPony offers
+                     itself for a text/plain .asc but NOT for every .txt on
+                     the device. A bare text/plain VIEW filter would put us
+                     in the chooser for every text file the user opens. -->
+                <data android:mimeType="text/plain" />
                 <data android:pathPattern=".*\\.asc" />
                 <data android:pathPattern=".*\\.pgp" />
                 <data android:pathPattern=".*\\.gpg" />
@@ -346,7 +366,8 @@
           Settings → Connected apps).
 
           Only the IOpenPgpService2 action is registered (API versions
-          7–11, same as OpenKeychain 6.0.4). The obsolete v1
+          7–12; see supportedApiVersions in PGPonyOpenPgpService, which is
+          the value actually enforced). The obsolete v1
           IOpenPgpService action is deliberately absent: registering
           it would advertise an interface we do not implement to
           ancient clients.

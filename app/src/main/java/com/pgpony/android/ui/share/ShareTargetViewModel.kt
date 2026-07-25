@@ -188,9 +188,15 @@ class ShareTargetViewModel(
     private suspend fun detectCardRecipient(
         content: ShareIntentContent,
         keys: List<PGPKeyEntity>
-    ): PGPKeyEntity? {
-        val bytes = encryptedBytesForCardDecrypt(content) ?: return null
-        return try {
+    // 4.0.4 — off the main thread. `suspend` alone does not move work: this
+    // is called from initialize()'s viewModelScope.launch, which runs on
+    // Dispatchers.Main.immediate, so it inherited the main thread. It parses
+    // the shared message for recipient key IDs and then loads a public ring
+    // per card-backed key — and it runs on EVERY share-in, before the user
+    // has touched anything.
+    ): PGPKeyEntity? = withContext(Dispatchers.Default) {
+        val bytes = encryptedBytesForCardDecrypt(content) ?: return@withContext null
+        try {
             val ids = PGPCryptoService.shared.recipientKeyIDs(bytes)
             if (ids.isEmpty()) {
                 null
@@ -626,7 +632,10 @@ class ShareTargetViewModel(
      * or the bytes aren't valid UTF-8 text), a FILE result the user can
      * save/share. Mirrors the encrypt-side file result.
      */
-    private fun publishDecryptResult(
+    // 4.0.4 — suspend so the MIME parse below can be dispatched. Both
+    // callers already sit inside a viewModelScope.launch immediately after a
+    // withContext(Dispatchers.Default) decrypt, so this costs them nothing.
+    private suspend fun publishDecryptResult(
         result: com.pgpony.android.crypto.DecryptResult,
         sourceFilename: String?,
     ) {
@@ -635,10 +644,12 @@ class ShareTargetViewModel(
         // bundle carries files (saving/previewing attachments lives in
         // the main app, iOS ExtensionDecryptView parity). Non-MIME keeps
         // the existing text/file split untouched.
-        val mime = try {
-            com.pgpony.android.crypto.mime.MimeParser.parse(result.data)
-        } catch (_: Exception) {
-            null
+        val mime = withContext(Dispatchers.Default) {
+            try {
+                com.pgpony.android.crypto.mime.MimeParser.parse(result.data)
+            } catch (_: Exception) {
+                null
+            }
         }
         if (mime != null) {
             val signerNameMime = result.signerKeyID?.let { keyId ->

@@ -696,8 +696,21 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
                 // one key block (OpenKeychain "export all keys", or a
                 // decrypted OpenKeychain backup) imports ALL of them and
                 // reports a summary instead of just the first.
-                val blocks = repo.splitArmoredKeyBlocks(preview.armoredText)
-                if (blocks.size > 1) {
+                //
+                // 4.0.4 fix — route on the RING count, not the armor-BLOCK
+                // count. splitArmoredKeyBlocks counts BEGIN/END markers, but
+                // `gpg --export alice bob carol` puts all three rings inside
+                // ONE block, and previewKeyBytes wraps a binary export into
+                // one block before it gets here. Both are the ordinary way to
+                // hand over several keys, and both scored blocks.size == 1 —
+                // so they fell through to the single-key branch below, which
+                // imported ONLY THE FIRST key and reported "Public key
+                // imported" as if nothing had been dropped.
+                //
+                // repo.countKeyRings shares its explode step with
+                // importAllArmoredKeysDetailed, so the count that routes here
+                // is by construction the count that gets imported.
+                if (repo.countKeyRings(preview.armoredText) > 1) {
                     val outcomes = repo.importAllArmoredKeysDetailed(preview.armoredText)
                     val added = outcomes.count { it.resolution == ImportResolution.INSERTED }
                     val updated = outcomes.count {

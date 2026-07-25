@@ -81,8 +81,22 @@ android {
         // fields now set KeyboardType.Password so IMEs (Gboard) do not
         // learn or suggest typed secrets. Masking alone did not set the
         // password input type; reported by a Play review. 26 fields fixed.
-        versionCode = 403
-        versionName = "4.0.3"
+        //
+        // v4.0.4 — four fixes, three of them silent failures:
+        //   • R8 was renaming the org.openintents.openpgp contract, which
+        //     crashed every release-build API client on decrypt (K-9,
+        //     Thunderbird, FairEmail). Keep rules added.
+        //   • Decrypt ran the whole keyring load + the decryption itself on
+        //     the main thread — an ANR on slower devices.
+        //   • A multi-key file (gpg --export a b c) imported only its first
+        //     key and reported success.
+        //   • OpenPGP cards with kdf-setup enabled got a plain PIN and
+        //     answered 0x6982.
+        //
+        // -rc1 while the card fix is verified on real hardware; drop the
+        // suffix (versionCode unchanged) for the public release.
+        versionCode = 404
+        versionName = "4.0.4-rc1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

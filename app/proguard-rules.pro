@@ -21,6 +21,53 @@
 -keep class com.pgpony.android.data.** { *; }
 -keep class com.pgpony.android.network.** { *; }
 
+# ── OpenPGP API contract (org.openintents.openpgp) ────────────────────
+# CRITICAL: do not rename. These classes cross a Binder boundary.
+#
+# Parcel marshalling writes the class NAME as a string. Client apps
+# (Thunderbird for Android, K-9 Mail, Password Store, Conversations)
+# ship their own copy of this contract under the same fully qualified
+# names and resolve that string with Class.forName. If R8 renames our
+# copy, the name on the wire no longer exists on the other side and
+# the client dies with
+#
+#   android.os.BadParcelableException: ClassNotFoundException when
+#   unmarshalling: <obfuscated name>
+#
+# thrown from Intent.getParcelableExtra on the CLIENT's main thread.
+#
+# This is not theoretical. 4.0.x shipped without these rules: R8
+# renamed OpenPgpSignatureResult (-> W2.b in the shipped mapping,
+# -> x6.g in a later build) and every release-build client crashed on
+# decrypt, which is the path that reads the signature result. Encrypt
+# survived because no custom parcelable is read back on that path.
+# Debug builds skip R8 entirely, which is why assembleDebug provider
+# testing never surfaced it.
+#
+# The breakage is bidirectional. AutocryptPeerUpdate travels
+# client -> provider on ACTION_UPDATE_AUTOCRYPT_PEER, so an obfuscated
+# name here also fails to unmarshal on OUR side of the boundary.
+#
+# Keep names AND members: android.os.Parcelable requires the CREATOR
+# field to be found reflectively by name, and the AIDL-generated
+# IOpenPgpService2.Stub / _Parcel classes live in this same package
+# (without an explicit keep, proguard-android-optimize.txt merges the
+# Stub into the anonymous subclass in PGPonyOpenPgpService and marks
+# it R8$$REMOVED$$CLASS$$ in mapping.txt).
+#
+# Everything in this package is vendored API surface, not app logic,
+# so keeping it whole costs almost nothing.
+-keep class org.openintents.openpgp.** { *; }
+-keep interface org.openintents.openpgp.** { *; }
+-dontwarn org.openintents.openpgp.**
+
+# Safety net for every other Parcelable that may cross a process
+# boundary: the framework instantiates CREATOR reflectively, so it
+# must never be renamed or stripped.
+-keepclassmembers class * implements android.os.Parcelable {
+    public static final android.os.Parcelable$Creator CREATOR;
+}
+
 # ── Compose ──────────────────────────────────────────────────────────
 # Compose's own consumer ProGuard rules cover most of this, but the
 # explicit keep guards against future BOM changes that loosen things.

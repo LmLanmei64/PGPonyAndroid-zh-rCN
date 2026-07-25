@@ -84,6 +84,14 @@ object OpenPgpCard {
     const val CRD_PW1: Int = 0x81
     const val CRD_PW3: Int = 0x83
 
+    // RESET RETRY COUNTER (INS 0x2C) P1 modes. 0x00 authenticates with the
+    // Reset Code (data = resetCode || newPw1); 0x02 relies on a PW3 VERIFY
+    // done earlier in the session (data = newPw1 only). The two modes carry
+    // different data, which matters once a KDF is in force: the Reset Code
+    // is hashed with the 0x85 salt and the new PW1 with the 0x84 salt.
+    const val P1_RESET_WITH_RESET_CODE: Int = 0x00
+    const val P1_RESET_ADMIN_VERIFIED: Int = 0x02
+
     // ── Data Object tags ───────────────────────────────────────────────
     const val DO_APPLICATION_RELATED_DATA: Int = 0x6E
     const val DO_AID: Int = 0x4F
@@ -108,6 +116,31 @@ object OpenPgpCard {
     const val DO_GENERATION_TIMES: Int = 0xCD
     const val DO_PUBLIC_KEY_TEMPLATE: Int = 0x7F49
     const val DO_CARDHOLDER_RELATED_DATA: Int = 0x65
+
+    // ── KDF data object (0x00F9) ───────────────────────────────────────
+    // Read with GET DATA 00 CA 00 F9 00. Present only on cards that have
+    // had `gpg --edit-card → admin → kdf-setup` run against them. When the
+    // algorithm field says iterated+salted, every PIN crossing the wire
+    // must be S2K-hashed first (see CardKdf) — sending the plain PIN to
+    // such a card is just a wrong PIN, and burns a retry.
+    const val DO_KDF: Int = 0xF9
+
+    // Field tags inside the KDF DO.
+    const val KDF_TAG_ALGORITHM: Int = 0x81
+    const val KDF_TAG_HASH: Int = 0x82
+    const val KDF_TAG_ITERATIONS: Int = 0x83   // plain big-endian uint32
+    const val KDF_TAG_SALT_PW1: Int = 0x84
+    const val KDF_TAG_SALT_RESET_CODE: Int = 0x85
+    const val KDF_TAG_SALT_PW3: Int = 0x86
+
+    // KDF algorithm field (0x81) values.
+    const val KDF_ALGO_NONE: Int = 0x00
+    const val KDF_ALGO_ITERATED_SALTED: Int = 0x03
+
+    // Hash field (0x82) values — OpenPGP hash-algorithm IDs. The card
+    // spec permits only these two for the KDF.
+    const val HASH_SHA256: Int = 0x08
+    const val HASH_SHA512: Int = 0x0A
 
     // Public key template sub-tags (inside 0x7F49)
     const val DO_PK_RSA_MODULUS: Int = 0x81
@@ -134,6 +167,7 @@ object OpenPgpCard {
     const val SW_AUTH_METHOD_BLOCKED: Int = 0x6983
     const val SW_CONDITIONS_NOT_SATISFIED: Int = 0x6985
     const val SW_FILE_NOT_FOUND: Int = 0x6A82
+    const val SW_REFERENCED_DATA_NOT_FOUND: Int = 0x6A88
     const val SW_INCORRECT_PARAMS: Int = 0x6A80
     const val SW_WRONG_PARAMS_P1P2: Int = 0x6B00
     const val SW_INS_NOT_SUPPORTED: Int = 0x6D00

@@ -26,8 +26,80 @@ private const val MAX_BLOCK_ATTEMPTS = 15
 
 class OpenPgpCardSession(private val transport: CardTransport) {
 
+    // ── KDF state (HW Phase KDF) ───────────────────────────────────────
+    //
+    // Cards that have had `gpg --edit-card → admin → kdf-setup` run on
+    // them do not store the PIN; they store an S2K hash of it, and every
+    // PIN crossing the wire must be hashed with the matching salt first.
+    // Sending the plain PIN to such a card is a wrong PIN: the card
+    // answers 63CX, burns a retry, and the operation the PIN was meant to
+    // authorize then fails with 0x6982.
+    //
+    // Read once per card (the DO cannot change without a kdf-setup, which
+    // requires the admin PIN and re-selects the application), cached for
+    // the rest of the session, and dropped in select() so tapping a
+    // different card can never reuse the previous card's salts.
+    private var kdfCache: CardKdfParams? = null
+
+    /**
+     * The card's KDF parameters, read on first use and cached.
+     * [CardKdfParams.DISABLED] for the overwhelmingly common card that
+     * has never had kdf-setup run on it.
+     *
+     * Requires the OpenPGP application to already be SELECTed — every
+     * PIN-carrying entry point on this class satisfies that.
+     */
+    fun kdfParams(): CardKdfParams {
+        kdfCache?.let { return it }
+        val params = readKdfParams()
+        kdfCache = params
+        return params
+    }
+
+    /**
+     * GET DATA 0x00F9 — the KDF data object.
+     *
+     * A card without KDF support does not merely return an empty DO, it
+     * rejects the read (0x6A88 referenced data not found, or 0x6A82 /
+     * 0x6D00 on older applets). All of those mean the same thing here, so
+     * any non-success status maps to DISABLED rather than an error: this
+     * read happens on the way to every PIN operation and must never be
+     * the thing that fails one. A SUCCESSFUL read with unparseable
+     * contents does throw — at that point the card is telling us a KDF is
+     * in force and guessing would burn the retry counter.
+     */
+    fun readKdfParams(): CardKdfParams {
+        val resp = transmit(
+            CommandApdu(
+                cla = 0x00,
+                ins = OpenPgpCard.INS_GET_DATA,
+                p1 = (OpenPgpCard.DO_KDF ushr 8) and 0xFF,
+                p2 = OpenPgpCard.DO_KDF and 0xFF,
+                le = 256
+            ),
+            throwOnError = false
+        )
+        if (!resp.isSuccess) return CardKdfParams.DISABLED
+        return CardKdf.parse(resp.data)
+    }
+
+    /**
+     * The bytes to put in the data field of a PIN-carrying command:
+     * [pin] unchanged on a normal card, the S2K digest on a KDF card.
+     *
+     * Note this deliberately does NOT touch the caller's plain PIN — the
+     * PIN cache stores what the user typed, not the digest, so a cached
+     * PIN is re-hashed on each use and stays correct if the card is
+     * swapped.
+     */
+    private fun pinData(purpose: CardPinPurpose, pin: ByteArray): ByteArray =
+        CardKdf.pinData(kdfParams(), purpose, pin)
+
     /** SELECT the OpenPGP application by its AID prefix. */
     fun select() {
+        // A new SELECT may be a different card. Drop any cached salts
+        // before they can be applied to the wrong one.
+        kdfCache = null
         val cmd = CommandApdu(
             cla = 0x00,
             ins = OpenPgpCard.INS_SELECT,
@@ -247,12 +319,20 @@ class OpenPgpCardSession(private val transport: CardTransport) {
      * Note the card's "Signature PIN: forced" mode: PW1/0x81 access is
      * consumed after a single PSO:CDS, so a sign flow must VERIFY again
      * before each signature.
+     *
+     * HW Phase KDF: on a card with kdf-setup configured, what actually
+     * goes over the wire is the S2K digest of [pin] under the salt for
+     * this PIN's role (PW1 salt for 0x81/0x82, PW3 salt for 0x83). [pin]
+     * itself is always the raw characters the user typed.
      */
     fun verify(pinReference: Int, pin: ByteArray) {
         // 3.1.0 Phase 7 (B1): this is the single chokepoint every card
         // operation's PIN passes through, so the cache integrates here —
         // a successful USER-PIN verify refreshes the cache, a wrong PIN
         // clears it. PW3 (admin) is deliberately never cached.
+        val purpose =
+            if (pinReference == OpenPgpCard.PW3_ADMIN) CardPinPurpose.ADMIN
+            else CardPinPurpose.USER
         try {
             transmit(
                 CommandApdu(
@@ -260,7 +340,7 @@ class OpenPgpCardSession(private val transport: CardTransport) {
                     ins = OpenPgpCard.INS_VERIFY,
                     p1 = 0x00,
                     p2 = pinReference,
-                    data = pin
+                    data = pinData(purpose, pin)
                 )
             )
         } catch (e: OpenPgpCardException.WrongPin) {
@@ -300,15 +380,24 @@ class OpenPgpCardSession(private val transport: CardTransport) {
      * the caller just supplies both. [pinReference] is CRD_PW1 (0x81) for
      * the user PIN or CRD_PW3 (0x83) for the admin PIN. Throws WrongPin
      * (tries remaining) if the current PIN is wrong.
+     *
+     * HW Phase KDF: BOTH halves are hashed on a KDF card, each with the
+     * salt for [pinReference]'s role — the card stores hashes, so the new
+     * PIN must arrive as the hash it will be compared against later. The
+     * card's "split by stored length" rule still works, and in fact gets
+     * easier: two digests of identical, fixed length.
      */
     fun changeReferenceData(pinReference: Int, oldPin: ByteArray, newPin: ByteArray) {
+        val purpose =
+            if (pinReference == OpenPgpCard.CRD_PW3) CardPinPurpose.ADMIN
+            else CardPinPurpose.USER
         transmit(
             CommandApdu(
                 cla = 0x00,
                 ins = OpenPgpCard.INS_CHANGE_REFERENCE_DATA,
                 p1 = 0x00,
                 p2 = pinReference,
-                data = oldPin + newPin
+                data = pinData(purpose, oldPin) + pinData(purpose, newPin)
             )
         )
     }
@@ -443,9 +532,13 @@ class OpenPgpCardSession(private val transport: CardTransport) {
             CommandApdu(
                 cla = 0x00,
                 ins = OpenPgpCard.INS_RESET_RETRY_COUNTER,
-                p1 = 0x02,
+                p1 = OpenPgpCard.P1_RESET_ADMIN_VERIFIED,
                 p2 = OpenPgpCard.CRD_PW1,
-                data = newUserPin.toByteArray(Charsets.UTF_8)
+                // P1 = 0x02 carries the new PW1 alone, so only the PW1
+                // salt is involved. (The P1 = 0x00 Reset Code variant
+                // would prepend the Reset Code hashed with the 0x85 salt;
+                // PGPony has no Reset Code flow yet.)
+                data = pinData(CardPinPurpose.USER, newUserPin.toByteArray(Charsets.UTF_8))
             )
         )
     }
@@ -483,7 +576,17 @@ class OpenPgpCardSession(private val transport: CardTransport) {
     private fun blockPin(reference: Int) {
         // 8 zero digits: a valid length for both PW1 (min 6) and PW3 (min 8),
         // and astronomically unlikely to be the real PIN.
-        val wrong = "00000000".toByteArray(Charsets.UTF_8)
+        //
+        // HW Phase KDF: this has to go through the same hashing as a real
+        // PIN. A KDF card rejects a raw 8-byte VERIFY on length before it
+        // ever compares, which does not decrement the retry counter — the
+        // loop would run its full 15 attempts, leave both PINs unblocked,
+        // and TERMINATE DF would then fail. Hashing makes the wrong PIN
+        // wrong in the way the card counts.
+        val purpose =
+            if (reference == OpenPgpCard.PW3_ADMIN) CardPinPurpose.ADMIN
+            else CardPinPurpose.USER
+        val wrong = pinData(purpose, "00000000".toByteArray(Charsets.UTF_8))
         repeat(MAX_BLOCK_ATTEMPTS) {
             val resp = transmit(
                 CommandApdu(

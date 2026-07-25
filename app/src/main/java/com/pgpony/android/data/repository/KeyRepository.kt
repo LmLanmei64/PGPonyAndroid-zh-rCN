@@ -415,22 +415,56 @@ class KeyRepository(
      * whole text as one key when no BEGIN/END blocks are found.
      */
     suspend fun importAllArmoredKeysDetailed(armoredText: String): List<ImportOutcome> {
-        val blocks = splitArmoredKeyBlocks(armoredText).ifEmpty { listOf(armoredText) }
-        // A single armor block can hold multiple rings (the OpenKeychain
-        // backup payload is a public ring + a secret ring + … under one
-        // BEGIN/END), so explode each block into per-ring armored strings
-        // before merge-importing.
-        val perRing = ArrayList<String>()
-        for (block in blocks) {
-            val rings = crypto.explodeToArmoredKeys(block.toByteArray(Charsets.UTF_8))
-            if (rings.isEmpty()) perRing.add(block) else perRing.addAll(rings)
-        }
+        val perRing = explodePerRing(armoredText)
         val outcomes = ArrayList<ImportOutcome>(perRing.size)
         for (ring in perRing) {
             runCatching { importArmoredKeyDetailed(ring) }.getOrNull()?.let { outcomes.add(it) }
         }
         return outcomes
     }
+
+    /**
+     * Split [armoredText] into one armored string per KEY RING.
+     *
+     * Two levels of nesting have to be undone, and conflating them is
+     * what made 4.0.x import only the first key of a multi-key file:
+     *
+     *   1. A file may hold several BEGIN/END armor blocks (concatenated
+     *      exports) — [splitArmoredKeyBlocks] handles that.
+     *   2. A SINGLE armor block may hold several rings. This is the
+     *      common case, not the exotic one: `gpg --export alice bob` emits
+     *      all the rings inside one block, and a binary export gets
+     *      wrapped into one block before it reaches here. The OpenKeychain
+     *      backup payload (public ring + secret ring + …) is the same
+     *      shape.
+     *
+     * A block BC cannot explode is passed through whole, so a parse
+     * failure degrades to the old single-key behavior instead of
+     * dropping the block.
+     */
+    private fun explodePerRing(armoredText: String): List<String> {
+        val blocks = splitArmoredKeyBlocks(armoredText).ifEmpty { listOf(armoredText) }
+        val perRing = ArrayList<String>()
+        for (block in blocks) {
+            val rings = crypto.explodeToArmoredKeys(block.toByteArray(Charsets.UTF_8))
+            if (rings.isEmpty()) perRing.add(block) else perRing.addAll(rings)
+        }
+        return perRing
+    }
+
+    /**
+     * How many key rings [armoredText] actually contains.
+     *
+     * Callers route on this rather than on [splitArmoredKeyBlocks]`.size`:
+     * the block count is 1 for the most common multi-key file there is
+     * (a single `gpg --export` of several keys), so routing on it sends
+     * that file down the single-key path and silently discards every key
+     * but the first.
+     *
+     * Shares [explodePerRing] with [importAllArmoredKeysDetailed] so the
+     * number reported here can never disagree with the number imported.
+     */
+    fun countKeyRings(armoredText: String): Int = explodePerRing(armoredText).size
 
     // ── HW Phase 1: Import a hardware-key (OpenPGP card) record ────────
 

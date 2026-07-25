@@ -325,14 +325,27 @@ private fun FileSection(state: KeyringUiState, viewModel: KeyringViewModel) {
     val activity = context.findMainActivity()
 
     val onPickFile: () -> Unit = {
-        activity?.startDocumentPicker(
-            arrayOf(
-                "text/plain",
-                "application/pgp-keys",
-                "application/octet-stream",
-                "*/*"
-            )
-        ) { uri ->
+        // 4.0.4 fix (origin: Meino, key file on a USB stick invisible in
+        // Browse while Ghost Commander listed it fine).
+        //
+        // This used to pass four types. That reads like "*/* plus some
+        // hints", but startDocumentPicker branches on the array SIZE: more
+        // than one entry means it sets EXTRA_MIME_TYPES, and once
+        // EXTRA_MIME_TYPES is present DocumentsUI hands the whole list down
+        // to each DocumentsProvider to filter against. Providers that
+        // implement that filtering loosely — the USB/MTP one especially,
+        // which serves generic or stale types for anything added since it
+        // last indexed — answer by hiding the file. The `*/*` sitting in
+        // the array does not save us, because the provider never gets as
+        // far as a union.
+        //
+        // A single-element array takes the other branch: type = "*/*" and
+        // NO EXTRA_MIME_TYPES, so nothing is filtered by MIME at any layer.
+        // Armored keys are plain text and get mis-typed constantly, so
+        // there was never a filter worth keeping — validation happens after
+        // selection anyway, in previewKeyBytes, which parses the bytes and
+        // reports what it actually found.
+        activity?.startDocumentPicker(arrayOf("*/*")) { uri ->
             if (uri != null) {
                 val filename = uri.lastPathSegment?.substringAfterLast('/')
                     ?: uri.toString().substringAfterLast('/')
@@ -386,11 +399,12 @@ private fun FileSection(state: KeyringUiState, viewModel: KeyringViewModel) {
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
-            // OpenDocument with multiple MIME types — armored PGP
-            // files use text/plain in practice; application/pgp-keys
-            // is the IANA-registered type some tools set. Wildcard
-            // */* catches everything else (e.g. .key from older
-            // GnuPG installs that didn't register a MIME).
+            // OpenDocument with NO MIME filter (4.0.4) — armored PGP
+            // files are typed text/plain, application/pgp-keys,
+            // application/octet-stream or nothing at all depending on
+            // which provider is serving them, and a filter that guesses
+            // wrong hides the file entirely. See onPickFile above for why
+            // listing several types is worse than listing none.
             Button(
                 onClick = onPickFile,
                 modifier = Modifier.fillMaxWidth(),
