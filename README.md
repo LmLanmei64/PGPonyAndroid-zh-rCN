@@ -43,3 +43,4 @@ The cryptographic core is maintained separately as open source:
 
 - Website: https://pgpony.app
 - Source: https://github.com/norsehorse-dev/PGPonyAndroid
+- Desktop: https://github.com/norsehorse-dev/PGPonyDesktop
