@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -528,7 +529,7 @@ private fun LinkedContactRow(contact: ContactWithKeys) {
 private fun TrustBadge(trust: TrustLevel) {
     val (icon, tint, label) = when (trust) {
         TrustLevel.UNKNOWN    -> Triple(
-            Icons.Filled.HelpOutline,
+            Icons.AutoMirrored.Filled.HelpOutline,
             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             stringResource(R.string.contacts_trust_unknown_cd)
         )

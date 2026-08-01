@@ -107,7 +107,12 @@ import com.pgpony.android.billing.BillingService
 import com.pgpony.android.crypto.card.CardInfo
 import com.pgpony.android.intent.IntentAction
 import com.pgpony.android.intent.IntentHandler
+import android.hardware.usb.UsbManager
+import com.pgpony.android.crypto.card.CardLinkAvailability
+import com.pgpony.android.crypto.card.CardLinkKind
 import com.pgpony.android.nfc.OpenPgpCardReader
+import com.pgpony.android.usb.UsbCardConnectionManager
+import com.pgpony.android.usb.UsbCardOperations
 import com.pgpony.android.ui.PGPonyViewModelFactory
 import com.pgpony.android.ui.card.CardScanScreen
 import com.pgpony.android.ui.card.CardPinChangeScreen
@@ -137,6 +142,7 @@ import com.pgpony.android.ui.contacts.ContactsViewModel
 import com.pgpony.android.ui.onboarding.OnboardingScreen
 import com.pgpony.android.ui.settings.SettingsScreen
 import com.pgpony.android.ui.settings.SettingsViewModel
+import androidx.compose.ui.draw.drawWithContent
 import com.pgpony.android.ui.theme.AppTheme
 import com.pgpony.android.ui.theme.ThemeState
 import com.pgpony.android.ui.theme.resolveColorScheme
@@ -176,7 +182,9 @@ val bottomNavScreens = listOf(
 
 // ── Activity ───────────────────────────────────────────────────────────
 
-class MainActivity : androidx.appcompat.app.AppCompatActivity() {
+class MainActivity :
+    androidx.appcompat.app.AppCompatActivity(),
+    com.pgpony.android.saf.DocumentCreatorHost {
 
     private var pendingAction = mutableStateOf<IntentAction>(IntentAction.None)
     // 4.0.0 Phase 3 — bytes of a .pgpony backup opened via VIEW intent,
@@ -224,7 +232,15 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     // pendingDocumentPickerCallback so a save-after-open chain can
     // queue both without clobbering each other (rare but possible if
     // a result sheet were ever to show both buttons enabled).
-    private var pendingDocumentCreatorCallback: ((android.net.Uri?) -> Unit)? = null
+    // 4.1.0 Phase 7b — the callback slot, the intent building and the
+    // result branch all moved to SafDocumentCreator so ShareTargetActivity
+    // could have the same capability instead of a copy of it (issue #13).
+    // suppressAutoLock is the only part that was ever MainActivity-specific,
+    // and it is now the parameter rather than the reason the whole thing
+    // lived here.
+    private val documentCreator = com.pgpony.android.saf.SafDocumentCreator(
+        REQ_DOCUMENT_CREATOR
+    ) { busy -> suppressAutoLock = busy }
 
     // ── HW Phase 1: NFC OpenPGP-card reader ───────────────────────────
     //
@@ -235,6 +251,33 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     // startCardScan / stopCardScan in a DisposableEffect. Only one scan
     // can be active at a time — a single slot suffices.
     private var cardReader: OpenPgpCardReader? = null
+
+    // 4.1.0 USB Phase 2 — wired readers. Owned by the Activity because the
+    // permission grant and the attach/detach broadcasts are Activity-scoped,
+    // and because startCardOperation below is the one place every card
+    // operation in the app funnels through.
+    val usbCards: UsbCardConnectionManager by lazy {
+        UsbCardConnectionManager(this) { onUsbLinkChanged() }
+    }
+
+    /**
+     * A reader was attached, detached, or its permission changed.
+     *
+     * Asks for access as soon as a reader appears. USB permission is granted
+     * PER ATTACHMENT, so a key unplugged and replugged needs asking again;
+     * doing it here means the dialog arrives when the user plugs in rather
+     * than mid-operation, and every card screen finds the link already usable.
+     */
+    private fun onUsbLinkChanged() {
+        val device = usbCards.firstReader() ?: return
+        if (!usbCards.hasPermission(device)) {
+            usbCards.requestPermission(device) { /* state re-reads on change */ }
+        }
+    }
+
+    /** What card connectivity looks like right now. Recompute, do not cache. */
+    fun cardLink(): CardLinkAvailability =
+        usbCards.availability(isNfcAvailable(), isNfcEnabled())
 
     // HW Phase 3 — when true, the biometric auto-lock observer does NOT
     // re-lock on ON_STOP. Set around in-app excursions that legitimately
@@ -267,6 +310,29 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         return started
     }
 
+    /**
+     * 4.0.5 — an operation finished, but the card is probably still on the
+     * phone.
+     *
+     * Reader mode must NOT be dropped here. disableReaderMode with a tag
+     * still in the field hands it straight to the platform's tag
+     * dispatcher, which reads the NDEF record and launches whatever app
+     * claims it — on a YubiKey, Yubico Authenticator. Two users reported
+     * exactly that: a successful encrypt or decrypt, then Authenticator
+     * opening by itself (issue #7). The dedicated card screens never had
+     * the problem because they stop on dispose; the inline operations on
+     * the Encrypt and Decrypt tabs stopped in the result callback.
+     *
+     * So this releases only the auto-lock suppression, which genuinely
+     * should end with the operation. Reader mode stays engaged until the
+     * screen goes away, where [stopCardScan] runs from a DisposableEffect.
+     * The reader's one-shot guard means the still-present card cannot
+     * re-trigger anything in the meantime.
+     */
+    fun endCardOperation() {
+        suppressAutoLock = false
+    }
+
     /** Stop NFC reader-mode polling and release the reader. */
     fun stopCardScan() {
         cardReader?.stop()
@@ -293,6 +359,29 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         operation: (com.pgpony.android.crypto.card.OpenPgpCardSession) -> T,
         onResult: (Result<T>) -> Unit
     ): Boolean {
+        // 4.1.0 USB Phase 2 — the chokepoint. Every card operation in the app
+        // reaches the hardware through here, so preferring a wired reader in
+        // this one method is what gives the Decrypt tab, the Sign tab, key
+        // detail, Password Store, keygen and card management USB support
+        // without touching any of them.
+        //
+        // The operation itself is unchanged: OpenPgpCardSession depends only
+        // on the CardTransport interface, so the same lambda runs over either
+        // link.
+        if (cardLink().preferred == CardLinkKind.USB) {
+            val manager = getSystemService(UsbManager::class.java)
+            val device = usbCards.firstReader()
+            if (manager != null && device != null) {
+                // No reader-mode teardown to schedule and no auto-lock
+                // suppression needed: a wired operation never backgrounds the
+                // activity, which is the only reason suppressAutoLock exists.
+                UsbCardOperations.run(manager, device, operation, onResult = onResult)
+                return true
+            }
+            // Fell through: the reader vanished between the check and here.
+            // Carry on to NFC rather than failing, since NFC may well work.
+        }
+
         val reader = OpenPgpCardReader(this)
         cardReader = reader
         val started = reader.startOperation(operation, onResult)
@@ -431,13 +520,11 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 pendingDocumentPickerCallback = null
                 cb?.invoke(uri)
             }
-            REQ_DOCUMENT_CREATOR -> {
-                suppressAutoLock = false
-                val uri = if (resultCode == RESULT_OK) data?.data else null
-                val cb = pendingDocumentCreatorCallback
-                pendingDocumentCreatorCallback = null
-                cb?.invoke(uri)
-            }
+            // 4.1.0 Phase 7b — including the suppressAutoLock release, via
+            // the onBusy parameter the creator was constructed with.
+            REQ_DOCUMENT_CREATOR -> documentCreator.onActivityResult(
+                requestCode, resultCode, data
+            )
             // 3.1.0 Phase 5 (J3): multi-pick returns either clipData (2+
             // selections) or data (a single selection despite
             // ALLOW_MULTIPLE — the DocumentsUI contract).
@@ -566,35 +653,26 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
      * content:// URI the system handed us — writes via
      * contentResolver.openOutputStream(uri) happen at the call site.
      */
-    fun startDocumentCreator(
+    override fun startDocumentCreator(
         mimeType: String,
         suggestedName: String,
         callback: (android.net.Uri?) -> Unit
     ) {
-        pendingDocumentCreatorCallback = callback
-        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = mimeType
-            putExtra(Intent.EXTRA_TITLE, suggestedName)
-        }
-        try {
-            suppressAutoLock = true
-            ActivityCompat.startActivityForResult(
-                this,
-                intent,
-                REQ_DOCUMENT_CREATOR,
-                null
-            )
-        } catch (e: android.content.ActivityNotFoundException) {
-            suppressAutoLock = false
-            pendingDocumentCreatorCallback = null
-            callback(null)
-        }
+        // 4.1.0 Phase 7b — signature unchanged on purpose: all six existing
+        // call sites, and the find*MainActivity() walks that reach them,
+        // carry on exactly as before.
+        documentCreator.launch(this, mimeType, suggestedName, callback)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // 4.1.0 USB Phase 2 — listen for readers for the life of the Activity.
+        // Registered here rather than in onStart so a key plugged in while the
+        // app is backgrounded is already known when it comes forward.
+        usbCards.register()
+        onUsbLinkChanged()
 
         // ── 4.0.0 Phase 9 (G8): blank the Recents snapshot on API 33+ ──
         //
@@ -639,6 +717,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        usbCards.unregister()
         billingService.disconnect()
         super.onDestroy()
     }
@@ -1014,7 +1093,7 @@ fun PGPonyMainScreen(
                                 contentDescription = stringResource(screen.titleResId)
                             )
                         },
-                        label = { Text(stringResource(screen.titleResId), fontSize = 10.sp, maxLines = 1) },
+                        label = { NavBarLabel(stringResource(screen.titleResId)) },
                         selected = selected,
                         onClick = {
                             navController.navigate(screen.route) {
@@ -1209,6 +1288,50 @@ fun PGPonyMainScreen(
 // covers the whole screen anyway is harmless — no suppression needed.
 // If a provider surface ever renders MainActivity partially visible,
 // wrap its launch in the same suppress pattern the pickers use.
+/**
+ * 4.1.0 Phase 12b — a bottom-nav label that shrinks instead of truncating.
+ *
+ * `fontSize = 10.sp, maxLines = 1` gave "Keyrin", "Encryp", "Settin" on One
+ * UI, which ships a larger default font scale than stock. It is visible in
+ * every Samsung screenshot we have.
+ *
+ * Compose Foundation 1.8 does this with one parameter, `TextAutoSize`. The
+ * BOM here is 2024.12.01, and bumping Compose in the release that is trying
+ * to become byte-for-byte reproducible on F-Droid is not a trade worth
+ * making for a nav label — the same reasoning that pinned buildTools to
+ * 35.0.0 in Phase 12a rather than "upgrading" it to match compileSdk.
+ *
+ * So: the pre-1.8 idiom. Start at the size the user's scale asks for, and
+ * step down only when the measured result actually overflows. Someone on
+ * default settings sees no change whatsoever, and someone who has turned
+ * their font up gets a smaller label rather than half a word — which is the
+ * right way round, since a truncated label is not more accessible for being
+ * larger.
+ *
+ * Drawing is held until the size settles so the shrink passes do not flash
+ * a clipped label for a frame or two. Both bits of state are keyed on the
+ * text, so switching locale re-measures from scratch.
+ */
+@Composable
+private fun NavBarLabel(text: String) {
+    var scale by remember(text) { mutableStateOf(1f) }
+    var settled by remember(text) { mutableStateOf(false) }
+    Text(
+        text = text,
+        fontSize = 10.sp * scale,
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier.drawWithContent { if (settled) drawContent() },
+        onTextLayout = { result ->
+            if (result.hasVisualOverflow && scale > 0.7f) {
+                scale *= 0.9f
+            } else {
+                settled = true
+            }
+        },
+    )
+}
+
 @Composable
 private fun PrivacyCover(isSuppressed: () -> Boolean) {
     var visible by remember { mutableStateOf(false) }

@@ -1,0 +1,17 @@
+Hardware keys over USB. Plug an OpenPGP card into a USB-C or OTG port and sign, decrypt or change its PIN over the cable. NFC still works exactly as before, and PGPony uses whichever link is available, preferring the one you have plugged in.
+
+Key generation works on Samsung again. The Generate Key screen could not scroll, so on phones where the form is slightly taller than the display the passphrase fields and the Generate button were unreachable. Affected users could not create a key at all. This had been broken since 4.0.0.
+
+Large bundles now open properly. A bundle over 4 MB decrypted as one unusable file instead of showing what was inside it. Attachments are now extracted to disk and listed individually whatever the size, so a dozen photos works the same as three.
+
+Big keys can be shared by QR again. A key too large for one code is split across several, and PGPony reassembles them as you scan. This works between PGPony installs; other QR readers cannot recombine a split key.
+
+FairEmail, K-9 and Thunderbird decrypt reliably. The remaining crash on the API boundary is fixed and now has its own test suite, so it cannot come back quietly.
+
+Password managers can fill the passphrase prompt. The fields are published to Android's autofill service instead of being invisible to it.
+
+One PGPony in the share sheet instead of two, and sharing a file in to encrypt it now offers Save as well as Share.
+
+Your keyring is grouped into My Keys, Contacts and Public Keys, and a hardware key now appears under My Keys rather than among other people's.
+
+Also: your security key no longer wakes Yubico Authenticator when you leave it on the phone, the Decrypt tab no longer stalls on a large keyring, bundle attachment lists collapse past 8 files, revocation certificates are saved at key creation again, and navigation labels no longer truncate on One UI.

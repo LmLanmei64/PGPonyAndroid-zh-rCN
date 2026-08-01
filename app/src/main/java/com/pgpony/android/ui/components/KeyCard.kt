@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
@@ -194,7 +195,7 @@ fun AlgorithmBadge(name: String) {
 @Composable
 fun TrustBadge(trust: TrustLevel) {
     val (icon, tint) = when (trust) {
-        TrustLevel.UNKNOWN -> Icons.Filled.HelpOutline to Color.Gray
+        TrustLevel.UNKNOWN -> Icons.AutoMirrored.Filled.HelpOutline to Color.Gray
         TrustLevel.UNVERIFIED -> Icons.Filled.Warning to Color(0xFFFBBF24)
         TrustLevel.VERIFIED -> Icons.Filled.VerifiedUser to Color(0xFF22C55E)
         TrustLevel.ULTIMATE -> Icons.Filled.Star to Color(0xFF3B82F6)

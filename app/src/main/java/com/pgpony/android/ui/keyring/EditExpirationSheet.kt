@@ -64,6 +64,10 @@ fun EditExpirationSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
+                // 4.1.0 — scroll was here already; the inset half was not,
+                // and this sheet asks for a passphrase.
+                .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)

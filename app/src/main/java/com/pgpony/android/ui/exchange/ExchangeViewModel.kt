@@ -9,12 +9,10 @@ package com.pgpony.android.ui.exchange
 import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.qrcode.QRCodeWriter
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
 import com.pgpony.android.data.PGPKeyEntity
+import com.pgpony.android.qr.QrBitmap
 import com.pgpony.android.data.repository.ImportResolution
 import com.pgpony.android.data.repository.KeyRepository
 import com.pgpony.android.network.KeyServerRepository
@@ -29,7 +27,10 @@ data class ExchangeUiState(
     val section: ExchangeSection = ExchangeSection.SHOW_KEY,
     val myKeyPairs: List<PGPKeyEntity> = emptyList(),
     val selectedKey: PGPKeyEntity? = null,
-    val qrBitmap: Bitmap? = null,
+    /** 4.1.0 Phase 9 (issue #3): a list, because a post-quantum key does
+     *  not fit in one symbol. One entry for anything that does. */
+    val qrFrames: List<Bitmap> = emptyList(),
+    val qrIndex: Int = 0,
     val armoredPublicKey: String? = null,
     // Key server
     val searchQuery: String = "",
@@ -88,21 +89,35 @@ class ExchangeViewModel(
         val armored = repo.exportArmoredPublicKey(key.fingerprint) ?: return
         _state.value = _state.value.copy(armoredPublicKey = armored)
 
+        // 4.1.0 Phase 9 (issue #3) — see qr/QrBitmap.kt. This block used to
+        // be a verbatim copy of KeyDetailViewModel.encodeQR.
         try {
-            val hints = mapOf(EncodeHintType.MARGIN to 1)
-            val matrix = QRCodeWriter().encode(armored, BarcodeFormat.QR_CODE, 800, 800, hints)
-            val width = matrix.width
-            val height = matrix.height
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
-            for (x in 0 until width) {
-                for (y in 0 until height) {
-                    bitmap.setPixel(x, y, if (matrix.get(x, y)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
-                }
+            val frames = QrBitmap.encodeFrames(armored)
+            if (frames.isNullOrEmpty()) {
+                _state.value = _state.value.copy(
+                    qrFrames = emptyList(),
+                    qrIndex = 0,
+                    errorMessage = PGPonyApp.instance.getString(R.string.qr_too_large)
+                )
+                return
             }
-            _state.value = _state.value.copy(qrBitmap = bitmap)
+            _state.value = _state.value.copy(qrFrames = frames, qrIndex = 0)
         } catch (e: Exception) {
             _state.value = _state.value.copy(errorMessage = PGPonyApp.instance.getString(R.string.exchange_vm_error_qr_failed_format, e.message ?: ""))
         }
+    }
+
+    /** 4.1.0 Phase 9 — step through a multi-part QR. */
+    fun qrNext() {
+        val s = _state.value
+        if (s.qrFrames.size < 2) return
+        _state.value = s.copy(qrIndex = (s.qrIndex + 1) % s.qrFrames.size)
+    }
+
+    fun qrPrev() {
+        val s = _state.value
+        if (s.qrFrames.size < 2) return
+        _state.value = s.copy(qrIndex = (s.qrIndex - 1 + s.qrFrames.size) % s.qrFrames.size)
     }
 
     // ── Scan Key ───────────────────────────────────────────────────────

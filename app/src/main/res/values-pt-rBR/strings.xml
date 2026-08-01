@@ -453,7 +453,7 @@ pgpony.norsehor.se</string>
     <string name="keyring_title">Chaveiro</string>
     <string name="keyring_add_key_cd">Adicionar chave</string>
     <string name="keyring_section_my_keys">Minhas Chaves</string>
-    <string name="keyring_section_contact_keys">Chaves de contatos</string>
+    <string name="keyring_section_contacts">Contatos</string>
 
     <!-- ── Delete confirmation ──────────────────────────────────────── -->
     <string name="keyring_delete_dialog_title">Excluir chave?</string>
@@ -1685,4 +1685,34 @@ Opcionalmente, bloqueie o app com sua impressão digital ou rosto para mais tran
         <item quantity="one">%1$d destinatário</item>
         <item quantity="other">%1$d destinatários</item>
     </plurals>
+
+    <!-- ── 4.1.0 Phase 12b translation pass ──────────────────────────
+         Machine-translated in one sweep at the end of 4.1.0, covering
+         Phase 8 (bundle file list), Phase 9 (multi-part QR), Phase 11
+         (USB connection vocabulary) and Phase 12b (keyring sections).
+         Positional specifiers are preserved; argument order may differ
+         from English where the language requires it. -->
+    <string name="output_truncated_notice">Somente prévia: os primeiros %1$d de %2$d caracteres. Copiar leva o texto inteiro; abra o texto completo para selecionar uma parte.</string>
+    <string name="output_open_full">Abrir texto completo</string>
+    <string name="provider_cardop_done_remove_card">Pronto. Você já pode remover sua chave.</string>
+    <string name="encdec_progress_format">%1$s de %2$s</string>
+    <string name="encdec_error_file_too_large_for_card">Este arquivo é grande demais para uma chave de hardware. Use uma chave de software para arquivos deste tamanho.</string>
+    <string name="encdec_error_file_too_large">Este arquivo é grande demais para a memória disponível. Feche outros aplicativos e tente novamente.</string>
+    <string name="keyring_section_public_keys">Chaves públicas</string>
+    <string name="qr_too_large">Esta chave é grande demais para um código QR. Use Compartilhar ou Copiar.</string>
+    <string name="qr_part_of_format">Parte %1$d de %2$d</string>
+    <string name="qr_multipart_hint">Escaneie todas as partes com o PGPony. Outros leitores de QR não conseguem remontar uma chave dividida.</string>
+    <string name="qr_part_previous">Parte anterior</string>
+    <string name="qr_part_next">Próxima parte</string>
+    <string name="qr_scan_progress_format">%1$d de %2$d partes escaneadas. Continue.</string>
+    <string name="qr_scan_restarted">Essa é uma chave diferente. Recomeçando.</string>
+    <string name="share_target_decrypt_passphrase_required">Essa chave é protegida por uma frase secreta. Digite-a e tente novamente.</string>
+    <string name="card_scan_usb_permission">Aguardando permissão para usar a chave de segurança conectada.</string>
+    <string name="card_usb_working">Trabalhando com sua chave de segurança…</string>
+    <string name="card_usb_no_reader">Nenhuma chave de segurança está conectada.</string>
+    <string name="card_scan_usb_reading">Lendo sua chave de segurança via USB…</string>
+    <string name="decrypt_card_message_note_hidden">Esta mensagem oculta o destinatário. Digite seu PIN e toque em \"%1$s\" para tentar com sua chave de hardware.</string>
+    <string name="decrypt_hidden_recipient_no_software_key">Nenhuma das suas chaves de software abriu esta mensagem. Ela oculta o destinatário, então não havia ID de chave para comparar.</string>
+    <string name="encrypt_bundle_show_all_format">Mostrar todos os %1$d arquivos</string>
+    <string name="encrypt_bundle_show_fewer">Mostrar menos</string>
 </resources>

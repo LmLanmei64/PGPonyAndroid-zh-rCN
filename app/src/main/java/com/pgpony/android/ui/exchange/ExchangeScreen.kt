@@ -141,7 +141,7 @@ private fun ShowKeySection(
                 Spacer(modifier = Modifier.height(12.dp))
             }
             // QR code
-            state.qrBitmap?.let { bitmap ->
+            state.qrFrames.getOrNull(state.qrIndex)?.let { bitmap ->
                 Card(
                     modifier = Modifier.size(280.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -158,6 +158,35 @@ private fun ShowKeySection(
                     }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
+                // 4.1.0 Phase 9 (issue #3) — only for keys too large for one
+                // symbol. Absent for every classic key.
+                if (state.qrFrames.size > 1) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(onClick = { viewModel.qrPrev() }) {
+                            Text(stringResource(R.string.qr_part_previous))
+                        }
+                        Text(
+                            stringResource(
+                                R.string.qr_part_of_format,
+                                state.qrIndex + 1,
+                                state.qrFrames.size
+                            ),
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        OutlinedButton(onClick = { viewModel.qrNext() }) {
+                            Text(stringResource(R.string.qr_part_next))
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.qr_multipart_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
                 state.selectedKey?.let { key ->
                     Text(key.userName, style = MaterialTheme.typography.titleSmall)
                     Text(key.formattedFingerprint,

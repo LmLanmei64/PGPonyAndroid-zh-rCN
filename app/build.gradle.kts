@@ -20,6 +20,16 @@ if (keystorePropertiesFile.exists()) {
 android {
     namespace = "com.pgpony.android"
     compileSdk = 36
+    // 4.1.0 Phase 12a — pinned. Unpinned, this floats with whatever the AGP
+    // on the building machine defaults to, which is an uncontrolled input to
+    // the F-Droid reproducible build (plan §3.1 / Phase 15): the dex output
+    // was already the remaining unexplained delta on 4.0.1 and 4.0.3.
+    //
+    // 35.0.0 is what AGP 8.13.2 already resolves here, confirmed from the
+    // build-tools paths in app/build, so pinning it changes nothing about the
+    // current output. Bump this deliberately alongside an AGP upgrade rather
+    // than letting it move on its own.
+    buildToolsVersion = "35.0.0"
     defaultConfig {
         applicationId = "com.pgpony.android"
         minSdk = 26
@@ -110,8 +120,84 @@ android {
         // The card KDF fix was verified on real hardware (YubiKey:
         // decrypt, sign, and PIN change with the retry counter intact),
         // which was the only thing the -rc1 suffix was waiting on.
-        versionCode = 404
-        versionName = "4.0.4"
+        //
+        // v4.0.5 — two reports that arrived the day 4.0.4 shipped:
+        //   • `gpg -eaR` hidden-recipient messages failed to decrypt. A
+        //     wildcard (all-zero) PKESK key ID matched no key, so the
+        //     lookup reported "no matching decryption key" without having
+        //     tried any. Wildcard packets are now trialled against every
+        //     local software key, addressed packets first.
+        //   • Yubico Authenticator launched itself after a card operation
+        //     on the Encrypt/Decrypt tabs and the Quick Action. Those
+        //     paths dropped NFC reader mode in the result callback, with
+        //     the card still in the field, so the platform tag dispatcher
+        //     picked it up. Reader mode is now held until the screen goes
+        //     away, matching what the dedicated card screens always did.
+        //
+        // v4.1.0 — integration hardening. 4.0.x shipped PQC and then spent
+        // four releases putting out fires; this one is about PGPony behaving
+        // correctly as a component other apps depend on. The ML-KEM-1024+X448
+        // composite that 4.1.0 was originally announced to carry moves to
+        // 4.2.0 — it is deferred in schedule only, not dropped.
+        //   • `gpg -R` hidden-recipient messages now decrypt on HARDWARE
+        //     keys too. 4.0.5 fixed the software path; a card key has no
+        //     local private material to trial with, so the card decrypt
+        //     path needed its own wildcard pass, and the Decrypt tab and
+        //     the OpenPGP API provider needed routing that tries software
+        //     first and only then offers the card.
+        //   • FairEmail could not decrypt at all. The incoming Intent's
+        //     extras class loader was never set, so reading the client's
+        //     AutocryptPeerUpdate threw inside PGPony and came back to the
+        //     client as a generic client-side error (issue #9).
+        //   • Yubico Authenticator still launched itself after a card
+        //     operation driven from a mail app. 4.0.5's fixed 1.2 s delay
+        //     was outlived by a key left resting on the phone; the reader
+        //     now waits for the card to actually leave the field.
+        //   • Passphrase fields are visible to password managers, so
+        //     KeePassDX and Keepass2Android can offer a fill instead of
+        //     the user going through Magikeyboard (issue #8).
+        //   • The Decrypt tab ran a blocking keyring walk on the main
+        //     thread on every input change (issue #10).
+        // FINAL. Decided 30 July: no rc2. Phase 9 (multi-part QR) and
+        // Phases 10/11 (USB/OTG smart cards) land first, then this ships as
+        // the public release directly, so the five open reporters get the real
+        // thing rather than another unlisted build. versionCode stays 410
+        // across rc1 and the final, so anyone on rc1 upgrades in place with no
+        // reinstall and no keyring loss.
+        //
+        // Consequence worth being deliberate about: with no rc, the device
+        // checklist in RELEASE_4.1.0.md is the ONLY validation #7's NFC hold
+        // and #8's autofill get before they reach the public. Neither is
+        // covered by the unit suite. Do not publish on a green build alone.
+        //
+        // Added since rc1:
+        //   • A bundle shared as .eml failed to decrypt OUTRIGHT when the
+        //     sender's Autocrypt header was large. The envelope unwrap scanned
+        //     a fixed 8 KB prefix for the multipart/encrypted marker, and
+        //     keydata carries a whole certificate as base64, so a photo UID or
+        //     a well-signed key pushed the marker out of range. Found by
+        //     writing the test, not by a report (Phase 6).
+        //   • That unwrap now lives in MimeEnvelope with no prefix window at
+        //     all. It had been duplicated byte for byte across two ViewModels,
+        //     so the fix above had to be applied twice by hand (Phase 7).
+        //   • The Bundle attachment list collapses past 8 files, so Recipients
+        //     and the Encrypt button stay reachable (issue #12).
+        //   • Revocation certificates are pre-cached at key generation again.
+        //     That code read a secret ring off a public-only import, so it had
+        //     silently done nothing since 4.0.3 and the "revoke after losing
+        //     your passphrase" fallback did not exist.
+        //   • buildToolsVersion pinned, one less floating input to the F-Droid
+        //     reproducible build.
+        // 31 July: rc1, rc2 and rc3 went to the open reporters at unlisted
+        // pgpony.app/rc URLs. rc2 collected the QR, USB and share-path work;
+        // rc3 carried the streamed-bundle fix. Reporters confirmed, so the
+        // suffix is dropped and this is the public build.
+        //
+        // versionCode stayed 410 across all three release candidates and the
+        // final, so every hop upgraded in place with no reinstall and no
+        // keyring loss.
+        versionCode = 410
+        versionName = "4.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

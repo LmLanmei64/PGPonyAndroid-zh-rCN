@@ -420,6 +420,9 @@
 
     <!-- ── Decrypted text clipboard label (passed to ClipboardService) ─ -->
     <string name="decrypt_clipboard_label">Decrypted message</string>
+    <!-- 4.1.0, issue #10: long output is held back from first paint. -->
+    <string name="output_truncated_notice">Preview only: the first %1$d of %2$d characters. Copy takes the whole thing; open the full text to select part of it.</string>
+    <string name="output_open_full">Open full text</string>
 
     <!-- ════════════════════════════════════════════════════════════════
          Result sheets (EncryptionResultScreen, FileDecryptionResultScreen)
@@ -461,11 +464,14 @@
     <string name="encdec_error_password_mismatch">Passphrases don\'t match</string>
     <string name="encdec_error_no_file_to_encrypt">Pick a file to encrypt first</string>
     <string name="encdec_error_no_file_to_decrypt">Pick an encrypted file to decrypt first</string>
+    <!-- 4.0.5 — shown for a moment after a provider card operation succeeds,
+         while NFC reader mode is deliberately still held. See issue #7. -->
+    <string name="provider_cardop_done_remove_card">Done. You can remove your key.</string>
     <!-- 4.0.4 — byte progress for a streamed file operation, e.g. "12.4 MB of 105 MB". -->
     <string name="encdec_progress_format">%1$s of %2$s</string>
     <!-- 4.0.4 — card operations hold the NFC session open for the whole
          operation, so they cannot stream and still need the file buffered. -->
-    <string name="encdec_error_file_too_large_for_card">This file is too large to use with a hardware key. Use a software key for files this size.</string>
+    <string name="encdec_error_file_too_large_for_card">This file is too large to open with a hardware key on this device. Use a software key for files this size.</string>
     <!-- 4.0.4 — last-resort message if even the streaming path runs out of memory. -->
     <string name="encdec_error_file_too_large">This file is too large for the available memory. Try closing other apps and running it again.</string>
     <string name="encdec_error_no_decrypt_input">Paste an encrypted or signed message</string>
@@ -486,7 +492,13 @@
     <string name="keyring_title">Keyring</string>
     <string name="keyring_add_key_cd">Add Key</string>
     <string name="keyring_section_my_keys">My Keys</string>
-    <string name="keyring_section_contact_keys">Contact Keys</string>
+    <!-- 4.1.0 Phase 12b — "Contact Keys" split in two. Contacts are the
+         public keys with an Android contact linked; Public Keys are the
+         rest. The old key is renamed rather than left orphaned, and the
+         translations still carry the old wording until Phase 12b's
+         translation pass. -->
+    <string name="keyring_section_contacts">Contacts</string>
+    <string name="keyring_section_public_keys">Public Keys</string>
 
     <!-- ── Delete confirmation ──────────────────────────────────────── -->
     <string name="keyring_delete_dialog_title">Delete Key?</string>
@@ -720,6 +732,13 @@
          ════════════════════════════════════════════════════════════════ -->
     <string name="kd_vm_error_export_for_qr">Could not export public key for QR encoding</string>
     <string name="kd_vm_error_qr_failed_format">QR generation failed: %1$s</string>
+    <string name="qr_too_large">This key is too large for a QR code. Use Share or Copy instead.</string>
+    <string name="qr_part_of_format">Part %1$d of %2$d</string>
+    <string name="qr_multipart_hint">Scan every part with PGPony. Other QR readers cannot reassemble a split key.</string>
+    <string name="qr_part_previous">Previous part</string>
+    <string name="qr_part_next">Next part</string>
+    <string name="qr_scan_progress_format">Scanned %1$d of %2$d parts. Keep going.</string>
+    <string name="qr_scan_restarted">That is a different key. Starting over.</string>
     <string name="kd_vm_status_trust_updated">Trust level updated</string>
     <string name="kd_vm_status_notes_cleared">Notes cleared</string>
     <string name="kd_vm_status_notes_saved">Notes saved</string>
@@ -1074,12 +1093,12 @@
          SignerLookupSheet (decrypt-side signer lookup on unknown signer)
          ════════════════════════════════════════════════════════════════ -->
     <string name="signer_lookup_searching_title">Look up signer</string>
-    <string name="signer_lookup_searching_label">Searching keys.openpgp.org…</string>
+    <string name="signer_lookup_searching_label">Searching key servers…</string>
     <string name="signer_lookup_found_title">Key found</string>
     <string name="signer_lookup_found_body">Importing this key adds it to your keyring and re-verifies the signature. The key\'s identity is not yet vetted — only the math is being checked. Trust the sender independently before relying on the verified status.</string>
     <string name="signer_lookup_import_button">Import</string>
-    <string name="signer_lookup_not_found_title">Not found on keys.openpgp.org</string>
-    <string name="signer_lookup_not_found_body_format">No key was found for %1$s. The signer may not have uploaded their key to a public keyserver. Ask them to share their public key directly.</string>
+    <string name="signer_lookup_not_found_title">Signer not found</string>
+    <string name="signer_lookup_not_found_body_format">No key was found for %1$s on any of your configured key servers. The signer may not have published their key. Ask them to share their public key directly.</string>
     <string name="signer_lookup_failed_title">Lookup failed</string>
     <string name="signer_lookup_imported_title">Imported</string>
     <string name="signer_lookup_imported_body">The signature will be re-verified automatically.</string>
@@ -1314,6 +1333,10 @@
     <string name="card_scan_prompt_title">Hold your security key to the phone</string>
     <string name="card_scan_prompt_body">Place your YubiKey, Token2, or other OpenPGP card against the back of the phone and hold it there.</string>
     <string name="card_scan_reading">Reading card…</string>
+    <string name="card_scan_usb_permission">Waiting for permission to use the security key you plugged in.</string>
+    <string name="card_usb_working">Working with your security key…</string>
+    <string name="card_usb_no_reader">No security key is connected.</string>
+    <string name="card_scan_usb_reading">Reading your security key over USB…</string>
     <string name="card_scan_nfc_unavailable">This device does not have NFC, so hardware keys can\'t be used here.</string>
     <string name="card_scan_nfc_disabled">NFC is turned off. Enable NFC in system settings, then try again.</string>
     <string name="card_scan_found_title">Card detected</string>
@@ -1485,6 +1508,10 @@
     <!-- HW Phase 3 — Decrypt tab card-message detection -->
     <string name="decrypt_card_message_note">Encrypted to your hardware key \"%1$s\". Enter your PIN and tap the card to decrypt.</string>
     <string name="decrypt_card_message_fallback_name">security key</string>
+    <!-- 4.1.0: hidden recipient (gpg -R). The message names nobody, so the
+         card is offered only after every software key has failed. -->
+    <string name="decrypt_card_message_note_hidden">This message hides its recipient. Enter your PIN and tap \"%1$s\" to try your hardware key.</string>
+    <string name="decrypt_hidden_recipient_no_software_key">None of your software keys opened this message. It hides its recipient, so there was no key ID to match.</string>
 
     <!-- HW Phase 3 — share-target card decrypt -->
     <string name="share_target_card_label">Hardware key</string>
@@ -1537,7 +1564,15 @@
     <string name="encrypt_bundle_add_files">Add files</string>
     <string name="encrypt_bundle_attachments_format">Attachments (%1$d)</string>
     <string name="encrypt_bundle_remove">Remove attachment</string>
+    <string name="encrypt_bundle_show_all_format">Show all %1$d files</string>
+    <string name="encrypt_bundle_show_fewer">Show fewer</string>
     <string name="encdec_error_bundle_empty">Add a message or at least one attachment</string>
+    <!-- 4.1.0 Phase 14c, reworded in Phase 15 once card signing arrived.
+         The backstop for "Also sign" on with a signing key the software
+         path could not unlock: refuse rather than silently produce an
+         unsigned bundle. Card keys no longer reach it, they route to the
+         PIN dialog instead. -->
+    <string name="encdec_error_bundle_signing_key">This bundle could not be signed: the selected signing key could not be unlocked. Choose a different signing key, or turn signing off.</string>
     <string name="bundle_result_title">Bundle encrypted</string>
     <string name="bundle_result_subtitle_format">%1$d attachments · %2$d recipients</string>
     <string name="bundle_result_share_eml">Share as Email (.eml)</string>

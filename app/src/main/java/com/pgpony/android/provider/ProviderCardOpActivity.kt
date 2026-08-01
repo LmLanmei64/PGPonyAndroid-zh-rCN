@@ -54,6 +54,32 @@ class ProviderCardOpActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_OP_KEY = "com.pgpony.android.provider.CARD_OP_KEY"
+
+        /**
+         * 4.1.0 - the cap on holding NFC reader mode after a successful card
+         * operation while waiting for the user to lift the card.
+         *
+         * The wait itself ends as soon as the card is actually gone, so this
+         * is a ceiling for the case where the key is left resting on the
+         * phone, not a delay every operation pays. Past the cap the activity
+         * closes anyway - the calling app is owed its result more than the
+         * platform dispatcher is owed a miss - and Yubico Authenticator may
+         * still surface. That is the residual, and it now takes deliberately
+         * leaving the key in place for eight seconds.
+         *
+         * Lives in THIS companion rather than a second private one: Kotlin
+         * allows exactly one companion object per class, and 4.0.5 added a
+         * `private companion object` here alongside the existing one, which
+         * never compiled.
+         */
+        private const val CARD_RELEASE_MAX_WAIT_MS = 8_000L
+
+        /**
+         * Settle time between the reader reporting the card gone and
+         * finish() dropping reader mode. Covers the gap between the last
+         * presence probe and the tag being genuinely out of range.
+         */
+        private const val CARD_RELEASE_SETTLE_MS = 250L
     }
 
     private var reader: OpenPgpCardReader? = null
@@ -180,7 +206,15 @@ class ProviderCardOpActivity : ComponentActivity() {
         reader = r
         val started = r.startOperation(
             operation = { session -> performOperation(session) },
-            onResult = { result -> onCardResult(result) }
+            onResult = { result -> onCardResult(result) },
+            // 4.1.0 - see CARD_RELEASE_MAX_WAIT_MS.
+            holdUntilRemovedMs = CARD_RELEASE_MAX_WAIT_MS,
+            onAwaitingRemoval = {
+                // Stays "busy": the dialog is still owed the user's lift, and
+                // re-enabling the PIN field mid-wait would invite an edit that
+                // could not matter.
+                statusText.value = getString(R.string.provider_cardop_done_remove_card)
+            }
         )
         if (!started) {
             errorText.value = getString(R.string.provider_cardop_nfc_unavailable)
@@ -352,7 +386,24 @@ class ProviderCardOpActivity : ComponentActivity() {
                 }
                 ProviderCardOpStore.complete(opKey, completedOp)
                 setResult(Activity.RESULT_OK)
-                finish()
+                // 4.1.0 - by the time this runs the reader has already waited
+                // for the card to leave the field (see CARD_RELEASE_MAX_WAIT_MS
+                // and the 4.0.5 note below). Only a short settle remains, to
+                // cover the gap between the last presence probe and the tag
+                // actually being out of range.
+                //
+                // 4.0.5, kept for the record: finish() runs onStop, which
+                // disables reader mode. A tag in the field with no reader
+                // attached goes straight to the platform tag dispatcher,
+                // which reads its NDEF record and launches whichever app
+                // claims it - on a YubiKey, Yubico Authenticator, appearing
+                // right after a decrypt the user asked their mail app for
+                // (issue #7). 4.0.5 covered that with a fixed 1.2 s delay,
+                // which a key left resting on the phone simply outlives; the
+                // reporter still saw Authenticator open on the Thunderbird
+                // path. Waiting on the card itself is the actual fix.
+                statusText.value = getString(R.string.provider_cardop_done_remove_card)
+                window.decorView.postDelayed({ finish() }, CARD_RELEASE_SETTLE_MS)
             },
             onFailure = { e ->
                 when (e) {
@@ -380,4 +431,5 @@ class ProviderCardOpActivity : ComponentActivity() {
         setResult(Activity.RESULT_CANCELED)
         finish()
     }
+
 }

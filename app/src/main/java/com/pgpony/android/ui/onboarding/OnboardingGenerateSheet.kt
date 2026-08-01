@@ -86,6 +86,12 @@ fun OnboardingGenerateSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
+                // 4.1.0 — scroll was here already; the inset half was not.
+                // This is the OTHER key generation path, with four text
+                // fields and the buttons at the bottom, so the keyboard hid
+                // exactly what the user needed next.
+                .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 32.dp)
         ) {

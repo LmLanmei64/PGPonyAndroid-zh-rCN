@@ -17,12 +17,15 @@ package com.pgpony.android.ui.scanner
 import android.Manifest
 import android.util.Size
 import androidx.camera.core.*
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,14 +34,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+// 4.1.0 Phase 12b — androidx.compose.ui.platform.LocalLifecycleOwner is
+// deprecated as of Compose UI 1.7. This was the last site in the tree still
+// importing it; LockScreen and MainActivity already use the lifecycle one.
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.zxing.*
 import com.google.zxing.common.HybridBinarizer
 import com.pgpony.android.R
 import com.pgpony.android.MainActivity
+import com.pgpony.android.qr.QrChunking
 import com.pgpony.android.ui.util.rememberHaptics
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
@@ -55,6 +62,13 @@ fun QRScannerScreen(
     var hasCameraPermission by remember { mutableStateOf(false) }
     var scanResult by remember { mutableStateOf<String?>(null) }
     var isScanning by remember { mutableStateOf(true) }
+
+    // 4.1.0 Phase 9 (issue #3) — a post-quantum key does not fit in one
+    // symbol, so it arrives as several `PGPONY1:` frames. The collector holds
+    // partial state across decodes; a single unframed QR never touches it and
+    // completes on the first decode exactly as before.
+    val frameCollector = remember { QrChunking.Collector() }
+    var scanProgress by remember { mutableStateOf<String?>(null) }
 
     // Phase A10a — permission flow routes through MainActivity helper
     // because Compose's rememberLauncherForActivityResult crashes on
@@ -79,7 +93,12 @@ fun QRScannerScreen(
                 title = { Text(stringResource(R.string.qr_scanner_title)) },
                 navigationIcon = {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Filled.ArrowBack, "Back")
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            // 4.1.0 Phase 12b — was a hardcoded "Back", missed
+                            // by A13's string extraction.
+                            stringResource(R.string.common_button_back)
+                        )
                     }
                 }
             )
@@ -116,10 +135,43 @@ fun QRScannerScreen(
                     isScanning = isScanning,
                     onQRDetected = { text ->
                         if (isScanning) {
-                            isScanning = false
-                            scanResult = text
-                            haptics.success()
-                            onScanned(text)
+                            // The camera re-decodes whatever is in view on
+                            // every frame, so Duplicate is the common case
+                            // and must be silent rather than buzzing.
+                            when (val outcome = frameCollector.offer(text)) {
+                                is QrChunking.Outcome.NotAFrame -> {
+                                    isScanning = false
+                                    scanResult = text
+                                    haptics.success()
+                                    onScanned(text)
+                                }
+                                is QrChunking.Outcome.Complete -> {
+                                    isScanning = false
+                                    scanResult = outcome.text
+                                    scanProgress = null
+                                    haptics.success()
+                                    onScanned(outcome.text)
+                                }
+                                is QrChunking.Outcome.Progress -> {
+                                    haptics.tap()
+                                    scanProgress = context.getString(
+                                        R.string.qr_scan_progress_format,
+                                        outcome.have,
+                                        outcome.total
+                                    )
+                                }
+                                is QrChunking.Outcome.Restarted -> {
+                                    // Camera pointed at a second key mid-scan.
+                                    // Splicing halves of two certificates
+                                    // together would look like success, so the
+                                    // collector discards and says so.
+                                    haptics.tap()
+                                    scanProgress =
+                                        context.getString(R.string.qr_scan_restarted)
+                                }
+                                is QrChunking.Outcome.Duplicate -> Unit
+                                is QrChunking.Outcome.Malformed -> Unit
+                            }
                         }
                     }
                 )
@@ -143,7 +195,7 @@ fun QRScannerScreen(
                     contentAlignment = Alignment.BottomCenter
                 ) {
                     Text(
-stringResource(R.string.qr_scanner_hint),
+                        scanProgress ?: stringResource(R.string.qr_scanner_hint),
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White
                     )
@@ -176,8 +228,22 @@ private fun CameraPreview(
                     it.surfaceProvider = previewView.surfaceProvider
                 }
 
+                // 4.1.0 Phase 12b — setTargetResolution has been deprecated
+                // since CameraX 1.3. FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                // is what it did: take the nearest size at or above 720p, and
+                // only drop below if the camera offers nothing that qualifies.
+                // Behaviour is unchanged; it is now stated rather than implied.
                 val imageAnalysis = ImageAnalysis.Builder()
-                    .setTargetResolution(Size(1280, 720))
+                    .setResolutionSelector(
+                        ResolutionSelector.Builder()
+                            .setResolutionStrategy(
+                                ResolutionStrategy(
+                                    Size(1280, 720),
+                                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                                )
+                            )
+                            .build()
+                    )
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
 

@@ -40,6 +40,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -91,9 +93,15 @@ fun SignAsSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
     ) {
+        // 4.1.0 Phase 12b — insets only, deliberately NO verticalScroll.
+        // This sheet contains a LazyColumn, and a lazy list inside a
+        // scrollable parent is measured with an infinite height
+        // constraint, which throws. The list does its own scrolling.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
             Text(

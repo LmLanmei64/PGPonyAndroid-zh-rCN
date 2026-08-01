@@ -453,7 +453,7 @@ pgpony.norsehor.se</string>
     <string name="keyring_title">Schlüsselbund</string>
     <string name="keyring_add_key_cd">Schlüssel hinzufügen</string>
     <string name="keyring_section_my_keys">Meine Schlüssel</string>
-    <string name="keyring_section_contact_keys">Kontaktschlüssel</string>
+    <string name="keyring_section_contacts">Kontakte</string>
 
     <!-- ── Delete confirmation ──────────────────────────────────────── -->
     <string name="keyring_delete_dialog_title">Schlüssel löschen?</string>
@@ -1685,4 +1685,34 @@ Optional kannst du die App hinter deinem Fingerabdruck oder Gesicht sperren, um 
         <item quantity="one">%1$d Empfänger</item>
         <item quantity="other">%1$d Empfänger</item>
     </plurals>
+
+    <!-- ── 4.1.0 Phase 12b translation pass ──────────────────────────
+         Machine-translated in one sweep at the end of 4.1.0, covering
+         Phase 8 (bundle file list), Phase 9 (multi-part QR), Phase 11
+         (USB connection vocabulary) and Phase 12b (keyring sections).
+         Positional specifiers are preserved; argument order may differ
+         from English where the language requires it. -->
+    <string name="output_truncated_notice">Nur Vorschau: die ersten %1$d von %2$d Zeichen. Kopieren übernimmt den gesamten Text; öffne den vollständigen Text, um einen Teil auszuwählen.</string>
+    <string name="output_open_full">Vollständigen Text öffnen</string>
+    <string name="provider_cardop_done_remove_card">Fertig. Du kannst deinen Schlüssel abziehen.</string>
+    <string name="encdec_progress_format">%1$s von %2$s</string>
+    <string name="encdec_error_file_too_large_for_card">Diese Datei ist zu groß für einen Hardware-Schlüssel. Nutze für Dateien dieser Größe einen Software-Schlüssel.</string>
+    <string name="encdec_error_file_too_large">Diese Datei ist zu groß für den verfügbaren Speicher. Schließe andere Apps und versuche es erneut.</string>
+    <string name="keyring_section_public_keys">Öffentliche Schlüssel</string>
+    <string name="qr_too_large">Dieser Schlüssel ist zu groß für einen QR-Code. Nutze stattdessen Teilen oder Kopieren.</string>
+    <string name="qr_part_of_format">Teil %1$d von %2$d</string>
+    <string name="qr_multipart_hint">Scanne jeden Teil mit PGPony. Andere QR-Reader können einen geteilten Schlüssel nicht zusammensetzen.</string>
+    <string name="qr_part_previous">Vorheriger Teil</string>
+    <string name="qr_part_next">Nächster Teil</string>
+    <string name="qr_scan_progress_format">%1$d von %2$d Teilen gescannt. Weiter so.</string>
+    <string name="qr_scan_restarted">Das ist ein anderer Schlüssel. Es geht von vorn los.</string>
+    <string name="share_target_decrypt_passphrase_required">Dieser Schlüssel ist mit einer Passphrase geschützt. Gib sie ein und versuche es erneut.</string>
+    <string name="card_scan_usb_permission">Warte auf die Berechtigung für den angeschlossenen Sicherheitsschlüssel.</string>
+    <string name="card_usb_working">Arbeite mit deinem Sicherheitsschlüssel…</string>
+    <string name="card_usb_no_reader">Es ist kein Sicherheitsschlüssel angeschlossen.</string>
+    <string name="card_scan_usb_reading">Lese deinen Sicherheitsschlüssel über USB…</string>
+    <string name="decrypt_card_message_note_hidden">Diese Nachricht verbirgt ihren Empfänger. Gib deine PIN ein und tippe auf \"%1$s\", um es mit deinem Hardware-Schlüssel zu versuchen.</string>
+    <string name="decrypt_hidden_recipient_no_software_key">Keiner deiner Software-Schlüssel konnte diese Nachricht öffnen. Sie verbirgt ihren Empfänger, es gab also keine Schlüssel-ID zum Abgleichen.</string>
+    <string name="encrypt_bundle_show_all_format">Alle %1$d Dateien anzeigen</string>
+    <string name="encrypt_bundle_show_fewer">Weniger anzeigen</string>
 </resources>

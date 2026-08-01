@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,7 +29,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.hardware.usb.UsbManager
+import androidx.compose.material.icons.filled.Usb
 import com.pgpony.android.MainActivity
+import com.pgpony.android.crypto.card.CardLinkAdvice
+import com.pgpony.android.crypto.card.CardLinkKind
+import com.pgpony.android.usb.UsbCardConnectionManager
+import com.pgpony.android.usb.UsbCardOperations
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
 import com.pgpony.android.crypto.card.CardInfo
@@ -60,8 +68,22 @@ fun CardScanScreen(
     val repo = remember { PGPonyApp.instance.keyRepository }
     val scope = rememberCoroutineScope()
 
-    val nfcAvailable = remember { activity?.isNfcAvailable() == true }
-    val nfcEnabled = remember { activity?.isNfcEnabled() == true }
+    // 4.1.0 USB Phase 2 — this screen used to read two booleans once and
+    // assume NFC was the only way in. USB availability CHANGES while the
+    // screen is open, because someone can plug a key in, so it is recomputed
+    // rather than remembered forever.
+    var usbTick by remember { mutableStateOf(0) }
+    val usbCards = remember { UsbCardConnectionManager(context) { usbTick++ } }
+    DisposableEffect(usbCards) {
+        usbCards.register()
+        onDispose { usbCards.unregister() }
+    }
+
+    val nfcAvailable = activity?.isNfcAvailable() == true
+    val nfcEnabled = activity?.isNfcEnabled() == true
+    val link = remember(usbTick, nfcAvailable, nfcEnabled) {
+        usbCards.availability(nfcAvailable, nfcEnabled)
+    }
 
     val scanState = remember { mutableStateOf<ScanState>(ScanState.Scanning) }
     var importing by remember { mutableStateOf(false) }
@@ -86,10 +108,41 @@ fun CardScanScreen(
         }
     }
 
-    // Engage reader mode for the lifetime of this screen.
-    DisposableEffect(activity, nfcAvailable, nfcEnabled) {
-        if (activity != null && nfcAvailable && nfcEnabled) {
-            armScan()
+    // 4.1.0 USB Phase 2 — read the card over the wire. No awaitRemoval twin:
+    // that exists on NFC because a tag left in the field falls through to the
+    // platform dispatcher and launches Yubico Authenticator (issue #7), and
+    // unplugging a USB key cannot do that.
+    fun scanOverUsb() {
+        val manager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
+        val device = usbCards.firstReader() ?: return
+        scanState.value = ScanState.Scanning
+        UsbCardOperations.run(manager, device, { it.readCardInfo() }) { result ->
+            result
+                .onSuccess { info -> scanState.value = ScanState.Found(info) }
+                .onFailure { e ->
+                    scanState.value = ScanState.Failed(e.message ?: "Could not read card")
+                }
+        }
+    }
+
+    // A reader is plugged in but not yet permitted. Asking immediately is the
+    // right call here: the user physically attached a key and then opened the
+    // card screen, so the dialog is the step they are already expecting.
+    LaunchedEffect(link.advice) {
+        if (link.advice == CardLinkAdvice.AttachedReaderNeedsPermission) {
+            usbCards.firstReader()?.let { device ->
+                usbCards.requestPermission(device) { usbTick++ }
+            }
+        }
+    }
+
+    // Engage whichever transport is preferred, and re-engage if that changes
+    // while the screen is open (a key plugged in mid-scan switches to USB).
+    DisposableEffect(activity, link.preferred) {
+        when (link.preferred) {
+            CardLinkKind.USB -> scanOverUsb()
+            CardLinkKind.NFC -> if (activity != null) armScan()
+            null -> Unit
         }
         onDispose { activity?.stopCardScan() }
     }
@@ -101,7 +154,7 @@ fun CardScanScreen(
                 title = { Text(stringResource(R.string.card_scan_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.card_scan_back))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.card_scan_back))
                     }
                 }
             )
@@ -115,11 +168,24 @@ fun CardScanScreen(
             contentAlignment = Alignment.Center
         ) {
             when {
-                activity == null || !nfcAvailable ->
-                    CenteredMessage(Icons.Filled.Nfc, stringResource(R.string.card_scan_nfc_unavailable))
+                // Permission outranks the unavailable message: something IS
+                // plugged in, so telling the user there is no way to read a
+                // card would be wrong as well as unhelpful.
+                link.advice == CardLinkAdvice.AttachedReaderNeedsPermission ->
+                    CenteredMessage(Icons.Filled.Usb, stringResource(R.string.card_scan_usb_permission))
 
-                !nfcEnabled ->
-                    CenteredMessage(Icons.Filled.Nfc, stringResource(R.string.card_scan_nfc_disabled))
+                // One branch, because "NFC off" only matters when there is
+                // nothing else usable. Kept separate before, it fired even
+                // with a working wired reader attached.
+                !link.anyUsable ->
+                    CenteredMessage(
+                        Icons.Filled.Nfc,
+                        stringResource(
+                            if (link.advice == CardLinkAdvice.EnableNfc)
+                                R.string.card_scan_nfc_disabled
+                            else R.string.card_scan_nfc_unavailable
+                        )
+                    )
 
                 else -> when (val s = scanState.value) {
                     is ScanState.Scanning -> ScanningPrompt()

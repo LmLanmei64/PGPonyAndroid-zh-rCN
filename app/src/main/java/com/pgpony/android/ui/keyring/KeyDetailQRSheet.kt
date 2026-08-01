@@ -40,6 +40,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -53,25 +57,37 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.pgpony.android.R
 import com.pgpony.android.data.PGPKeyEntity
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KeyDetailQRSheet(
     key: PGPKeyEntity,
-    qrBitmap: Bitmap?,
+    qrFrames: List<Bitmap>,
+    qrIndex: Int,
+    onPrevFrame: () -> Unit,
+    onNextFrame: () -> Unit,
     onCopyArmored: () -> Unit,
     onShare: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val qrBitmap: Bitmap? = qrFrames.getOrNull(qrIndex)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
     ) {
+        // 4.1.0 Phase 12b — the full triad. No lazy list in here, so
+        // the Column can scroll, which is what keeps the sheet usable
+        // at a large font scale rather than clipping its last row.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -108,6 +124,40 @@ fun KeyDetailQRSheet(
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color.White)
                         .padding(12.dp)
+                )
+            }
+
+            // 4.1.0 Phase 9 (issue #3) — a post-quantum key does not fit in
+            // one symbol, so it is split. Nothing about this row appears for
+            // a key that fits, which is every classic key.
+            if (qrFrames.size > 1) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(onClick = onPrevFrame) {
+                        Text(stringResource(R.string.qr_part_previous))
+                    }
+                    Text(
+                        text = stringResource(
+                            R.string.qr_part_of_format,
+                            qrIndex + 1,
+                            qrFrames.size
+                        ),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    OutlinedButton(onClick = onNextFrame) {
+                        Text(stringResource(R.string.qr_part_next))
+                    }
+                }
+                Text(
+                    text = stringResource(R.string.qr_multipart_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 

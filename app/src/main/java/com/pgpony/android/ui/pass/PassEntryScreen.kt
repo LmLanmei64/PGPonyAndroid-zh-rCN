@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -74,7 +75,9 @@ fun PassEntryScreen(
     val ref = remember(storeId) { PassStorePrefs.load(prefs).firstOrNull { it.id == storeId } }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    val nfcReady = remember { activity != null && activity.isNfcAvailable() && activity.isNfcEnabled() }
+    // 4.1.0 USB Phase 2 — a Password Store entry behind a card key must not
+    // be refused because NFC is off when a reader is plugged in.
+    val cardReady = activity != null && activity.cardLink().anyUsable
 
     var state by remember { mutableStateOf<EntryState>(EntryState.Locked) }
     var passphrase by remember { mutableStateOf("") }
@@ -118,7 +121,7 @@ fun PassEntryScreen(
             leafBytes = b
             when (val route = PassDecryptCoordinator.route(repo, b)) {
                 is PassRoute.Software -> { rings = route.rings; attemptSoftware(null) }
-                is PassRoute.Card -> state = if (nfcReady) EntryState.CardNeeded else EntryState.Failed(nfcUnavailable)
+                is PassRoute.Card -> state = if (cardReady) EntryState.CardNeeded else EntryState.Failed(nfcUnavailable)
                 is PassRoute.NoMatch -> state = EntryState.Failed(noKey)
             }
         }
@@ -171,7 +174,7 @@ fun PassEntryScreen(
                 title = { Text(entryName) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.pass_back))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.pass_back))
                     }
                 }
             )

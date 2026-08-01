@@ -453,7 +453,7 @@ pgpony.norsehor.se</string>
     <string name="keyring_title">Trousseau</string>
     <string name="keyring_add_key_cd">Ajouter une clé</string>
     <string name="keyring_section_my_keys">Mes clés</string>
-    <string name="keyring_section_contact_keys">Clés de contacts</string>
+    <string name="keyring_section_contacts">Contacts</string>
 
     <!-- ── Delete confirmation ──────────────────────────────────────── -->
     <string name="keyring_delete_dialog_title">Supprimer la clé ?</string>
@@ -1685,4 +1685,34 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
         <item quantity="one">%1$d destinataire</item>
         <item quantity="other">%1$d destinataires</item>
     </plurals>
+
+    <!-- ── 4.1.0 Phase 12b translation pass ──────────────────────────
+         Machine-translated in one sweep at the end of 4.1.0, covering
+         Phase 8 (bundle file list), Phase 9 (multi-part QR), Phase 11
+         (USB connection vocabulary) and Phase 12b (keyring sections).
+         Positional specifiers are preserved; argument order may differ
+         from English where the language requires it. -->
+    <string name="output_truncated_notice">Aperçu seulement : les %1$d premiers caractères sur %2$d. Copier prend tout le texte ; ouvrez le texte complet pour en sélectionner une partie.</string>
+    <string name="output_open_full">Ouvrir le texte complet</string>
+    <string name="provider_cardop_done_remove_card">Terminé. Vous pouvez retirer votre clé.</string>
+    <string name="encdec_progress_format">%1$s sur %2$s</string>
+    <string name="encdec_error_file_too_large_for_card">Ce fichier est trop volumineux pour une clé matérielle. Utilisez une clé logicielle pour des fichiers de cette taille.</string>
+    <string name="encdec_error_file_too_large">Ce fichier est trop volumineux pour la mémoire disponible. Fermez d\'autres applications et réessayez.</string>
+    <string name="keyring_section_public_keys">Clés publiques</string>
+    <string name="qr_too_large">Cette clé est trop grande pour un code QR. Utilisez plutôt Partager ou Copier.</string>
+    <string name="qr_part_of_format">Partie %1$d sur %2$d</string>
+    <string name="qr_multipart_hint">Scannez chaque partie avec PGPony. Les autres lecteurs de QR ne peuvent pas reconstituer une clé divisée.</string>
+    <string name="qr_part_previous">Partie précédente</string>
+    <string name="qr_part_next">Partie suivante</string>
+    <string name="qr_scan_progress_format">%1$d partie(s) scannée(s) sur %2$d. Continuez.</string>
+    <string name="qr_scan_restarted">C\'est une clé différente. On recommence.</string>
+    <string name="share_target_decrypt_passphrase_required">Cette clé est protégée par une phrase secrète. Saisissez-la et réessayez.</string>
+    <string name="card_scan_usb_permission">En attente de l\'autorisation d\'utiliser la clé de sécurité que vous avez branchée.</string>
+    <string name="card_usb_working">Opération en cours avec votre clé de sécurité…</string>
+    <string name="card_usb_no_reader">Aucune clé de sécurité n\'est connectée.</string>
+    <string name="card_scan_usb_reading">Lecture de votre clé de sécurité via USB…</string>
+    <string name="decrypt_card_message_note_hidden">Ce message masque son destinataire. Saisissez votre PIN et touchez « %1$s » pour essayer votre clé matérielle.</string>
+    <string name="decrypt_hidden_recipient_no_software_key">Aucune de vos clés logicielles n\'a ouvert ce message. Il masque son destinataire, il n\'y avait donc aucun identifiant de clé à comparer.</string>
+    <string name="encrypt_bundle_show_all_format">Afficher les %1$d fichiers</string>
+    <string name="encrypt_bundle_show_fewer">Afficher moins</string>
 </resources>

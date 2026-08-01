@@ -28,6 +28,21 @@
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!--
+      4.1.0 USB Phase 1 — wired OpenPGP cards over USB/OTG.
+      required="false" so the app still installs on devices with no USB host
+      support; the USB affordances are simply absent there, the same posture
+      as NFC above.
+
+      No ACTION_USB_DEVICE_ATTACHED filter on purpose. Launching PGPony when a
+      key is plugged in would put another PGPony entry in front of the user,
+      and issue #6 exists because there are already too many. Attached readers
+      are detected while the app is open instead.
+
+      No permission element either: USB device access is granted per-device at
+      runtime through UsbManager, not declared here.
+    -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <!--
       4.0.0 Phase 6 — Orbot detection. Android 11+ package visibility
       requires declaring a package before queryable. We only READ whether
       Orbot is installed (to offer the one-tap SOCKS default); no
@@ -55,28 +70,30 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Receive text for encryption -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-            <!-- 3.1.0 Phase 1 Fix2 — receive PGP-typed FILE shares.
-                 MainActivity's only SEND filter was text/plain, so a
-                 .sig/.gpg/.asc shared under a PGP MIME (or the
-                 octet-stream many providers use) could only reach the
-                 Quick Action, which has no verify route. With these,
-                 the share sheet also offers the main app, whose
-                 handleSend → handleFileUri routing (Phase 1 + Fix1)
-                 sends detached signatures to the Verify-a-file sheet. -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/pgp-encrypted" />
-                <data android:mimeType="application/pgp-keys" />
-                <data android:mimeType="application/pgp-signature" />
-                <data android:mimeType="application/octet-stream" />
-            </intent-filter>
+            <!--
+              4.1.0 Phase 7b — the SEND text/plain and typed-PGP SEND
+              filters, and the whole VIEW set bar .pgpony, are GONE from
+              here. ShareTargetActivity registers every one of them, so
+              declaring them twice put two PGPony entries in front of the
+              user for a single share, which is what the A15 comment below
+              anticipated and what reporters have been picking the wrong
+              one of.
+
+              The share target reaches the main app by EXPLICIT intent
+              where it needs to — a forwarded public key arrives as
+              ACTION_SEND text/plain, a detached signature as
+              ACTION_VERIFY_DETACHED — and an explicit intent needs no
+              filter, so nothing above depended on these being declared.
+            -->
+            <!-- 4.1.0 Phase 7b — this filter existed (3.1.0 Phase 1 Fix2)
+                 because the Quick Action had no verify route, so a shared
+                 detached signature needed the main app to be offered as a
+                 second chooser entry. Fix3 in the same release removed the
+                 reason: ShareTargetActivity now recognises a detached
+                 signature and forwards it to MainActivity's Verify-a-file
+                 sheet itself. The second entry has been redundant ever
+                 since, and the pgp-signature type moved up to the share
+                 target's own typed filter. -->
             <!-- 3.1.0 Phase 6 (J5) — share two or more files of ANY type
                  into PGPony to encrypt them together as one Bundle
                  (mirrors iOS PGPonyAction's raised activation cap). -->
@@ -85,59 +102,47 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
-            <!-- Receive .asc/.pgp/.gpg files for decrypt/import -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/pgp-encrypted" />
-                <data android:mimeType="application/pgp-keys" />
-                <!-- 3.1.0 Phase 1 Fix1 — .asc/.sig are commonly typed
-                     application/pgp-signature by providers; without this
-                     they can't be tap-opened, only shared. -->
-                <data android:mimeType="application/pgp-signature" />
-                <!-- 3.1.0 Phase 4 (J2) — encrypted .eml from desktop
-                     clients opens into the decrypt path. -->
-                <data android:mimeType="message/rfc822" />
-            </intent-filter>
+            <!-- 4.1.0 Phase 7b — the PGP-MIME VIEW filter is gone; it was
+                 identical to ShareTargetActivity's, which is why tapping a
+                 .asc offered a choice of two PGPonys. -->
+            <!--
+              4.1.0 Phase 7b — what is left of MainActivity's file:// VIEW
+              filter: .pgpony and nothing else.
+
+              A .pgpony is an encrypted keyring backup and opens to Restore
+              (IntentHandler → IntentAction.RestoreBackup → BackupScreen).
+              That flow exists only in the main app; ShareTargetActivity has
+              no restore phase and has never registered .pgpony, so this was
+              not a duplicate and must not be swept up with the ones that
+              were. The .asc/.pgp/.gpg/.sig/.eml patterns WERE duplicates
+              and have gone.
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="file" />
                 <data android:host="*" />
-                <data android:pathPattern=".*\\.asc" />
-                <data android:pathPattern=".*\\.pgp" />
-                <data android:pathPattern=".*\\.gpg" />
-                <!-- 3.1.0 Phase 1 (C1) — detached signatures open into
-                     the Verify-a-file sheet -->
-                <data android:pathPattern=".*\\.sig" />
-                <!-- 3.1.0 Phase 4 (J2) -->
-                <data android:pathPattern=".*\\.eml" />
                 <!-- 4.0.0 Phase 3 — encrypted keyring backup opens to Restore -->
                 <data android:pathPattern=".*\\.pgpony" />
             </intent-filter>
+            <!--
+              4.1.0 Phase 7b — same trim on the content:// side, and the
+              one that matters most in practice: DocumentsUI, Drive and
+              OneDrive all hand over content:// URIs, so this is the filter
+              a tap actually goes through on a modern device.
+
+              Both mimeTypes are kept because a .pgpony can arrive typed
+              either way, and the path pattern is what keeps PGPony out of
+              the chooser for every text file on the device — see the 4.0.4
+              note that used to live here, now on ShareTargetActivity's copy
+              of this filter, which retains the full pattern list.
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
                 <data android:mimeType="application/octet-stream" />
-                <!-- 4.0.4 (origin: Meino) — armored keys and signatures are
-                     plain text, and plenty of providers type them exactly
-                     that way, which left tap-to-open with no matching
-                     filter at all. Deliberately kept inside THIS filter
-                     rather than given its own: the path patterns below
-                     apply to every mimeType listed here, so PGPony offers
-                     itself for a text/plain .asc but NOT for every .txt on
-                     the device. A bare text/plain VIEW filter would put us
-                     in the chooser for every text file the user opens. -->
                 <data android:mimeType="text/plain" />
-                <data android:pathPattern=".*\\.asc" />
-                <data android:pathPattern=".*\\.pgp" />
-                <data android:pathPattern=".*\\.gpg" />
-                <!-- 3.1.0 Phase 1 (C1) — detached signatures open into
-                     the Verify-a-file sheet -->
-                <data android:pathPattern=".*\\.sig" />
-                <!-- 3.1.0 Phase 4 (J2) -->
-                <data android:pathPattern=".*\\.eml" />
                 <!-- 4.0.0 Phase 3 — encrypted keyring backup opens to Restore -->
                 <data android:pathPattern=".*\\.pgpony" />
             </intent-filter>
@@ -169,15 +174,24 @@
 
           About the duplicate intent filters with MainActivity:
 
-            The MainActivity declaration above intentionally keeps its
-            pre-A15 SEND / VIEW filters verbatim per the additive-edit
-            convention. Android will therefore present a chooser the
-            first time the user shares text or a PGP file into PGPony
-            ("Use PGPony — Quick Action" vs "Use PGPony"). After the
-            user picks once (with the "Always" checkbox), the chooser
-            does not reappear. A future cleanup phase may remove the
-            duplicate filters from MainActivity once we are confident
-            no existing install relies on them.
+            DONE, 4.1.0 Phase 7b. They are removed. MainActivity now
+            declares only what this activity does NOT: MAIN/LAUNCHER,
+            SEND_MULTIPLE (the bundle entry point, which was never
+            registered here) and VIEW for .pgpony (keyring restore, which
+            has no share-target equivalent). Everything a share or a tap
+            can offer twice, it no longer does.
+
+            The reason the note above hedged — "once we are confident no
+            existing install relies on them" — resolved on its own: the
+            main app is reached by EXPLICIT intent from here for the two
+            cases that need it, key forwarding and detached-signature
+            verification, and an explicit intent does not consult filters.
+
+            One consequence to expect on upgrade: a user who ticked
+            "Always" against the main-app entry loses that association,
+            because the filter it was recorded against is gone. The next
+            share picks the Quick Action with no chooser rather than
+            failing, which is the intended destination anyway.
 
           On the share targets we register:
 
@@ -218,6 +232,17 @@
                 <data android:mimeType="application/pgp-encrypted" />
                 <data android:mimeType="application/pgp-keys" />
                 <data android:mimeType="application/octet-stream" />
+                <!-- 4.1.0 Phase 7b — these two came off MainActivity's
+                     typed SEND filter when the duplicates were removed.
+                     Both would still have matched the SEND */* filter
+                     below, but a wildcard match and a typed match differ
+                     in priority and in the label the chooser shows, so
+                     they are declared rather than left to fall through.
+                     pgp-signature in particular is how providers type a
+                     shared .sig, and the share target forwards those to
+                     MainActivity's Verify-a-file sheet. -->
+                <data android:mimeType="application/pgp-signature" />
+                <data android:mimeType="message/rfc822" />
             </intent-filter>
             <!-- Phase A2 — accept ANY file type shared for encryption (PDF,
                  image, zip, etc.). Additive: the specific filters above keep

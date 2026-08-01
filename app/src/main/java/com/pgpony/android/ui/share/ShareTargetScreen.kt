@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -64,6 +65,11 @@ import java.io.File
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.crypto.card.CardDecryptService
 import com.pgpony.android.crypto.card.OpenPgpCardException
+import com.pgpony.android.saf.findDocumentCreatorHost
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ── Root Composable ────────────────────────────────────────────────────
 
@@ -75,6 +81,14 @@ fun ShareTargetScreen(
 ) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
+
+    // 4.1.0 Phase 7b — Save outcome, hoisted here because this is where the
+    // result payload and the Context both are. Cleared whenever the phase
+    // changes so a note from an earlier result cannot follow the user into
+    // the next one.
+    val saveScope = rememberCoroutineScope()
+    var saveNote by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.phase) { saveNote = null }
 
     // HW Phase 3 — strings captured here; the NFC op lambda runs on a
     // binder thread and can't call stringResource.
@@ -173,7 +187,9 @@ fun ShareTargetScreen(
                                         session, pubRing, pin.toByteArray(Charsets.UTF_8), bytes
                                     )
                                 }) { result ->
-                                    cardActivity.stopCardScan()
+                                    // 4.0.5 — card is still in the field; see
+                                    // MainActivity.endCardOperation and #7.
+                                    cardActivity.endCardOperation()
                                     result
                                         .onSuccess { vm.onCardDecryptSuccess(String(it.data, Charsets.UTF_8)) }
                                         .onFailure { e -> vm.onCardDecryptFailure(e.message ?: cardDecFailedMsg) }
@@ -190,12 +206,31 @@ fun ShareTargetScreen(
                 ShareTargetPhase.EncryptResult -> ShareEncryptResultContent(
                     state = state,
                     onCopy = { copyToClipboard(context, state.outputText, encrypt = true) },
+                    onSave = {
+                        saveResult(
+                            context, saveScope,
+                            state.outputText.toByteArray(Charsets.UTF_8),
+                            null, "encrypted.asc",
+                        ) { saveNote = it }
+                    },
                     onShare = { shareText(context, state.outputText, encrypt = true) },
                     onDone = onDismiss,
+                    saveNote = saveNote,
                 )
 
                 ShareTargetPhase.EncryptFileResult -> ShareEncryptFileResultContent(
                     state = state,
+                    // Issue #13, exactly: file shared in, encrypted, and
+                    // previously no way to put it anywhere.
+                    onSave = {
+                        saveResult(
+                            context, saveScope,
+                            state.encryptedFileBytes,
+                            state.encryptedFile,
+                            state.encryptedFileName ?: "encrypted.gpg",
+                        ) { saveNote = it }
+                    },
+                    saveNote = saveNote,
                     onShare = {
                         shareFile(
                             context,
@@ -211,12 +246,31 @@ fun ShareTargetScreen(
                 ShareTargetPhase.DecryptResult -> ShareDecryptResultContent(
                     state = state,
                     onCopy = { copyToClipboard(context, state.outputText, encrypt = false) },
+                    onSave = {
+                        saveResult(
+                            context, saveScope,
+                            state.outputText.toByteArray(Charsets.UTF_8),
+                            null, "message.txt",
+                        ) { saveNote = it }
+                    },
                     onShare = { shareText(context, state.outputText, encrypt = false) },
                     onDone = onDismiss,
+                    saveNote = saveNote,
                 )
 
                 ShareTargetPhase.DecryptFileResult -> ShareDecryptFileResultContent(
                     state = state,
+                    // Not named in #13, but the identical gap: a decrypted
+                    // file could only be shared back out, never kept.
+                    onSave = {
+                        saveResult(
+                            context, saveScope,
+                            state.decryptedFileBytes,
+                            state.decryptedFile,
+                            state.decryptedFileName ?: "decrypted_file",
+                        ) { saveNote = it }
+                    },
+                    saveNote = saveNote,
                     onShare = {
                         val fname = state.decryptedFileName ?: "decrypted_file"
                         shareFile(
@@ -596,8 +650,10 @@ private fun ShareProcessingContent() {
 private fun ShareEncryptResultContent(
     state: ShareTargetUiState,
     onCopy: () -> Unit,
+    onSave: () -> Unit,
     onShare: () -> Unit,
     onDone: () -> Unit,
+    saveNote: String?,
 ) {
     Text(
         text = stringResource(
@@ -608,7 +664,13 @@ private fun ShareEncryptResultContent(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     ShareCipherPreview(text = state.outputText)
-    ShareResultActionRow(onCopy = onCopy, onShare = onShare, onDone = onDone)
+    ShareResultActionRow(
+        onCopy = onCopy,
+        onSave = onSave,
+        onShare = onShare,
+        onDone = onDone,
+        saveNote = saveNote,
+    )
 }
 
 // ── Encrypt FILE result (Phase A2) ─────────────────────────────────────
@@ -616,6 +678,8 @@ private fun ShareEncryptResultContent(
 @Composable
 private fun ShareEncryptFileResultContent(
     state: ShareTargetUiState,
+    onSave: () -> Unit,
+    saveNote: String?,
     onShare: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -661,14 +725,24 @@ private fun ShareEncryptFileResultContent(
             }
         }
     }
+    // 4.1.0 Phase 7b (issue #13) — Save first, then Share, then Done on its
+    // own row. Done used to sit where Save is now, which is part of why
+    // "done button does nothing" was the way the report was phrased: the
+    // primary-looking action closed the screen and lost the file.
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedButton(onClick = onDone, modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.share_target_result_done))
+        Button(onClick = onSave, modifier = Modifier.weight(1f)) {
+            Icon(
+                imageVector = Icons.Filled.SaveAlt,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(stringResource(R.string.common_button_save))
         }
-        Button(onClick = onShare, modifier = Modifier.weight(1f)) {
+        OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) {
             Icon(
                 imageVector = Icons.Filled.Share,
                 contentDescription = null,
@@ -678,6 +752,10 @@ private fun ShareEncryptFileResultContent(
             Text(stringResource(R.string.share_target_encrypt_file_result_share_button))
         }
     }
+    ShareSaveNote(saveNote)
+    TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(R.string.share_target_result_done))
+    }
 }
 
 // ── Decrypt result ─────────────────────────────────────────────────────
@@ -685,6 +763,8 @@ private fun ShareEncryptFileResultContent(
 @Composable
 private fun ShareDecryptFileResultContent(
     state: ShareTargetUiState,
+    onSave: () -> Unit,
+    saveNote: String?,
     onShare: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -737,14 +817,23 @@ private fun ShareDecryptFileResultContent(
             }
         }
     }
+    // 4.1.0 Phase 7b — same shape as the encrypt side. A decrypted file
+    // that can only be shared back out to another app is not much use to
+    // someone who wanted the file.
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedButton(onClick = onDone, modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.share_target_result_done))
+        Button(onClick = onSave, modifier = Modifier.weight(1f)) {
+            Icon(
+                imageVector = Icons.Filled.SaveAlt,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(stringResource(R.string.common_button_save))
         }
-        Button(onClick = onShare, modifier = Modifier.weight(1f)) {
+        OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) {
             Icon(
                 imageVector = Icons.Filled.Share,
                 contentDescription = null,
@@ -754,14 +843,20 @@ private fun ShareDecryptFileResultContent(
             Text(stringResource(R.string.share_target_decrypt_file_result_share_button))
         }
     }
+    ShareSaveNote(saveNote)
+    TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(R.string.share_target_result_done))
+    }
 }
 
 @Composable
 private fun ShareDecryptResultContent(
     state: ShareTargetUiState,
     onCopy: () -> Unit,
+    onSave: () -> Unit,
     onShare: () -> Unit,
     onDone: () -> Unit,
+    saveNote: String?,
 ) {
     val signerLabel = when {
         state.signatureVerified && state.signerName != null ->
@@ -786,7 +881,13 @@ private fun ShareDecryptResultContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    ShareResultActionRow(onCopy = onCopy, onShare = onShare, onDone = onDone)
+    ShareResultActionRow(
+        onCopy = onCopy,
+        onSave = onSave,
+        onShare = onShare,
+        onDone = onDone,
+        saveNote = saveNote,
+    )
 }
 
 @Composable
@@ -812,8 +913,10 @@ private fun ShareCipherPreview(text: String, monospace: Boolean = true) {
 @Composable
 private fun ShareResultActionRow(
     onCopy: () -> Unit,
+    onSave: () -> Unit,
     onShare: () -> Unit,
     onDone: () -> Unit,
+    saveNote: String?,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -831,6 +934,20 @@ private fun ShareResultActionRow(
             Spacer(Modifier.width(6.dp))
             Text(stringResource(R.string.share_target_result_copy))
         }
+        // 4.1.0 Phase 7b — Copy was the only way out of here for a text
+        // result, which is fine for a paragraph and useless for a key.
+        OutlinedButton(
+            onClick = onSave,
+            modifier = Modifier.weight(1f),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.SaveAlt,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(stringResource(R.string.common_button_save))
+        }
         OutlinedButton(
             onClick = onShare,
             modifier = Modifier.weight(1f),
@@ -844,12 +961,28 @@ private fun ShareResultActionRow(
             Text(stringResource(R.string.share_target_result_share))
         }
     }
+    ShareSaveNote(saveNote)
     Button(
         onClick = onDone,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(stringResource(R.string.share_target_result_done))
     }
+}
+
+/**
+ * 4.1.0 Phase 7b — the outcome of a Save, in the same place the main app
+ * puts it. Absent until something has actually been saved or failed to
+ * save; a cancelled picker leaves it absent.
+ */
+@Composable
+private fun ShareSaveNote(note: String?) {
+    if (note == null) return
+    Text(
+        text = note,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 // ── Error ──────────────────────────────────────────────────────────────
@@ -938,6 +1071,77 @@ private fun shareFile(
         context.startActivity(chooser)
     } catch (e: Exception) {
         // Best-effort: a share failure here is non-fatal; the user can retry.
+    }
+}
+
+/**
+ * 4.1.0 Phase 7b (issue #13) — write a result to a destination the user
+ * picks.
+ *
+ * Reaches the host through findDocumentCreatorHost() rather than casting to
+ * an activity, which is the entire reason this works here at all: the same
+ * call compiles and runs identically in the main app and in the share
+ * target.
+ *
+ * mimeType is application/octet-stream and not a PGP type, deliberately.
+ * SAF's document creator appends the MIME's canonical extension to any name
+ * that does not already end in it, so application/pgp-encrypted turns the
+ * suggested "notes.pdf.gpg" into "notes.pdf.gpg.pgp" on disk. octet-stream
+ * has no canonical extension, so the name survives. Same reasoning, and the
+ * same fix, as FileEncryptionResultScreen's 3.1.0 Phase 2 Fix1.
+ *
+ * The write itself runs on Dispatchers.IO. The main app's equivalent copies
+ * a streamed ciphertext to the sink on the main thread; issue #10 is open
+ * about exactly that kind of main-thread work, so new code does not repeat
+ * it.
+ *
+ * A cancelled picker is silent — the user chose that, and reporting it as
+ * an outcome reads like a failure.
+ */
+private fun saveResult(
+    context: Context,
+    scope: CoroutineScope,
+    bytes: ByteArray?,
+    scratch: File?,
+    filename: String,
+    onNote: (String) -> Unit,
+) {
+    val host = context.findDocumentCreatorHost()
+    if (host == null) {
+        onNote(context.getString(R.string.result_save_failed_note))
+        return
+    }
+    host.startDocumentCreator("application/octet-stream", filename) { uri ->
+        if (uri == null) return@startDocumentCreator
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    val sink = context.contentResolver.openOutputStream(uri)
+                        ?: return@withContext false
+                    sink.use { out ->
+                        // Exactly one carrier is ever populated: buffered
+                        // bytes, or a scratch file from the streaming path.
+                        if (scratch != null) {
+                            scratch.inputStream().buffered().use { src ->
+                                src.copyTo(out)
+                            }
+                        } else {
+                            out.write(bytes ?: ByteArray(0))
+                        }
+                        out.flush()
+                    }
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            onNote(
+                context.getString(
+                    if (ok) R.string.result_save_saved_note
+                    else R.string.result_save_failed_note
+                )
+            )
+        }
     }
 }
 

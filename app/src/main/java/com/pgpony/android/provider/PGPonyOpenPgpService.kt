@@ -143,10 +143,51 @@ class PGPonyOpenPgpService : Service() {
         }
 
         override fun execute(data: Intent, input: ParcelFileDescriptor?, pipeId: Int): Intent {
+            // 4.1.0, issue #9 (yuyuchen2) — set the class loader BEFORE
+            // anything reads an extra.
+            //
+            // An Intent that arrives over Binder carries its extras as an
+            // unparsed blob and unparcels them lazily using the FRAMEWORK
+            // class loader. Every framework type resolves; no app type does.
+            // `org.openintents.openpgp.AutocryptPeerUpdate` is an app type on
+            // both sides of this boundary, so reading it in
+            // updateAutocryptPeer threw, ON OUR SIDE:
+            //
+            //   BadParcelableException: ClassNotFoundException when
+            //   unmarshalling: org.openintents.openpgp.AutocryptPeerUpdate
+            //
+            // That crossed back as a Binder exception, the client's OpenPgpApi
+            // wrapper caught it, and the user saw "OpenPgp error -1:
+            // ClassNotFoundException when unmarshalling…". Error -1 is
+            // CLIENT_SIDE_ERROR, so the report reads as the mail app's fault.
+            // It is not.
+            //
+            // This is NOT the 4.0.4 R8 bug wearing the same exception text.
+            // That one renamed our class names on the way OUT; keep rules
+            // fixed it. Here the name is intact and nothing told the Bundle
+            // where to look for it, so debug builds fail identically and no
+            // amount of keep rules helps. FairEmail is the client that
+            // surfaces it because it sends ACTION_UPDATE_AUTOCRYPT_PEER around
+            // a decrypt; OpenKeychain works because it sets this exact loader
+            // at the top of its own dispatcher.
+            data.setExtrasClassLoader(this@PGPonyOpenPgpService.classLoader)
+
             val pipeKey = "${Binder.getCallingUid()}/$pipeId"
             val output = outputPipes.remove(pipeKey)
             try {
                 return executeInternal(data, input, output, Binder.getCallingUid())
+            } catch (t: Throwable) {
+                // Nothing may cross the Binder as an exception. What escapes
+                // here is reported by the client as CLIENT_SIDE_ERROR (-1),
+                // which points the user at their mail app for a fault in
+                // ours — exactly how issue #9 was misfiled for a week. Report
+                // it as ours, with the text intact so a log still identifies
+                // it. OutOfMemoryError included: a 45 MB attachment must fail
+                // as an error, not as a dead binder call.
+                return errorResult(
+                    OpenPgpError.GENERIC_ERROR,
+                    t.message ?: t.javaClass.simpleName
+                )
             } finally {
                 // Phase 1 actions never write stream output; close both
                 // ends so the client's read sees EOF instead of a hang.
@@ -683,9 +724,17 @@ class PGPonyOpenPgpService : Service() {
     private fun updateAutocryptPeer(data: Intent): Intent {
         val peerId = data.getStringExtra(OpenPgpApi.EXTRA_AUTOCRYPT_PEER_ID)
             ?: return errorResult(OpenPgpError.GENERIC_ERROR, "Missing Autocrypt peer id")
-        @Suppress("DEPRECATION")
-        val update: AutocryptPeerUpdate? =
-            data.getParcelableExtra(OpenPgpApi.EXTRA_AUTOCRYPT_PEER_UPDATE)
+        // Best-effort, matching the gossip loop below. The class loader is
+        // set at the Binder boundary now, so this should not fail — but an
+        // Autocrypt peer hint is an optimisation for a later encrypt, and a
+        // malformed one must never be able to fail the decrypt the client is
+        // actually in the middle of.
+        val update: AutocryptPeerUpdate? = runCatching {
+            @Suppress("DEPRECATION")
+            data.getParcelableExtra<AutocryptPeerUpdate>(
+                OpenPgpApi.EXTRA_AUTOCRYPT_PEER_UPDATE
+            )
+        }.getOrNull()
         val now = System.currentTimeMillis()
         runBlocking {
             if (update != null) {
@@ -703,9 +752,15 @@ class PGPonyOpenPgpService : Service() {
             // Bundle. Best-effort: skip anything malformed.
             val gossip = data.getBundleExtra(OpenPgpApi.EXTRA_AUTOCRYPT_PEER_GOSSIP_UPDATES)
             if (gossip != null) {
+                // A nested Bundle carries its own class-loader reference, so
+                // the one set on the Intent at the Binder boundary does not
+                // necessarily reach in here. Say it again where it is read.
+                gossip.classLoader = AutocryptPeerUpdate::class.java.classLoader
                 for (addr in gossip.keySet()) {
-                    @Suppress("DEPRECATION")
-                    val gu = gossip.getParcelable<AutocryptPeerUpdate>(addr) ?: continue
+                    val gu = runCatching {
+                        @Suppress("DEPRECATION")
+                        gossip.getParcelable<AutocryptPeerUpdate>(addr)
+                    }.getOrNull() ?: continue
                     if (gu.hasKeyData()) {
                         autocryptStore.updateGossipKey(addr, gu.effectiveDate?.time ?: now, gu.keyData)
                     }
@@ -850,32 +905,77 @@ class PGPonyOpenPgpService : Service() {
 
         // ── Shape 3: encrypted message ──────────────────────────────────
         // Message-targeted key selection (R5): PKESK recipient ids first.
-        val recipientIds = try {
+        val allRecipientIds = try {
             crypto.recipientKeyIDs(inputBytes)
         } catch (e: Exception) {
             emptyList()
         }
+        // 4.1.0 - hidden recipients (`gpg -R`). A wildcard PKESK carries the
+        // all-zero key ID, which matches nothing on any ring. Narrowing by it
+        // left `targeted` empty and the card lookup below empty-handed too, so
+        // Thunderbird and FairEmail were told "None of your PGPony keys can
+        // decrypt this message" about a message PGPony could in fact open.
+        //
+        // Treated the same way the in-app path treats it: match on the
+        // ADDRESSED ids only, and when a wildcard is present offer every
+        // candidate rather than none - the crypto layer's resolvePkesk trials
+        // the software keys itself, and the card is the fallback after that.
+        val hiddenRecipient = allRecipientIds.contains(0L)
+        val recipientIds = allRecipientIds.filter { it != 0L }
         val softwarePairs = allEntities.filter { it.isKeyPair && !it.isCardBacked }
         val ringsByEntity = softwarePairs.mapNotNull { entity ->
             repo.loadSecretKeyRing(entity.fingerprint)?.let { entity to it }
         }
-        val targeted = if (recipientIds.isNotEmpty()) {
+        val addressed = if (recipientIds.isNotEmpty()) {
             ringsByEntity.filter { (_, ring) ->
                 recipientIds.any { ring.getSecretKey(it) != null }
             }
         } else {
             ringsByEntity
         }
+        // A hidden-recipient message with no addressed match: trial the
+        // software keys HERE, before the client's output pipe is committed to
+        // decryptStream. Doing it inside decryptStream would work too, but the
+        // pipe is single-use, so a failure there could not fall through to the
+        // card - and the card is exactly what a `gpg -R` message addressed to
+        // a hardware key needs. See PGPCryptoService.canOpenWithSecretKeys.
+        val targeted = if (addressed.isEmpty() && hiddenRecipient) {
+            ringsByEntity.filter { (entity, ring) ->
+                val kid = runCatching {
+                    java.lang.Long.parseUnsignedLong(entity.longKeyId, 16)
+                }.getOrDefault(0L)
+                val pp = data.getStringExtra(OpenPgpApi.EXTRA_PASSPHRASE)
+                    ?: ProviderPassphraseCache.get(kid)
+                crypto.canOpenWithSecretKeys(inputBytes, listOf(ring), pp)
+            }
+        } else {
+            addressed
+        }
         if (targeted.isEmpty()) {
             // P2c: a card-backed match routes through the NFC card flow —
             // the whole decrypt runs during the tap, result served on the
             // client's retry.
-            val cardEntity = if (recipientIds.isEmpty()) null else allEntities.firstOrNull { entity ->
+            // 4.1.0 - a hidden-recipient message names no card either, so
+            // fall back to the first paired card with an encryption-capable
+            // key. The tap is justified by then: control only reaches here
+            // when the software keys have already been trialled and lost, and
+            // a card key cannot be trialled without one (no local private
+            // material, which is the point of it).
+            // Addressed first, hidden second - a message can carry both an
+            // addressed PKESK we cannot match and a wildcard we can.
+            val addressedCard = if (recipientIds.isEmpty()) null else allEntities.firstOrNull { entity ->
                 entity.isCardBacked && runCatching {
                     repo.loadPublicKeyRing(entity.fingerprint)
                         ?.let { ring -> recipientIds.any { ring.getPublicKey(it) != null } }
                 }.getOrNull() == true
             }
+            val hiddenCard = if (!hiddenRecipient) null else allEntities.firstOrNull { entity ->
+                entity.isCardBacked && runCatching {
+                    repo.loadPublicKeyRing(entity.fingerprint)
+                        ?.let { ring -> ring.publicKeys.asSequence().any { it.isEncryptionKey } }
+                }.getOrNull() == true
+            }
+            val cardEntity = addressedCard ?: hiddenCard
             if (cardEntity != null) {
                 if (inputBytes.size > cardOpMaxBytes) return cardTooLargeError()
                 val action = if (metadataOnly) OpenPgpApi.ACTION_DECRYPT_METADATA

@@ -453,7 +453,7 @@ pgpony.norsehor.se</string>
     <string name="keyring_title">鍵束</string>
     <string name="keyring_add_key_cd">鍵を追加</string>
     <string name="keyring_section_my_keys">自分の鍵</string>
-    <string name="keyring_section_contact_keys">連絡先の鍵</string>
+    <string name="keyring_section_contacts">連絡先</string>
 
     <!-- ── Delete confirmation ──────────────────────────────────────── -->
     <string name="keyring_delete_dialog_title">鍵を削除しますか?</string>
@@ -1684,4 +1684,34 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <plurals name="pass_store_recipients">
         <item quantity="other">受信者 %1$d 人</item>
     </plurals>
+
+    <!-- ── 4.1.0 Phase 12b translation pass ──────────────────────────
+         Machine-translated in one sweep at the end of 4.1.0, covering
+         Phase 8 (bundle file list), Phase 9 (multi-part QR), Phase 11
+         (USB connection vocabulary) and Phase 12b (keyring sections).
+         Positional specifiers are preserved; argument order may differ
+         from English where the language requires it. -->
+    <string name="output_truncated_notice">プレビューのみ: 全 %2$d 文字のうち最初の %1$d 文字です。コピーすると全文がコピーされます。一部を選択するには全文を開いてください。</string>
+    <string name="output_open_full">全文を開く</string>
+    <string name="provider_cardop_done_remove_card">完了しました。キーを取り外せます。</string>
+    <string name="encdec_progress_format">%1$s / %2$s</string>
+    <string name="encdec_error_file_too_large_for_card">このファイルはハードウェアキーで扱うには大きすぎます。このサイズのファイルにはソフトウェア鍵をお使いください。</string>
+    <string name="encdec_error_file_too_large">このファイルは利用可能なメモリに対して大きすぎます。他のアプリを閉じてからもう一度お試しください。</string>
+    <string name="keyring_section_public_keys">公開鍵</string>
+    <string name="qr_too_large">この鍵は QR コードには大きすぎます。共有またはコピーをお使いください。</string>
+    <string name="qr_part_of_format">パート %1$d / %2$d</string>
+    <string name="qr_multipart_hint">すべてのパートを PGPony でスキャンしてください。他の QR リーダーは分割された鍵を再構成できません。</string>
+    <string name="qr_part_previous">前のパート</string>
+    <string name="qr_part_next">次のパート</string>
+    <string name="qr_scan_progress_format">%2$d 個中 %1$d 個のパートをスキャンしました。続けてください。</string>
+    <string name="qr_scan_restarted">別の鍵です。最初からやり直します。</string>
+    <string name="share_target_decrypt_passphrase_required">その鍵はパスフレーズで保護されています。パスフレーズを入力してもう一度お試しください。</string>
+    <string name="card_scan_usb_permission">接続されたセキュリティキーを使用する許可を待っています。</string>
+    <string name="card_usb_working">セキュリティキーで処理中…</string>
+    <string name="card_usb_no_reader">セキュリティキーが接続されていません。</string>
+    <string name="card_scan_usb_reading">USB 経由でセキュリティキーを読み取っています…</string>
+    <string name="decrypt_card_message_note_hidden">このメッセージは受信者を隠しています。PIN を入力し、「%1$s」をタップしてハードウェアキーでお試しください。</string>
+    <string name="decrypt_hidden_recipient_no_software_key">どのソフトウェア鍵でもこのメッセージを開けませんでした。受信者が隠されているため、照合できる鍵 ID がありませんでした。</string>
+    <string name="encrypt_bundle_show_all_format">%1$d 件すべてのファイルを表示</string>
+    <string name="encrypt_bundle_show_fewer">表示を減らす</string>
 </resources>

@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pgpony.android.R
+import com.pgpony.android.ui.util.autofillPassword
 import com.pgpony.android.data.PGPKeyEntity
 
 @Composable
@@ -180,7 +181,10 @@ fun ShareDecryptPassphrasePrompt(
         visualTransformation = PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
+        // 4.1.0 §3 (issue #8) — see ui/util/Autofill.kt.
+        modifier = Modifier
+            .fillMaxWidth()
+            .autofillPassword { onPassphraseChange(it) },
     )
 
     if (state.errorMessage != null) {

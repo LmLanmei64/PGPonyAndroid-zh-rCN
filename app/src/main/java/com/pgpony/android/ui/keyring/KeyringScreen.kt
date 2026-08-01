@@ -7,7 +7,10 @@
 package com.pgpony.android.ui.keyring
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.animation.core.animateFloatAsState
@@ -17,8 +20,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import kotlinx.coroutines.delay
 import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.ReorderableLazyListState
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -35,6 +40,8 @@ import com.pgpony.android.R
 import com.pgpony.android.LocalBillingService
 import com.pgpony.android.billing.ProGuard
 import com.pgpony.android.crypto.KeyAlgorithm
+import com.pgpony.android.data.PGPKeyEntity
+import androidx.compose.ui.unit.Dp
 import com.pgpony.android.ui.components.KeyCard
 import com.pgpony.android.ui.components.ScreenTooltip
 import com.pgpony.android.ui.pro.ProFeature
@@ -108,7 +115,7 @@ fun KeyringScreen(
                 actions = {
                     var sortMenuOpen by remember { mutableStateOf(false) }
                     IconButton(onClick = { sortMenuOpen = true }) {
-                        Icon(Icons.Filled.Sort, stringResource(R.string.keyring_sort_cd))
+                        Icon(Icons.AutoMirrored.Filled.Sort, stringResource(R.string.keyring_sort_cd))
                     }
                     DropdownMenu(
                         expanded = sortMenuOpen,
@@ -158,7 +165,7 @@ fun KeyringScreen(
                             onClick = {
                                 fabExpanded = false
                                 bumpFab()
-                                if (ProGuard.canGenerateKey(state.myKeys.size, billingState.isPro)) {
+                                if (ProGuard.canGenerateKey(state.keyPairCount, billingState.isPro)) {
                                     viewModel.showGenerate()
                                 } else {
                                     proGateFeature = ProFeature.UNLIMITED_KEYS
@@ -255,68 +262,49 @@ fun KeyringScreen(
                     if (f != null && t != null) viewModel.moveManual(f, t)
                 }
                 val manualMode = state.sortMode == SortMode.MANUAL
+                // Colours read here rather than inside keySection: a
+                // LazyListScope builder is not a composable and cannot
+                // reach MaterialTheme.
+                val mineColor = MaterialTheme.colorScheme.primary
+                val contactColor = MaterialTheme.colorScheme.secondary
+                val publicColor = MaterialTheme.colorScheme.tertiary
                 LazyColumn(
                     state = lazyListState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (state.myKeys.isNotEmpty()) {
-                        item {
-                            Text(
-                                stringResource(R.string.keyring_section_my_keys),
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-                            )
-                        }
-                        items(state.myKeys, key = { it.id }) { key ->
-                            ReorderableItem(reorderableState, key = key.id) { _ ->
-                                KeyCard(
-                                    key = key,
-                                    onClick = { onKeyClick(key.fingerprint) },
-                                    trailing = if (manualMode) {
-                                        {
-                                            Icon(
-                                                Icons.Filled.DragHandle,
-                                                contentDescription = stringResource(R.string.keyring_drag_handle_cd),
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.draggableHandle()
-                                            )
-                                        }
-                                    } else null
-                                )
-                            }
-                        }
-                    }
-                    if (state.contactKeys.isNotEmpty()) {
-                        item {
-                            Text(
-                                stringResource(R.string.keyring_section_contact_keys),
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
-                            )
-                        }
-                        items(state.contactKeys, key = { it.id }) { key ->
-                            ReorderableItem(reorderableState, key = key.id) { _ ->
-                                KeyCard(
-                                    key = key,
-                                    onClick = { onKeyClick(key.fingerprint) },
-                                    trailing = if (manualMode) {
-                                        {
-                                            Icon(
-                                                Icons.Filled.DragHandle,
-                                                contentDescription = stringResource(R.string.keyring_drag_handle_cd),
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.draggableHandle()
-                                            )
-                                        }
-                                    } else null
-                                )
-                            }
-                        }
-                    }
+                    // 4.1.0 Phase 12b — three sections through one builder.
+                    // The first two were already identical apart from the
+                    // list, the heading and the colour; a third copy is not
+                    // how you want to discover that.
+                    keySection(
+                        keys = state.myKeys,
+                        titleRes = R.string.keyring_section_my_keys,
+                        titleColor = mineColor,
+                        topPadding = 8.dp,
+                        reorderableState = reorderableState,
+                        manualMode = manualMode,
+                        onKeyClick = onKeyClick,
+                    )
+                    keySection(
+                        keys = state.contactKeys,
+                        titleRes = R.string.keyring_section_contacts,
+                        titleColor = contactColor,
+                        topPadding = 16.dp,
+                        reorderableState = reorderableState,
+                        manualMode = manualMode,
+                        onKeyClick = onKeyClick,
+                    )
+                    keySection(
+                        keys = state.publicKeys,
+                        titleRes = R.string.keyring_section_public_keys,
+                        titleColor = publicColor,
+                        topPadding = 16.dp,
+                        reorderableState = reorderableState,
+                        manualMode = manualMode,
+                        onKeyClick = onKeyClick,
+                    )
                 }
             }
         }
@@ -412,6 +400,56 @@ fun KeyringScreen(
     )
 }
 
+// ── Keyring sections ───────────────────────────────────────────────────
+
+/**
+ * 4.1.0 Phase 12b — one keyring section: a heading, then its keys.
+ *
+ * Emits nothing at all when the list is empty, so an empty section leaves no
+ * stray heading behind. Drag handles appear only in MANUAL sort, unchanged.
+ *
+ * [titleColor] is passed in because a LazyListScope builder is not a
+ * composable and cannot read MaterialTheme; the caller reads the three
+ * colours once, just above the LazyColumn.
+ */
+private fun LazyListScope.keySection(
+    keys: List<PGPKeyEntity>,
+    titleRes: Int,
+    titleColor: Color,
+    topPadding: Dp,
+    reorderableState: ReorderableLazyListState,
+    manualMode: Boolean,
+    onKeyClick: (String) -> Unit,
+) {
+    if (keys.isEmpty()) return
+    item {
+        Text(
+            stringResource(titleRes),
+            style = MaterialTheme.typography.titleSmall,
+            color = titleColor,
+            modifier = Modifier.padding(top = topPadding, bottom = 4.dp)
+        )
+    }
+    items(keys, key = { it.id }) { key ->
+        ReorderableItem(reorderableState, key = key.id) { _ ->
+            KeyCard(
+                key = key,
+                onClick = { onKeyClick(key.fingerprint) },
+                trailing = if (manualMode) {
+                    {
+                        Icon(
+                            Icons.Filled.DragHandle,
+                            contentDescription = stringResource(R.string.keyring_drag_handle_cd),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.draggableHandle()
+                        )
+                    }
+                } else null
+            )
+        }
+    }
+}
+
 // ── Generate Key Bottom Sheet ──────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -423,9 +461,28 @@ private fun GenerateKeySheet(state: KeyringUiState, viewModel: KeyringViewModel)
         onDismissRequest = { viewModel.dismissGenerate() },
         sheetState = sheetState
     ) {
+        // 4.1.0 — this sheet had no scroll at all, so once the form grew
+        // taller than the viewport the passphrase fields and the Generate
+        // button were simply unreachable and swiping did nothing. It fit on a
+        // 720x1600 reference device at fontScale 1.0 with almost no margin,
+        // which is why it survived review; Samsung's system font has wider
+        // metrics than Roboto, so One UI devices overflowed at what the user
+        // experiences as default settings. Reported as "I cant scroll down
+        // pass the expiration portion", on a Galaxy Note 10+, and it made key
+        // generation impossible with no workaround.
+        //
+        // Same modifier order as RevokeKeySheet: scroll first, then insets,
+        // padding last. imePadding matters because MainActivity calls
+        // enableEdgeToEdge(), so the window never resizes for the keyboard and
+        // Material3 1.3.1 does not apply IME insets to ModalBottomSheet
+        // content itself.
         Column(
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
+            modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
         ) {
             Text(stringResource(R.string.keyring_generate_title), style = MaterialTheme.typography.headlineSmall)
             Spacer(modifier = Modifier.height(16.dp))
@@ -482,7 +539,14 @@ private fun GenerateKeySheet(state: KeyringUiState, viewModel: KeyringViewModel)
             // Expiration picker
             Text(stringResource(R.string.keyring_generate_expiration_label), style = MaterialTheme.typography.labelMedium)
             Spacer(modifier = Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 4.1.0 — was a fixed Row. Four chips do not fit one line on a
+            // narrow or large-text screen, and Compose measures the fourth
+            // with maxWidth = 0: the "Never" label then wraps one character
+            // per line and the chip renders ~120dp tall instead of ~32dp,
+            // adding roughly 90dp of dead vertical space. That is what tipped
+            // an already-marginal form into hard overflow. The Algorithm
+            // picker above already used FlowRow; this one was missed.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ExpirationOption.entries.forEach { exp ->
                     // Phase A13: enum displayName is still on the enum for
                     // compatibility, but the UI label resolves through

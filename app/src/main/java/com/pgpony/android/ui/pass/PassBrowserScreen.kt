@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -76,7 +77,7 @@ fun PassBrowserScreen(
                     IconButton(onClick = {
                         if (pathStack.isNotEmpty()) pathStack.removeAt(pathStack.lastIndex) else onBack()
                     }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.pass_back))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.pass_back))
                     }
                 }
             )

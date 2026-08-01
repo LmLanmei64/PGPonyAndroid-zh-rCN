@@ -54,7 +54,13 @@ fun OnboardingPage(
 ) {
     var showGenerateSheet by remember { mutableStateOf(false) }
     val keyringState by keyringVm.state.collectAsState()
-    val existingKeyCount = keyringState.myKeys.size
+    // 4.1.0 Phase 12b — keyPairCount, not myKeys.size. Behaviour here is
+    // unchanged (a card-backed key still does not count as "you already
+    // have a key"), but it is now explicit rather than a side effect of how
+    // the keyring happens to be grouped. Whether importing a hardware key
+    // should satisfy onboarding is a real question, deliberately left to
+    // 4.2.0 rather than answered by accident here.
+    val existingKeyCount = keyringState.keyPairCount
 
     Column(
         modifier = Modifier

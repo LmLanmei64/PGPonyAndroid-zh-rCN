@@ -65,7 +65,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.pgpony.android.MainActivity
 import com.pgpony.android.R
+import com.pgpony.android.crypto.VerificationResult
 import com.pgpony.android.crypto.mime.MimeAttachment
+import com.pgpony.android.crypto.mime.MimeFileAttachment
+import com.pgpony.android.ui.util.ScratchFiles
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,9 +76,27 @@ import java.io.File
 fun StructuredDecryptionResultScreen(
     body: String?,
     attachments: List<MimeAttachment>,
+    // 4.1.0 Phase 14 (issue #10): the streamed decrypt path extracts a
+    // bundle to scratch files rather than to resident ByteArrays, so its
+    // attachments arrive here as MimeFileAttachments. Exactly one of the
+    // two lists is ever populated. Defaulted so the existing call sites
+    // (text decrypt, card decrypt, buffered file decrypt) are unchanged.
+    fileAttachments: List<MimeFileAttachment> = emptyList(),
+    // 4.1.0 Phase 14b: this sheet never showed signature status.
+    // FileDecryptionResultScreen has shown it since A10c, so a
+    // bundle was the one decrypt result that told the user nothing
+    // about who sent it. Defaulted, so nothing has to pass it.
+    verificationResult: VerificationResult? = null,
+    onTapUnknownSigner: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    // One row model for both carriers. Everything below this line stops
+    // caring where the bytes live.
+    val items = remember(attachments, fileAttachments) {
+        attachments.map { AttachmentItem(it.filename, it.contentType, it.data.size.toLong(), it.data, null) } +
+            fileAttachments.map { AttachmentItem(it.filename, it.contentType, it.size, null, it.file) }
+    }
     val activity = context.findStructuredResultMainActivity()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -101,6 +122,14 @@ fun StructuredDecryptionResultScreen(
                 fontWeight = FontWeight.Bold
             )
 
+            // ── Verification banner (when applicable) ────────────────
+            verificationResult?.let { result ->
+                VerificationBanner(
+                    result = result,
+                    onTapUnknownSigner = onTapUnknownSigner
+                )
+            }
+
             // ── Body ─────────────────────────────────────────────────
             if (!body.isNullOrBlank()) {
                 Surface(
@@ -118,13 +147,13 @@ fun StructuredDecryptionResultScreen(
 
             // ── Attachments ──────────────────────────────────────────
             Text(
-                stringResource(R.string.structured_result_attachments_format, attachments.size),
+                stringResource(R.string.structured_result_attachments_format, items.size),
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 4.dp)
             )
-            attachments.forEach { att ->
+            items.forEach { att ->
                 AttachmentRow(
                     attachment = att,
                     onOpen = { openAttachment(context, att) },
@@ -138,8 +167,13 @@ fun StructuredDecryptionResultScreen(
                         ) { uri ->
                             if (uri == null) return@startDocumentCreator
                             try {
-                                context.contentResolver.openOutputStream(uri)?.use {
-                                    it.write(att.data)
+                                context.contentResolver.openOutputStream(uri)?.use { out ->
+                                    // 4.1.0 Phase 14: copy, do not read.
+                                    // A file backed attachment can be tens
+                                    // of megabytes and the whole point of
+                                    // the streamed path is that it never
+                                    // becomes a ByteArray.
+                                    att.writeTo(out)
                                 }
                             } catch (_: Exception) {
                                 // Save failures surface as a missing file;
@@ -152,9 +186,9 @@ fun StructuredDecryptionResultScreen(
             }
 
             // ── Share all + Done ─────────────────────────────────────
-            if (attachments.size > 1) {
+            if (items.size > 1) {
                 OutlinedButton(
-                    onClick = { shareAttachments(context, attachments) },
+                    onClick = { shareAttachments(context, items) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Filled.IosShare, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -170,23 +204,57 @@ fun StructuredDecryptionResultScreen(
     }
 }
 
+/**
+ * 4.1.0 Phase 14: one row, either carrier.
+ *
+ * [bytes] is set for the buffered decrypt paths, [file] for the streamed
+ * one. Never both, never neither. Everything the sheet does (thumbnail,
+ * save, share, open) goes through the two accessors below so no call
+ * site has to branch.
+ */
+private class AttachmentItem(
+    val filename: String,
+    val contentType: String,
+    val size: Long,
+    val bytes: ByteArray?,
+    val file: File?
+) {
+    /** Stream the payload out without materialising a file backed one. */
+    fun writeTo(out: java.io.OutputStream) {
+        val b = bytes
+        if (b != null) out.write(b) else file?.inputStream()?.use { it.copyTo(out) }
+    }
+}
+
 @Composable
 private fun AttachmentRow(
-    attachment: MimeAttachment,
+    attachment: AttachmentItem,
     onOpen: () -> Unit,
     onSave: () -> Unit,
     onShare: () -> Unit
 ) {
     val isImage = attachment.contentType.startsWith("image/")
     // Thumbnail: decode once per attachment, downsampled so a large
-    // photo doesn't hold a full-size Bitmap for a 44dp row.
+    // photo doesn't hold a full-size Bitmap for a 44dp row. The file
+    // backed branch uses decodeFile, which reads through the same
+    // inSampleSize path without loading the original into memory first.
     val thumb: Bitmap? = remember(attachment) {
         if (!isImage) null else try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(attachment.data, 0, attachment.data.size, bounds)
+            val data = attachment.bytes
+            val path = attachment.file?.absolutePath
+            if (data != null) {
+                BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+            } else {
+                BitmapFactory.decodeFile(path, bounds)
+            }
             val sample = maxOf(1, minOf(bounds.outWidth, bounds.outHeight) / 96)
             val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-            BitmapFactory.decodeByteArray(attachment.data, 0, attachment.data.size, opts)
+            if (data != null) {
+                BitmapFactory.decodeByteArray(data, 0, data.size, opts)
+            } else {
+                BitmapFactory.decodeFile(path, opts)
+            }
         } catch (_: Exception) {
             null
         }
@@ -227,7 +295,7 @@ private fun AttachmentRow(
                     maxLines = 1
                 )
                 Text(
-                    "${attachment.contentType} · ${formatAttachmentSize(attachment.data.size.toLong())}",
+                    "${attachment.contentType} · ${formatAttachmentSize(attachment.size)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
@@ -253,14 +321,27 @@ private fun AttachmentRow(
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/** Write attachments to the cache exports dir and return FileProvider URIs. */
-private fun exportUris(context: Context, attachments: List<MimeAttachment>): ArrayList<android.net.Uri> {
-    val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
+/**
+ * FileProvider URIs for [attachments].
+ *
+ * 4.1.0 Phase 14: a file backed attachment already sits in the scratch
+ * directory, which res/xml/file_paths.xml exposes, so it is handed
+ * straight to the share target with no copy at all. Only the buffered
+ * carrier still needs a spill to cacheDir/exports, and only because
+ * there is nothing else on disk to point at.
+ */
+private fun exportUris(context: Context, attachments: List<AttachmentItem>): ArrayList<android.net.Uri> {
     val uris = ArrayList<android.net.Uri>(attachments.size)
     for (att in attachments) {
+        val existing = att.file
+        if (existing != null) {
+            uris.add(ScratchFiles.uriFor(context, existing))
+            continue
+        }
+        val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
         val safeName = att.filename.replace('/', '_').ifBlank { "attachment" }
         val outFile = File(exportsDir, safeName)
-        outFile.writeBytes(att.data)
+        outFile.outputStream().use { att.writeTo(it) }
         uris.add(
             FileProvider.getUriForFile(
                 context,
@@ -272,7 +353,7 @@ private fun exportUris(context: Context, attachments: List<MimeAttachment>): Arr
     return uris
 }
 
-private fun openAttachment(context: Context, att: MimeAttachment) {
+private fun openAttachment(context: Context, att: AttachmentItem) {
     try {
         val uri = exportUris(context, listOf(att)).first()
         val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -286,7 +367,7 @@ private fun openAttachment(context: Context, att: MimeAttachment) {
     }
 }
 
-private fun shareAttachments(context: Context, attachments: List<MimeAttachment>) {
+private fun shareAttachments(context: Context, attachments: List<AttachmentItem>) {
     try {
         val uris = exportUris(context, attachments)
         val intent = if (uris.size == 1) {

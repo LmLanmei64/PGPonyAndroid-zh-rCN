@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,7 +35,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.hardware.usb.UsbManager
+import androidx.compose.material.icons.filled.Usb
 import com.pgpony.android.MainActivity
+import com.pgpony.android.crypto.card.CardLinkAdvice
+import com.pgpony.android.crypto.card.CardLinkKind
+import com.pgpony.android.usb.UsbCardConnectionManager
+import com.pgpony.android.usb.UsbCardOperations
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
 import com.pgpony.android.crypto.card.CardDecryptService
@@ -54,8 +62,28 @@ fun CardDecryptScreen(onBack: () -> Unit) {
     val activity = context as? MainActivity
     val clipboard = LocalClipboardManager.current
 
-    val nfcAvailable = remember { activity?.isNfcAvailable() == true }
-    val nfcEnabled = remember { activity?.isNfcEnabled() == true }
+    // 4.1.0 USB Phase 2 — recomputed, not remembered once: a key can be
+    // plugged in while this screen is open.
+    var usbTick by remember { mutableStateOf(0) }
+    val usbCards = remember { UsbCardConnectionManager(context) { usbTick++ } }
+    DisposableEffect(usbCards) {
+        usbCards.register()
+        onDispose { usbCards.unregister() }
+    }
+    val nfcAvailable = activity?.isNfcAvailable() == true
+    val nfcEnabled = activity?.isNfcEnabled() == true
+    val link = remember(usbTick, nfcAvailable, nfcEnabled) {
+        usbCards.availability(nfcAvailable, nfcEnabled)
+    }
+    val noReaderMessage = stringResource(R.string.card_usb_no_reader)
+
+    LaunchedEffect(link.advice) {
+        if (link.advice == CardLinkAdvice.AttachedReaderNeedsPermission) {
+            usbCards.firstReader()?.let { device ->
+                usbCards.requestPermission(device) { usbTick++ }
+            }
+        }
+    }
 
     var ciphertext by remember { mutableStateOf("") }
     // 3.1.0 Phase 7 (B1): prefill from the PIN cache when enabled.
@@ -65,11 +93,15 @@ fun CardDecryptScreen(onBack: () -> Unit) {
     val formValid = ciphertext.isNotBlank() && pin.isNotEmpty()
 
     fun startDecrypt() {
-        if (activity == null || !formValid) return
+        if (!formValid) return
         state.value = DecState.Waiting
         val msg = ciphertext
         val pinBytes = pin.toByteArray(Charsets.UTF_8)
-        activity.startCardOperation({ session ->
+
+        // IDENTICAL on both transports. OpenPgpCardSession depends only on the
+        // CardTransport interface, which is why adding a second physical link
+        // did not touch the protocol layer at all.
+        val operation = { session: com.pgpony.android.crypto.card.OpenPgpCardSession ->
             session.select()
             val ard = session.getApplicationRelatedData()
             val primaryFp = ard.sigFingerprint ?: ard.decFingerprint
@@ -82,10 +114,28 @@ fun CardDecryptScreen(onBack: () -> Unit) {
                     "Pair this card's public key into your keyring first, then try again."
                 )
             CardDecryptService.shared.decrypt(session, pubRing, pinBytes, msg)
-        }) { result ->
-            result
-                .onSuccess { state.value = DecState.Result(it.data.toString(Charsets.UTF_8)) }
-                .onFailure { e -> state.value = DecState.Failed(e.message ?: "Decryption failed") }
+        }
+
+        when (link.preferred) {
+            CardLinkKind.USB -> {
+                val manager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+                val device = usbCards.firstReader()
+                if (manager == null || device == null) {
+                    state.value = DecState.Failed(noReaderMessage)
+                } else {
+                    UsbCardOperations.run(manager, device, operation) { result ->
+                        result
+                            .onSuccess { state.value = DecState.Result(it.data.toString(Charsets.UTF_8)) }
+                            .onFailure { e -> state.value = DecState.Failed(e.message ?: "Decryption failed") }
+                    }
+                }
+            }
+            CardLinkKind.NFC -> activity?.startCardOperation(operation) { result ->
+                result
+                    .onSuccess { state.value = DecState.Result(it.data.toString(Charsets.UTF_8)) }
+                    .onFailure { e -> state.value = DecState.Failed(e.message ?: "Decryption failed") }
+            }
+            null -> state.value = DecState.Failed(noReaderMessage)
         }
     }
 
@@ -99,7 +149,7 @@ fun CardDecryptScreen(onBack: () -> Unit) {
                 title = { Text(stringResource(R.string.card_decrypt_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.card_scan_back))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.card_scan_back))
                     }
                 }
             )
@@ -113,16 +163,27 @@ fun CardDecryptScreen(onBack: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             when {
-                activity == null || !nfcAvailable ->
-                    DecCentered(Icons.Filled.Nfc, stringResource(R.string.card_scan_nfc_unavailable))
+                // Permission first: something IS plugged in, so telling the
+                // user there is no way to reach a card would be wrong as well
+                // as unhelpful.
+                link.advice == CardLinkAdvice.AttachedReaderNeedsPermission ->
+                    DecCentered(Icons.Filled.Usb, stringResource(R.string.card_scan_usb_permission))
 
-                !nfcEnabled ->
+                link.advice == CardLinkAdvice.EnableNfc ->
                     DecCentered(Icons.Filled.Nfc, stringResource(R.string.card_scan_nfc_disabled))
+
+                !link.anyUsable ->
+                    DecCentered(Icons.Filled.Nfc, stringResource(R.string.card_scan_nfc_unavailable))
 
                 else -> when (val s = state.value) {
                     is DecState.Waiting -> DecCentered(
-                        Icons.Filled.Contactless,
-                        stringResource(R.string.card_decrypt_hold_card),
+                        if (link.preferred == CardLinkKind.USB) Icons.Filled.Usb
+                        else Icons.Filled.Contactless,
+                        // Over a cable there is nothing to hold against the
+                        // phone, so "hold your card here" is simply wrong.
+                        if (link.preferred == CardLinkKind.USB)
+                            stringResource(R.string.card_usb_working)
+                        else stringResource(R.string.card_decrypt_hold_card),
                         showSpinner = true
                     )
 

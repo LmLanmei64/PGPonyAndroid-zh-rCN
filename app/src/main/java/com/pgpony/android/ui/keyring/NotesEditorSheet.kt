@@ -17,6 +17,10 @@
 package com.pgpony.android.ui.keyring
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -63,9 +67,15 @@ fun NotesEditorSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
     ) {
+        // 4.1.0 — same triad as GenerateKeySheet and RevokeKeySheet. A notes
+        // editor is a text field with the keyboard up by definition, so the
+        // Save and Cancel buttons sat behind the IME.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {

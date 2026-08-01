@@ -143,8 +143,33 @@ data class KeyringUiState(
     val sortMode: SortMode = SortMode.MANUAL,
     val manualOrder: List<String> = emptyList()
 ) {
-    val myKeys: List<PGPKeyEntity> get() = sortKeys(allKeys.filter { it.isKeyPair })
-    val contactKeys: List<PGPKeyEntity> get() = sortKeys(allKeys.filter { !it.isKeyPair })
+    // ── 4.1.0 Phase 12b — three sections ──────────────────────────────
+    //
+    // The split used to be one boolean, isKeyPair, and it put a hardware
+    // key in the wrong half: a card imported on its own is stored with
+    // isKeyPair = false (correctly — the private material is on the card,
+    // not in SecureKeyStore) and so appeared under other people's keys.
+    //
+    // First cut is whether the user can ACT with the key. Second is
+    // whether it has a face attached, which is what contactId already
+    // means.
+
+    val myKeys: List<PGPKeyEntity> get() = sortKeys(allKeys.filter { it.section() == KeySection.MINE })
+    val contactKeys: List<PGPKeyEntity> get() = sortKeys(allKeys.filter { it.section() == KeySection.CONTACT })
+    val publicKeys: List<PGPKeyEntity> get() = sortKeys(allKeys.filter { it.section() == KeySection.PUBLIC })
+
+    /**
+     * Key PAIRS the user has generated or imported with private material.
+     *
+     * Deliberately NOT myKeys.size. ProGuard.canGenerateKey takes a
+     * `currentKeyPairCount`, and myKeys was only ever a correct proxy for
+     * it while myKeys meant exactly isKeyPair. Now that a card-backed row
+     * counts as one of the user's own keys for display, using myKeys.size
+     * for the free-tier gate would cost a free user a key slot for
+     * plugging in a YubiKey. The gate gets its own name so it cannot
+     * drift with the grouping again.
+     */
+    val keyPairCount: Int get() = allKeys.count { it.isKeyPair }
 
     private fun sortKeys(list: List<PGPKeyEntity>): List<PGPKeyEntity> = when (sortMode) {
         SortMode.ALPHA_ASC -> list.sortedBy { ownerLabel(it).lowercase() }
@@ -162,6 +187,24 @@ data class KeyringUiState(
 
     private fun ownerLabel(key: PGPKeyEntity): String =
         key.userName.ifBlank { key.userEmail.ifBlank { key.fingerprint } }
+}
+
+/**
+ * 4.1.0 Phase 12b — which keyring section a key belongs to.
+ *
+ * Ordered as they are displayed. Declared at file scope rather than inside
+ * the state so moveManual can compare sections without rebuilding lists.
+ */
+enum class KeySection { MINE, CONTACT, PUBLIC }
+
+/**
+ * MINE covers a card-backed key even though isKeyPair is false for one: the
+ * user signs and decrypts with it, which is what the section means.
+ */
+fun PGPKeyEntity.section(): KeySection = when {
+    isKeyPair || isCardBacked -> KeySection.MINE
+    !contactId.isNullOrBlank() -> KeySection.CONTACT
+    else -> KeySection.PUBLIC
 }
 
 enum class SortMode { ALPHA_ASC, ALPHA_DESC, MANUAL }
@@ -207,22 +250,28 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
     /**
      * Manual drag-reorder. [fromId] / [toId] are PGPKeyEntity ids (the
      * LazyColumn item keys). Moves the dragged key to the target's slot,
-     * but only within the same section (My Keys vs Contacts) — cross-section
-     * drags and header drops are ignored. Persists the new full order.
+     * but only within the same section (My Keys / Contacts / Public Keys) —
+     * cross-section drags and header drops are ignored. Persists the new
+     * full order.
      */
     fun moveManual(fromId: String, toId: String) {
         if (fromId == toId) return
         val all = _state.value.allKeys
         val fromKey = all.firstOrNull { it.id == fromId } ?: return
         val toKey = all.firstOrNull { it.id == toId } ?: return
-        // Same section only.
-        if (fromKey.isKeyPair != toKey.isKeyPair) return
+        // Same section only. 4.1.0 Phase 12b — this compared isKeyPair,
+        // which with three sections is not merely incomplete but wrong: it
+        // would let a contact key be dragged into the Public Keys block,
+        // since both have isKeyPair = false.
+        if (fromKey.section() != toKey.section()) return
 
         // Seed the working order from the current display order if we don't
         // have a saved one yet (keeps what the user currently sees).
         val current = _state.value
         val seeded = current.manualOrder.ifEmpty {
-            current.myKeys.map { it.fingerprint } + current.contactKeys.map { it.fingerprint }
+            current.myKeys.map { it.fingerprint } +
+                current.contactKeys.map { it.fingerprint } +
+                current.publicKeys.map { it.fingerprint }
         }.toMutableList()
 
         // Make sure both fingerprints are represented before moving.

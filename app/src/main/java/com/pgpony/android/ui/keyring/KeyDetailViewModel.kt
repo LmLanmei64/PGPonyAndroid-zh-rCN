@@ -18,9 +18,6 @@ package com.pgpony.android.ui.keyring
 import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.qrcode.QRCodeWriter
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
 import com.pgpony.android.contacts.ContactsService
@@ -30,6 +27,7 @@ import com.pgpony.android.crypto.RevocationError
 import com.pgpony.android.data.KeyRefreshResult
 import com.pgpony.android.data.KeyRefreshService
 import com.pgpony.android.data.PGPKeyEntity
+import com.pgpony.android.qr.QrBitmap
 import com.pgpony.android.data.RevocationReason
 import com.pgpony.android.data.TrustLevel
 import com.pgpony.android.data.repository.KeyRepository
@@ -66,8 +64,14 @@ data class KeyDetailUiState(
      *  screen renders a "Key not found — go back" placeholder. */
     val notFound: Boolean = false,
     /** Generated lazily when the user opens the QR sheet. We cache it
-     *  so re-opening doesn't re-encode. */
-    val qrBitmap: Bitmap? = null,
+     *  so re-opening doesn't re-encode.
+     *
+     *  4.1.0 Phase 9 (issue #3): a LIST, because a post-quantum key does not
+     *  fit in one symbol. One entry for anything that fits, which is what
+     *  every classic key still produces. */
+    val qrFrames: List<Bitmap> = emptyList(),
+    /** Which frame the QR sheet is showing. */
+    val qrIndex: Int = 0,
     /** Flipped briefly true on fingerprint tap → drives the "Copied!"
      *  green check + label in FingerprintSection. Reset to false after
      *  2 seconds by a coroutine in copyFingerprintFeedback(). */
@@ -247,8 +251,8 @@ class KeyDetailViewModel(
      */
     fun showQR() {
         val key = _state.value.key ?: return
-        if (_state.value.qrBitmap != null) {
-            _state.value = _state.value.copy(showQRSheet = true)
+        if (_state.value.qrFrames.isNotEmpty()) {
+            _state.value = _state.value.copy(showQRSheet = true, qrIndex = 0)
             return
         }
         viewModelScope.launch {
@@ -260,20 +264,51 @@ class KeyDetailViewModel(
                 )
                 return@launch
             }
-            val bitmap = try {
-                encodeQR(armored)
+            // 4.1.0 Phase 9 (issue #3) — a key too large for one symbol is
+            // now split across several instead of failing. Past even that,
+            // encodeFrames returns null and the user gets an instruction
+            // rather than ZXing's "data too big", which is the half of #3
+            // that could always have been fixed cheaply.
+            val frames = try {
+                QrBitmap.encodeFrames(armored)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     errorMessage = PGPonyApp.instance.getString(R.string.kd_vm_error_qr_failed_format, e.message ?: "")
                 )
                 return@launch
             }
-            _state.value = _state.value.copy(qrBitmap = bitmap, showQRSheet = true)
+            if (frames.isNullOrEmpty()) {
+                _state.value = _state.value.copy(
+                    errorMessage = PGPonyApp.instance.getString(R.string.qr_too_large)
+                )
+                return@launch
+            }
+            _state.value = _state.value.copy(
+                qrFrames = frames,
+                qrIndex = 0,
+                showQRSheet = true
+            )
         }
     }
 
     fun hideQR() {
         _state.value = _state.value.copy(showQRSheet = false)
+    }
+
+    /** 4.1.0 Phase 9 — step through a multi-part QR. Wraps at both ends so
+     *  the other person can keep the camera up and let it cycle. */
+    fun qrNext() {
+        val s = _state.value
+        if (s.qrFrames.size < 2) return
+        _state.value = s.copy(qrIndex = (s.qrIndex + 1) % s.qrFrames.size)
+    }
+
+    fun qrPrev() {
+        val s = _state.value
+        if (s.qrFrames.size < 2) return
+        _state.value = s.copy(
+            qrIndex = (s.qrIndex - 1 + s.qrFrames.size) % s.qrFrames.size
+        )
     }
 
     /**
@@ -1084,23 +1119,7 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
         return true
     }
 
-    /** Encode the armored key as a 800x800 monochrome QR bitmap. Same
-     *  parameters used by ExchangeViewModel — kept in sync so QR sheets
-     *  in both surfaces produce visually equivalent codes. */
-    private fun encodeQR(armored: String): Bitmap {
-        val hints = mapOf(EncodeHintType.MARGIN to 1)
-        val matrix = QRCodeWriter().encode(armored, BarcodeFormat.QR_CODE, 800, 800, hints)
-        val width = matrix.width
-        val height = matrix.height
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
-        for (x in 0 until width) {
-            for (y in 0 until height) {
-                bitmap.setPixel(
-                    x, y,
-                    if (matrix.get(x, y)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
-                )
-            }
-        }
-        return bitmap
-    }
+    // 4.1.0 Phase 9 — encodeQR moved to qr/QrBitmap.kt. It was duplicated
+    // verbatim in ExchangeViewModel, with a comment promising to keep the two
+    // "in sync" by hand. There is one copy now.
 }

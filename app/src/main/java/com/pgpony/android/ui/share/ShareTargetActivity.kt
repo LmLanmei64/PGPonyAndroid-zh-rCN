@@ -61,8 +61,10 @@ import com.pgpony.android.crypto.card.OpenPgpCardSession
 import com.pgpony.android.intent.IntentHandler
 import com.pgpony.android.intent.ShareIntentContent
 import com.pgpony.android.nfc.OpenPgpCardReader
+import com.pgpony.android.saf.DocumentCreatorHost
+import com.pgpony.android.saf.SafDocumentCreator
 
-class ShareTargetActivity : AppCompatActivity() {
+class ShareTargetActivity : AppCompatActivity(), DocumentCreatorHost {
 
     private val vm: ShareTargetViewModel by viewModels {
         ShareTargetViewModel.factory(PGPonyApp.instance.keyRepository)
@@ -163,6 +165,27 @@ class ShareTargetActivity : AppCompatActivity() {
         operation: (OpenPgpCardSession) -> T,
         onResult: (Result<T>) -> Unit
     ): Boolean {
+        // 4.1.0 USB Phase 2 — this activity has its OWN copy of
+        // startCardOperation, so MainActivity's chokepoint does not cover it
+        // and a card operation from the share sheet would have stayed
+        // NFC-only.
+        //
+        // No broadcast receiver and no permission prompt here, deliberately.
+        // The share activity is short-lived, and a system permission dialog on
+        // top of a share sheet is a bad place to ask. If the grant already
+        // exists, which it will after any use of the main app with the key
+        // attached, use the wire; otherwise fall through to NFC.
+        val usb = getSystemService(android.hardware.usb.UsbManager::class.java)
+        val device = usb?.let {
+            com.pgpony.android.usb.UsbCcidCardTransport.findReaders(it).firstOrNull()
+        }
+        if (usb != null && device != null && usb.hasPermission(device)) {
+            com.pgpony.android.usb.UsbCardOperations.run(
+                usb, device, operation, onResult = onResult
+            )
+            return true
+        }
+
         val reader = OpenPgpCardReader(this)
         cardReader = reader
         val started = reader.startOperation(operation, onResult)
@@ -170,8 +193,52 @@ class ShareTargetActivity : AppCompatActivity() {
         return started
     }
 
+    /**
+     * 4.0.5 — see MainActivity.endCardOperation. Reader mode deliberately
+     * stays engaged after a card operation: disabling it while the card is
+     * still against the phone hands the tag to the platform dispatcher,
+     * which launches Yubico Authenticator (issue #7). This activity has no
+     * auto-lock suppression to release, so there is nothing else to do
+     * here, and reader mode is released when the activity pauses.
+     */
+    fun endCardOperation() {
+        // Intentionally empty. Present so the shared call site in
+        // ShareTargetScreen reads the same as the main app's.
+    }
+
     fun stopCardScan() {
         cardReader?.stop()
         cardReader = null
+    }
+
+    // ── 4.1.0 Phase 7b — saving a result to disk (issue #13) ──────────
+    //
+    // The whole of what ScottishLemur was missing. Before this, every
+    // result screen in the share target offered Copy, Share and Done,
+    // because the only startDocumentCreator in the app was on MainActivity
+    // and the ContextWrapper walk up to it returns null in here.
+    //
+    // No auto-lock hook: this activity has no lock gate (see the comment on
+    // startCardOperation above), so the default no-op onBusy is right.
+
+    private val documentCreator = SafDocumentCreator(REQ_DOCUMENT_CREATOR)
+
+    override fun startDocumentCreator(
+        mimeType: String,
+        suggestedName: String,
+        callback: (android.net.Uri?) -> Unit,
+    ) {
+        documentCreator.launch(this, mimeType, suggestedName, callback)
+    }
+
+    @Deprecated("Matches MainActivity's picker plumbing; see SafDocumentCreator.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        documentCreator.onActivityResult(requestCode, resultCode, data)
+    }
+
+    private companion object {
+        /** Small enough for FragmentActivity's 0xFFFF0000 mask. */
+        const val REQ_DOCUMENT_CREATOR = 1003
     }
 }

@@ -304,7 +304,10 @@ fun KeyDetailScreen(
     if (state.showQRSheet && keyForSheet != null) {
         KeyDetailQRSheet(
             key = keyForSheet,
-            qrBitmap = state.qrBitmap,
+            qrFrames = state.qrFrames,
+            qrIndex = state.qrIndex,
+            onPrevFrame = { viewModel.qrPrev() },
+            onNextFrame = { viewModel.qrNext() },
             // Phase A4b — wire real copy: armored public key to clipboard.
             onCopyArmored = {
                 val armored = viewModel.armoredPublicKeyForShare()

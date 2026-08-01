@@ -53,6 +53,9 @@ import com.pgpony.android.crypto.VerifyService
 import com.pgpony.android.data.PGPKeyEntity
 import com.pgpony.android.data.repository.KeyRepository
 import com.pgpony.android.network.KeyServerRepository
+import com.pgpony.android.crypto.mime.MimeBuilder
+import com.pgpony.android.crypto.mime.MimeFileAttachment
+import com.pgpony.android.crypto.mime.MimeStreamExtractor
 import com.pgpony.android.ui.decrypt.SignerLookupState
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,6 +68,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 // 3.1.0 Phase 4 (J1/J2) — PGP/MIME core (Phase 3 J-core modules).
+import com.pgpony.android.crypto.mime.MimeEnvelope
 import com.pgpony.android.crypto.mime.MimeParser
 import com.pgpony.android.crypto.mime.MimeAttachment
 
@@ -277,6 +281,19 @@ data class DecryptUiState(
     val isCardMessage: Boolean = false,
     val cardMessageKeyFingerprint: String? = null,
     val cardMessageKeyName: String? = null,
+    // ── 4.1.0: hidden-recipient (`gpg -R`) fallback ────────────────────
+    //
+    // A wildcard PKESK names nobody, so detectCardRecipient cannot route the
+    // message to a card by key ID the way an addressed message is routed.
+    // Prompting for a tap on every hidden-recipient message would be the easy
+    // answer and the wrong one: the software keys can be trialled for free
+    // (PGPCryptoService.resolvePkesk), and most hidden-recipient mail is for a
+    // software key. So the software path runs first, and only when it comes
+    // back with NoMatchingKey are these promoted into isCardMessage /
+    // cardMessageKey*, which swaps the tab to PIN + tap for a one-press retry.
+    val isHiddenRecipientMessage: Boolean = false,
+    val hiddenRecipientCardFingerprint: String? = null,
+    val hiddenRecipientCardName: String? = null,
     // Phase A1: set when the pasted/loaded message is password-encrypted
     // (symmetric SKESK, `gpg -c`) and addressed to no public key. The Decrypt
     // tab then hides the key picker and shows a "Password-encrypted" note +
@@ -290,6 +307,14 @@ data class DecryptUiState(
     // outputText; non-MIME keeps the existing result paths untouched.
     val mimeBody: String? = null,
     val mimeAttachments: List<MimeAttachment> = emptyList(),
+    // ── 4.1.0 Phase 14 (issue #10): the file backed twin ──────────────
+    //
+    // Above INLINE_FILE_LIMIT the plaintext is on disk and never
+    // resident, so its attachments cannot be MimeAttachments (those
+    // carry bytes). The streamed decrypt path fills this list instead,
+    // with one scratch file per attachment. Exactly one of the two is
+    // ever non empty; the result sheet renders both the same way.
+    val mimeFileAttachments: List<MimeFileAttachment> = emptyList(),
     val showStructuredResultSheet: Boolean = false,
     val decryptedFilename: String? = null,
     // Phase A3: full verification result for the 4-state banner. Populated
@@ -387,6 +412,32 @@ data class DecryptUiState(
  * even a 128 MB heap with Compose resident.
  */
 internal const val INLINE_FILE_LIMIT: Long = 4L * 1024 * 1024
+
+/**
+ * 4.1.0 Phase 16. How much ciphertext the card decrypt path will
+ * buffer, since CardDecryptService has no streaming entry point yet.
+ *
+ * Higher than INLINE_FILE_LIMIT on purpose. That limit exists to keep
+ * the ordinary pick-time read cheap for every file the user touches;
+ * this one is paid once, deliberately, for a message the card is the
+ * only way to open. A card bundle of a dozen photos lands around
+ * 12 MB and was refused outright before this.
+ *
+ * Peak is this plus the recovered plaintext, so 32 MB here means about
+ * 64 MB worst case before the plaintext goes to scratch. Raising it
+ * further wants the streaming decrypt, not a bigger number.
+ */
+internal const val CARD_BUFFER_LIMIT: Long = 32L * 1024 * 1024
+
+/**
+ * 4.1.0 Phase 16. What a large card decrypt left on disk: either the
+ * plaintext as a single scratch file, or an extracted bundle with one
+ * scratch file per attachment. Never both.
+ */
+internal class CardScratchOutcome(
+    val file: java.io.File?,
+    val bundle: com.pgpony.android.crypto.mime.MimeFileMessage?
+)
 
 /**
  * 4.0.4 — above this, file encrypt skips ZLIB.
@@ -748,6 +799,105 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * armor=false) and reports the encrypted file bytes back here. Mirrors
      * the success tail of encryptFile() (file result sheet).
      */
+    /**
+     * 4.1.0 Phase 15. The card twin of [encryptBundle]'s crypto half.
+     *
+     * Deliberately blocking and deliberately not a coroutine: it runs
+     * inside an active card session on MainActivity.startCardOperation's
+     * worker thread, and the session has to stay open for the whole
+     * call because CardPGPContentSigner taps the card at the very end.
+     *
+     * Unlike the TEXT and FILE card routes, which hand
+     * PGPCryptoService.encrypt a whole ByteArray from Screens.kt, this
+     * assembles the container to a scratch file and streams it through
+     * encryptStream. A bundle is the one card payload that can be tens
+     * of megabytes; Phase 14 measured the buffered form of ten 2 MB
+     * attachments at about 240 MB of peak allocation, which is why
+     * encryptBundle stopped doing it. There is no reason for the card
+     * route to reintroduce it.
+     *
+     * Progress reporting matches encryptBundle. Cancellation does not:
+     * ProgressInputStream is given a constant false because an NFC
+     * operation in flight is torn down by endCardOperation, not by the
+     * progress row's Cancel button.
+     */
+    fun encryptBundleWithCard(
+        session: com.pgpony.android.crypto.card.OpenPgpCardSession,
+        pin: ByteArray,
+        cardSigningPublicKey: org.bouncycastle.openpgp.PGPPublicKey,
+        recipientRings: List<org.bouncycastle.openpgp.PGPPublicKeyRing>
+    ): String {
+        val s = _encryptState.value
+        val payloadBytes = s.bundleAttachments.sumOf { it.data.size.toLong() }
+        _encryptState.value = _encryptState.value.copy(
+            processedBytes = 0L,
+            totalBytes = payloadBytes + payloadBytes * 4 / 3 + 1024
+        )
+        val mimeFile = ScratchFiles.allocate(
+            PGPonyApp.instance, "bundle.mime", ScratchFiles.SCOPE_ENCRYPT
+        )
+        try {
+            mimeFile.outputStream().buffered().use { sink ->
+                MimeBuilder.writeMixed(
+                    out = sink,
+                    body = s.bundleBody.takeIf { it.isNotBlank() },
+                    attachments = s.bundleAttachments
+                ) { done ->
+                    _encryptState.value = _encryptState.value.copy(processedBytes = done)
+                }
+            }
+            _encryptState.value = _encryptState.value.copy(
+                totalBytes = payloadBytes + mimeFile.length()
+            )
+            val cipherFile = java.io.File(mimeFile.parentFile, "message.asc")
+            try {
+                ProgressInputStream(
+                    delegate = mimeFile.inputStream(),
+                    isCancelled = { false },
+                ) { read ->
+                    _encryptState.value = _encryptState.value.copy(
+                        processedBytes = payloadBytes + read
+                    )
+                }.use { source ->
+                    cipherFile.outputStream().buffered().use { sink ->
+                        crypto.encryptStream(
+                            input = source,
+                            output = sink,
+                            recipientPublicKeys = recipientRings,
+                            cardSession = session,
+                            cardPin = pin,
+                            cardSigningPublicKey = cardSigningPublicKey,
+                            filename = null,
+                            armor = true
+                        )
+                    }
+                }
+                return cipherFile.readText(Charsets.UTF_8)
+            } finally {
+                runCatching { cipherFile.delete() }
+            }
+        } finally {
+            runCatching { mimeFile.delete() }
+        }
+    }
+
+    /**
+     * 4.1.0 Phase 15. Success tail for the Bundle card route, mirroring
+     * encryptBundle's. Separate from [onCardSignSuccess] because that
+     * one lands in the text output sheet and a bundle lands in the
+     * bundle result sheet.
+     */
+    fun onCardBundleSuccess(armored: String) {
+        _encryptState.value = _encryptState.value.copy(
+            encryptedBundleArmored = armored,
+            isProcessing = false,
+            processedBytes = 0L,
+            totalBytes = 0L,
+            showBundleResultSheet = true
+        )
+        _events.tryEmit(Event.EncryptSuccess)
+    }
+
     fun onCardEncryptFileSuccess(bytes: ByteArray) {
         _encryptState.value = _encryptState.value.copy(
             encryptedFileBytes = bytes,
@@ -1521,10 +1671,29 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         _encryptState.value = _encryptState.value.copy(bundleBody = text, errorMessage = null)
     }
 
+    /**
+     * 4.1.0 Phase 14 (issue #12, AraafRoyall): "if i click add photos
+     * again to add more it add the same files again".
+     *
+     * The append was unconditional. Android's photo picker does not
+     * remember a previous selection, so a user who reopens it to add one
+     * more file has to reselect the ones already staged, and every one of
+     * them landed a second time. Nothing in the compose flow removed
+     * them, so the list, the encrypt payload and the recipient's bundle
+     * all carried the duplicates.
+     *
+     * Name plus size is the key. The source URI would be sharper, but it
+     * would have to be carried on MimeAttachment, which is a transport
+     * model shared with the parser and the share path and has no business
+     * knowing about content:// URIs. Two genuinely different files with
+     * the same name AND the same byte count in one bundle is not a case
+     * worth widening that type for.
+     */
     fun addBundleAttachment(filename: String, contentType: String, bytes: ByteArray) {
+        val existing = _encryptState.value.bundleAttachments
+        if (existing.any { it.filename == filename && it.data.size == bytes.size }) return
         _encryptState.value = _encryptState.value.copy(
-            bundleAttachments = _encryptState.value.bundleAttachments +
-                MimeAttachment(filename, contentType, bytes),
+            bundleAttachments = existing + MimeAttachment(filename, contentType, bytes),
             errorMessage = null
         )
     }
@@ -1562,6 +1731,13 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      */
     fun encryptBundle(passphrase: String? = null) {
         val s = _encryptState.value
+        // 4.1.0 Phase 14: one file operation at a time, same rule the
+        // file paths have had since 4.0.4. Bundle encrypt was the last
+        // long running operation still launching a bare coroutine: a
+        // second tap started a second encrypt writing to the same
+        // progress fields, and the Cancel button under the progress row
+        // had no job to cancel.
+        if (fileOpJob?.isActive == true) return
         if (s.selectedRecipients.isEmpty()) {
             _encryptState.value = s.copy(errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_no_recipients))
             return
@@ -1571,10 +1747,26 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             return
         }
         DefaultRecipientPrefs.recordLastUsed(appPrefs, s.selectedRecipients.firstOrNull()?.fingerprint)
-        viewModelScope.launch {
+        // 4.1.0 Phase 14 (issue #12): "no progress bar showing while
+        // encrypting". Correct. encryptBundle set isProcessing and never
+        // touched processedBytes or totalBytes, so the UI had nothing to
+        // draw but an indeterminate spinner, while the single file path
+        // got a real byte counter with Cancel in 4.0.4.
+        //
+        // Two passes cross the payload: assemble the container, then
+        // encrypt it. Counting both means the bar advances the whole way
+        // instead of filling halfway and then appearing to hang. The
+        // second pass reads the assembled container, which is about four
+        // thirds of the input after base64, so the total is an estimate
+        // until the assembly finishes and it is corrected to the exact
+        // figure below.
+        val payloadBytes = s.bundleAttachments.sumOf { it.data.size.toLong() }
+        fileOpJob = viewModelScope.launch {
             _encryptState.value = _encryptState.value.copy(
                 isProcessing = true,
                 errorMessage = null,
+                processedBytes = 0L,
+                totalBytes = payloadBytes + payloadBytes * 4 / 3 + 1024,
                 // 4.0.4 — close the passphrase prompt as soon as the
                 // work starts, not when it finishes. The unlock has
                 // already happened by the time anything slow runs, so
@@ -1600,22 +1792,99 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     } else null
                 }
 
-                val encrypted = withContext(Dispatchers.Default) {
-                    val mime = com.pgpony.android.crypto.mime.MimeBuilder.buildMixed(
-                        body = s.bundleBody.takeIf { it.isNotBlank() },
-                        attachments = s.bundleAttachments
+                // 4.1.0 Phase 14c. The ring load above returns null if
+                // loadSecretKeyRing fails for any other reason too. Either
+                // way, carrying on produced an unsigned bundle while the
+                // toggle on the compose screen said "Also sign this file".
+                // The sender is told it was signed and the recipient is
+                // told it was not, which is the worst pair of outcomes a
+                // crypto app can hand you, and it is precisely the failure
+                // AraafRoyall's screenshots were suspected of showing.
+                // Refuse loudly instead.
+                if (s.signMessage && s.signingKey != null && signingRing == null) {
+                    _encryptState.value = _encryptState.value.copy(
+                        isProcessing = false,
+                        processedBytes = 0L,
+                        totalBytes = 0L,
+                        errorMessage = PGPonyApp.instance.getString(
+                            R.string.encdec_error_bundle_signing_key
+                        )
                     )
-                    crypto.encrypt(
-                        data = mime,
-                        recipientPublicKeys = recipientRings,
-                        signingSecretKey = signingRing,
-                        passphrase = passphrase,
-                        filename = null,
-                        armor = true
+                    return@launch
+                }
+
+                // 4.1.0 Phase 14 (issue #12): "please try to encrypt 10+
+                // files of 2mb+ each file and test yourself".
+                //
+                // Measured on that exact input, the old line below peaked
+                // at about 240 MB of transient allocation before the
+                // encrypt had even started. buildMixed assembled the whole
+                // container in a StringBuilder: base64 expands the payload
+                // by a third, a StringBuilder holds it as UTF-16 at two
+                // bytes per character, growing it copies, toString copies
+                // again and toByteArray once more. Then crypto.encrypt
+                // took the result as a ByteArray and accumulated the
+                // armored output in a ByteArrayOutputStream on top.
+                //
+                // Assembling straight to a scratch file and streaming that
+                // through encryptStream holds the same input at about
+                // 39 MB, and it is what makes the byte progress above
+                // real rather than synthetic.
+                val armoredOut = withContext(Dispatchers.IO) {
+                    val job = coroutineContext[kotlinx.coroutines.Job]
+                    val mimeFile = ScratchFiles.allocate(
+                        PGPonyApp.instance, "bundle.mime", ScratchFiles.SCOPE_ENCRYPT
                     )
+                    mimeFile.outputStream().buffered().use { sink ->
+                        MimeBuilder.writeMixed(
+                            out = sink,
+                            body = s.bundleBody.takeIf { it.isNotBlank() },
+                            attachments = s.bundleAttachments
+                        ) { done ->
+                            if (job?.isActive == false) {
+                                throw java.io.InterruptedIOException("cancelled")
+                            }
+                            _encryptState.value =
+                                _encryptState.value.copy(processedBytes = done)
+                        }
+                    }
+                    // Assembly done: the estimate can now be replaced with
+                    // the figure the second pass will actually count to.
+                    _encryptState.value = _encryptState.value.copy(
+                        totalBytes = payloadBytes + mimeFile.length()
+                    )
+                    val cipherFile = java.io.File(mimeFile.parentFile, "message.asc")
+                    val input = ProgressInputStream(
+                        delegate = mimeFile.inputStream(),
+                        isCancelled = { job?.isActive == false },
+                    ) { read ->
+                        _encryptState.value = _encryptState.value.copy(
+                            processedBytes = payloadBytes + read
+                        )
+                    }
+                    input.use { source ->
+                        cipherFile.outputStream().buffered().use { sink ->
+                            crypto.encryptStream(
+                                input = source,
+                                output = sink,
+                                recipientPublicKeys = recipientRings,
+                                signingSecretKey = signingRing,
+                                passphrase = passphrase,
+                                filename = null,
+                                armor = true
+                            )
+                        }
+                    }
+                    // The container is plaintext and its job is done.
+                    runCatching { mimeFile.delete() }
+                    val text = cipherFile.readText(Charsets.UTF_8)
+                    runCatching { cipherFile.delete() }
+                    text
                 }
                 _encryptState.value = _encryptState.value.copy(
-                    encryptedBundleArmored = String(encrypted, Charsets.UTF_8),
+                    encryptedBundleArmored = armoredOut,
+                    processedBytes = 0L,
+                    totalBytes = 0L,
                     isProcessing = false,
                     // 4.0.4 — dismiss the sign-passphrase prompt on
                     // success. signOnly() was the only mode that did
@@ -1764,65 +2033,61 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     private fun detectCardRecipient(text: String) {
         if (!text.contains("BEGIN PGP MESSAGE")) {
             val cur = _decryptState.value
-            if (cur.isCardMessage || cur.cardMessageKeyFingerprint != null || cur.isPasswordMessage) {
+            if (cur.isCardMessage || cur.cardMessageKeyFingerprint != null ||
+                cur.isPasswordMessage || cur.isHiddenRecipientMessage
+            ) {
                 _decryptState.value = cur.copy(
                     isCardMessage = false,
                     cardMessageKeyFingerprint = null,
                     cardMessageKeyName = null,
-                    isPasswordMessage = false
+                    isPasswordMessage = false,
+                    isHiddenRecipientMessage = false,
+                    hiddenRecipientCardFingerprint = null,
+                    hiddenRecipientCardName = null
                 )
             }
             return
         }
         viewModelScope.launch {
-            // Phase AU-1 — resolve both a card-key match (which routes to the
-            // PIN+tap path) and, failing that, a software-key match, so the
-            // picker can snap its selection to the message's recipient.
-            // Auto-detection wins over the most-used default whenever a
-            // message addressed to a specific key is loaded.
-            var cardMatch: PGPKeyEntity? = null
-            var softwareMatchFp: String? = null
-            var isPassword = false
-            try {
-                // Phase A1: one inspection yields both the public-key recipient
-                // IDs (for card/software matching) and whether the message is
-                // password-encrypted (SKESK, `gpg -c`).
-                // 3.1.0 Phase 4 (J2): inspect the unwrapped payload so
-                // card/password detection works on pasted .eml too.
-                val info = crypto.inspectEncryptedMessage(
-                    effectiveDecryptInput(text).toByteArray(Charsets.UTF_8)
-                )
-                isPassword = info.isSymmetricOnly
-                val recipientIds = info.publicKeyIDs
-                if (recipientIds.isNotEmpty()) {
-                    val cardEntities = repo.getAllKeys().filter {
-                        it.isCardBacked && it.armoredPublicKey != null
-                    }
-                    cardMatch = cardEntities.firstOrNull { entity ->
-                        val ring = repo.loadPublicKeyRing(entity.fingerprint)
-                        ring != null && ringContainsAnyKeyId(ring, recipientIds)
-                    }
-                    if (cardMatch == null) {
-                        softwareMatchFp = _decryptState.value.availableKeys
-                            .filter { !it.isCardBacked }
-                            .firstOrNull { entity ->
-                                val ring = repo.loadPublicKeyRing(entity.fingerprint)
-                                ring != null && ringContainsAnyKeyId(ring, recipientIds)
-                            }?.fingerprint
-                    }
-                }
-            } catch (e: Exception) {
-                cardMatch = null
-                softwareMatchFp = null
-                isPassword = false
+            // Snapshot the picker's software keys here, on the main thread,
+            // so the detection below never reads live UI state off-dispatcher.
+            val softwareCandidates = _decryptState.value.availableKeys
+                .filter { !it.isCardBacked }
+
+            // 4.1.0, issue #10 (AraafRoyall) — OFF THE MAIN THREAD.
+            //
+            // This is reached from updateDecryptInput, so it runs every time
+            // the decrypt box changes. Every ring load inside it is a blocking
+            // EncryptedSharedPreferences read (Tink AES-GCM per entry) plus a
+            // Bouncy Castle parse — KeyRepository.loadPublicKeyRing is a plain
+            // fun, not a suspend one. On a keyring of any size that is dozens
+            // of decrypt-and-parse round trips on Dispatchers.Main.immediate
+            // before the pasted text can render. That is the lag in the report.
+            //
+            // 4.0.4 moved the decrypt paths off the main thread and its own
+            // note says the remaining ones "were missed": the streaming file
+            // detector was fixed, the text and byte detectors were not.
+            val d = withContext(Dispatchers.IO) {
+                detectCardRecipientBlocking(text, softwareCandidates)
             }
+            val cardMatch = d.cardMatch
+            val softwareMatchFp = d.softwareMatchFp
+            val isPassword = d.isPassword
+            val hidden = d.hidden
+
             // Only publish if the input still matches what we inspected.
             if (_decryptState.value.inputText == text) {
                 val match = cardMatch
+                val hiddenFallback = d.hiddenCard
                 _decryptState.value = _decryptState.value.copy(
                     isCardMessage = match != null,
                     cardMessageKeyFingerprint = match?.fingerprint,
                     cardMessageKeyName = match?.let { it.userName.ifBlank { it.userEmail } },
+                    // 4.1.0 — armed, not fired. See [offerCardForHiddenRecipient].
+                    isHiddenRecipientMessage = hidden,
+                    hiddenRecipientCardFingerprint = hiddenFallback?.fingerprint,
+                    hiddenRecipientCardName = hiddenFallback
+                        ?.let { it.userName.ifBlank { it.userEmail } },
                     // Phase A1: a password-encrypted message has no recipient,
                     // so this is independent of card/software matching.
                     isPasswordMessage = isPassword,
@@ -1835,6 +2100,141 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 )
             }
         }
+    }
+
+    /** What [detectCardRecipient] resolves. See its dispatcher note. */
+    private data class CardDetection(
+        val cardMatch: PGPKeyEntity? = null,
+        val softwareMatchFp: String? = null,
+        val isPassword: Boolean = false,
+        val hidden: Boolean = false,
+        val hiddenCard: PGPKeyEntity? = null
+    )
+
+    /**
+     * 4.1.0, issue #10 — the blocking half of [detectCardRecipient], split out
+     * so it can be handed to Dispatchers.IO whole.
+     *
+     * Everything here either parses packets or loads a key ring, and a ring
+     * load costs a Tink-decrypted preferences read plus a BouncyCastle parse.
+     * Nothing in it touches UI state: [softwareCandidates] is passed in,
+     * already snapshotted on the main thread.
+     *
+     * Ring loads are also now skipped entirely for a message with nothing to
+     * look up — a `gpg -c` password message, or anything unparseable. Those
+     * used to pay for a full keyring walk to reach the same answer, which on
+     * a per-keystroke path is exactly the wrong trade.
+     */
+    private suspend fun detectCardRecipientBlocking(
+        text: String,
+        softwareCandidates: List<PGPKeyEntity>
+    ): CardDetection = try {
+        // Phase A1: one inspection yields both the public-key recipient IDs
+        // (for card/software matching) and whether the message is
+        // password-encrypted (SKESK, `gpg -c`).
+        // 3.1.0 Phase 4 (J2): inspect the unwrapped payload so card/password
+        // detection works on pasted .eml too.
+        val info = crypto.inspectEncryptedMessage(
+            effectiveDecryptInput(text).toByteArray(Charsets.UTF_8)
+        )
+        val hidden = info.hasHiddenRecipient
+        // 4.1.0 — match on the ADDRESSED ids only. The wildcard is the one
+        // recipient id guaranteed to match nothing on the ring, so feeding it
+        // into the lookups below would only ever waste ring loads.
+        val recipientIds = info.addressedKeyIDs
+
+        if (recipientIds.isEmpty() && !hidden) {
+            CardDetection(isPassword = info.isSymmetricOnly)
+        } else {
+            val cardEntities = repo.getAllKeys().filter {
+                it.isCardBacked && it.armoredPublicKey != null
+            }
+            var cardMatch: PGPKeyEntity? = null
+            var softwareMatchFp: String? = null
+            if (recipientIds.isNotEmpty()) {
+                cardMatch = cardEntities.firstOrNull { entity ->
+                    val ring = repo.loadPublicKeyRing(entity.fingerprint)
+                    ring != null && ringContainsAnyKeyId(ring, recipientIds)
+                }
+                if (cardMatch == null) {
+                    softwareMatchFp = softwareCandidates.firstOrNull { entity ->
+                        val ring = repo.loadPublicKeyRing(entity.fingerprint)
+                        ring != null && ringContainsAnyKeyId(ring, recipientIds)
+                    }?.fingerprint
+                }
+            }
+            // Hidden recipient with no addressed match: remember a card that
+            // COULD hold the key, for the fallback offer. First paired card
+            // with an encryption-capable key; on the usual one-card ring there
+            // is nothing to choose between.
+            val hiddenCard = if (hidden && cardMatch == null) {
+                cardEntities.firstOrNull { entity ->
+                    repo.loadPublicKeyRing(entity.fingerprint)
+                        ?.let { ringHasEncryptionKey(it) } == true
+                }
+            } else null
+            CardDetection(
+                cardMatch = cardMatch,
+                softwareMatchFp = softwareMatchFp,
+                isPassword = info.isSymmetricOnly,
+                hidden = hidden,
+                hiddenCard = hiddenCard
+            )
+        }
+    } catch (e: Exception) {
+        CardDetection()
+    }
+
+    /** True when [ring] carries any encryption-capable key (primary or subkey). */
+    private fun ringHasEncryptionKey(
+        ring: org.bouncycastle.openpgp.PGPPublicKeyRing
+    ): Boolean {
+        val it = ring.publicKeys
+        while (it.hasNext()) {
+            if (it.next().isEncryptionKey) return true
+        }
+        return false
+    }
+
+    /**
+     * 4.1.0 — offer the hardware key after a hidden-recipient message has
+     * defeated every software key.
+     *
+     * By the time this runs, PGPCryptoService.resolvePkesk has already
+     * trialled each software key against the wildcard packet and come back
+     * with NoMatchingKey. A card-backed key cannot be trialled that way — it
+     * has no local private material, which is the whole point of it — so it
+     * is the one candidate left, and asking for a tap is now justified rather
+     * than gratuitous. Promoting the fingerprint into the card fields swaps
+     * the tab to the PIN + tap flow, so the retry is one button press.
+     *
+     * Returns true when the offer was made, so the caller can suppress the
+     * raw failure text. With no card to offer it returns false and the
+     * honest "nothing here opened it" error stands.
+     */
+    private fun offerCardForHiddenRecipient(): Boolean {
+        val s = _decryptState.value
+        if (!s.isHiddenRecipientMessage) return false
+        // Already in card mode: the tap itself failed, and the card layer's
+        // own message is more specific than anything this could add. Offering
+        // again would just loop the user between two prompts.
+        if (s.isCardMessage) return false
+        val fp = s.hiddenRecipientCardFingerprint ?: return false
+        val name = s.hiddenRecipientCardName
+            ?: PGPonyApp.instance.getString(R.string.decrypt_card_message_fallback_name)
+        _decryptState.value = s.copy(
+            isProcessing = false,
+            isCardMessage = true,
+            cardMessageKeyFingerprint = fp,
+            cardMessageKeyName = name,
+            selectedKeyFingerprint = fp,
+            // The note beside the PIN field says what to DO; this says what
+            // just happened, which is a real failure and reads as one.
+            errorMessage = PGPonyApp.instance.getString(
+                R.string.decrypt_hidden_recipient_no_software_key
+            )
+        )
+        return true
     }
 
     private fun ringContainsAnyKeyId(
@@ -2165,6 +2565,16 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     isProcessing = false,
                     errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase)
                 )
+            } catch (e: com.pgpony.android.crypto.PGPCryptoError.NoMatchingKey) {
+                // 4.1.0 — the one failure worth turning into an offer.
+                if (!offerCardForHiddenRecipient()) {
+                    _decryptState.value = _decryptState.value.copy(
+                        isProcessing = false,
+                        errorMessage = PGPonyApp.instance.getString(
+                            R.string.encdec_error_decryption_failed_format, e.message ?: ""
+                        )
+                    )
+                }
             } catch (e: Exception) {
                 _decryptState.value = _decryptState.value.copy(
                     isProcessing = false,
@@ -2208,6 +2618,35 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     ): VerificationResult {
         val signerKeyId = result.signerKeyID
         if (signerKeyId == null) {
+            // 4.1.0 Phase 14b. This returned Unsigned, which is a false
+            // statement whenever the message carried a signature from
+            // someone whose key is not in the keyring: signerKeyID is
+            // only populated when findPublicKey located the signer, so
+            // "not in my keyring" and "not signed" arrived here looking
+            // identical. hasSignature and signatureKeyIDRaw were added in
+            // 4.0.0 Phase P2b-1 to tell them apart for the provider API
+            // (RESULT_NO_SIGNATURE vs RESULT_KEY_MISSING) and this screen
+            // never used them.
+            //
+            // UnknownSigner is the right state and it already exists:
+            // yellow banner, tappable, opens the signer lookup so the
+            // certificate can be fetched and the signature re-checked.
+            // buildVerificationResultForCard has done exactly this since
+            // HW Phase 3; its own doc comment says it mirrors the
+            // software path, which turned out not to be true.
+            //
+            // claimedFingerprint stays null because the decrypt results
+            // do not carry the issuer-fingerprint subpacket. The lookup
+            // falls back to the key ID, which is what UnknownSigner
+            // documents for old signatures.
+            if (result.hasSignature) {
+                return VerificationResult.UnknownSigner(
+                    signerKeyID = result.signatureKeyIDRaw
+                        ?.let { String.format("%016X", it) } ?: "",
+                    claimedFingerprint = null,
+                    signedContent = null
+                )
+            }
             return VerificationResult.Unsigned(result.plaintext)
         }
         if (!result.signatureVerified) {
@@ -2241,6 +2680,35 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     ): VerificationResult {
         val signerKeyId = result.signerKeyID
         if (signerKeyId == null) {
+            // 4.1.0 Phase 14b. This returned Unsigned, which is a false
+            // statement whenever the message carried a signature from
+            // someone whose key is not in the keyring: signerKeyID is
+            // only populated when findPublicKey located the signer, so
+            // "not in my keyring" and "not signed" arrived here looking
+            // identical. hasSignature and signatureKeyIDRaw were added in
+            // 4.0.0 Phase P2b-1 to tell them apart for the provider API
+            // (RESULT_NO_SIGNATURE vs RESULT_KEY_MISSING) and this screen
+            // never used them.
+            //
+            // UnknownSigner is the right state and it already exists:
+            // yellow banner, tappable, opens the signer lookup so the
+            // certificate can be fetched and the signature re-checked.
+            // buildVerificationResultForCard has done exactly this since
+            // HW Phase 3; its own doc comment says it mirrors the
+            // software path, which turned out not to be true.
+            //
+            // claimedFingerprint stays null because the decrypt results
+            // do not carry the issuer-fingerprint subpacket. The lookup
+            // falls back to the key ID, which is what UnknownSigner
+            // documents for old signatures.
+            if (result.hasSignature) {
+                return VerificationResult.UnknownSigner(
+                    signerKeyID = result.signatureKeyIDRaw
+                        ?.let { String.format("%016X", it) } ?: "",
+                    claimedFingerprint = null,
+                    signedContent = null
+                )
+            }
             return VerificationResult.Unsigned("")
         }
         if (!result.signatureVerified) {
@@ -2291,6 +2759,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             decryptedFilename = null,
             decryptedFileBytes = null,
             decryptedFile = null,
+            mimeFileAttachments = emptyList(),
             showFileDecryptResultSheet = false
         )
         // 4.0.4 — a mode switch abandons any streamed plaintext.
@@ -2433,25 +2902,31 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      */
     private fun detectCardRecipientFile(bytes: ByteArray) {
         viewModelScope.launch {
+            // 4.1.0, issue #10 — the byte-mode twin of the dispatcher fix in
+            // [detectCardRecipient]. Same blocking ring loads, same reason.
+            // A picked file can be large, so the inspection itself is worth
+            // moving too, not just the key lookups.
             var isPassword = false
-            val match: PGPKeyEntity? = try {
-                val info = crypto.inspectEncryptedMessage(bytes)
-                isPassword = info.isSymmetricOnly
-                val recipientIds = info.publicKeyIDs
-                if (recipientIds.isEmpty()) {
+            val match: PGPKeyEntity? = withContext(Dispatchers.IO) {
+                try {
+                    val info = crypto.inspectEncryptedMessage(bytes)
+                    isPassword = info.isSymmetricOnly
+                    val recipientIds = info.addressedKeyIDs
+                    if (recipientIds.isEmpty()) {
+                        null
+                    } else {
+                        val cardEntities = repo.getAllKeys().filter {
+                            it.isCardBacked && it.armoredPublicKey != null
+                        }
+                        cardEntities.firstOrNull { entity ->
+                            val ring = repo.loadPublicKeyRing(entity.fingerprint)
+                            ring != null && ringContainsAnyKeyId(ring, recipientIds)
+                        }
+                    }
+                } catch (e: Exception) {
+                    isPassword = false
                     null
-                } else {
-                    val cardEntities = repo.getAllKeys().filter {
-                        it.isCardBacked && it.armoredPublicKey != null
-                    }
-                    cardEntities.firstOrNull { entity ->
-                        val ring = repo.loadPublicKeyRing(entity.fingerprint)
-                        ring != null && ringContainsAnyKeyId(ring, recipientIds)
-                    }
                 }
-            } catch (e: Exception) {
-                isPassword = false
-                null
             }
             // Only publish if this file is still the selected one.
             if (_decryptState.value.selectedFileBytes === bytes) {
@@ -2471,6 +2946,59 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * recovered bytes + embedded filename. Mirrors the file-result tail of
      * decryptFileAndVerifyPath (output filename derivation, result sheet).
      */
+    /**
+     * 4.1.0 Phase 16. Ciphertext for the card decrypt path, read on
+     * demand rather than at pick time.
+     *
+     * Above INLINE_FILE_LIMIT the picker deliberately keeps only the URI
+     * (4.0.4), which the card path read as "too large for a hardware
+     * key". It is not: the card only unwraps the session key, and the
+     * message it cannot open is the one the user most needs opened.
+     * Returns null past [CARD_BUFFER_LIMIT] or when the read fails.
+     *
+     * Called from inside the card session block, so it is already off
+     * the main thread.
+     */
+    fun cardDecryptInputBytes(): ByteArray? {
+        val s = _decryptState.value
+        s.selectedFileBytes?.let { return it }
+        val uri = s.selectedFileUri ?: return null
+        val size = s.selectedFileSize ?: -1L
+        if (size > CARD_BUFFER_LIMIT) return null
+        // 4.1.0 Phase 17: chunked rather than readBytes() so the card
+        // dialog has something to draw. This is the only phase of a card
+        // decrypt that can be measured: the session-key unwrap is a
+        // single APDU exchange with no progress to report, and
+        // CardDecryptService.decryptBytes has no callback.
+        return runCatching {
+            val out = java.io.ByteArrayOutputStream(
+                if (size in 1..Int.MAX_VALUE.toLong()) size.toInt() else 64 * 1024
+            )
+            PGPonyApp.instance.contentResolver.openInputStream(uri)?.use { input ->
+                _decryptState.value = _decryptState.value.copy(
+                    processedBytes = 0L,
+                    totalBytes = if (size > 0) size else 0L
+                )
+                val buf = ByteArray(64 * 1024)
+                var read = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    read += n
+                    _decryptState.value = _decryptState.value.copy(processedBytes = read)
+                }
+            } ?: return@runCatching null
+            // The measurable phase is over; drop back to the spinner
+            // rather than leaving a full bar sitting there through the
+            // card operation.
+            _decryptState.value = _decryptState.value.copy(
+                processedBytes = 0L, totalBytes = 0L
+            )
+            out.toByteArray()
+        }.getOrNull()
+    }
+
     fun onCardDecryptFileSuccess(result: com.pgpony.android.crypto.card.CardDecryptResult) {
         val s = _decryptState.value
         val bytes = result.data
@@ -2481,29 +3009,124 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             ?: stripped
             ?: s.selectedFileName?.let { "decrypted_$it" }
             ?: "decrypted_output"
-        // 3.1.0 Phase 4 (J1): attachments → structured sheet, matching
-        // the software file path.
-        val cardFileMime = mimeRouteWithAttachments(bytes)
+        // 4.1.0 Phase 17b. startCardOperation's completion callback runs
+        // on the main thread. Everything below used to run there too,
+        // which for a 12 MB card bundle meant an 11 MB scratch write and
+        // a full MIME extraction on the UI thread: an ANR waiting to
+        // happen, and the reason Phase 17's progress bar never appeared.
+        // A blocked main thread cannot paint the bar describing what is
+        // blocking it.
+        //
+        // The buffered mimeRouteWithAttachments has always run here too,
+        // parsing the whole container on this thread; Phase 16 only made
+        // the load heavier. Both move off now, and the phase becomes
+        // measurable while it does.
         _decryptState.value = s.copy(
-            isProcessing = false,
-            decryptedFileBytes = bytes,
-            decryptedOutputFilename = outName,
-            mimeBody = cardFileMime?.body,
-            mimeAttachments = cardFileMime?.attachments ?: emptyList(),
-            showStructuredResultSheet = cardFileMime != null,
-            showFileDecryptResultSheet = cardFileMime == null,
-            verificationResult = null,
-            signatureVerified = result.signatureVerified,
-            signerKeyID = result.signerKeyID,
+            isProcessing = true,
+            processedBytes = 0L,
+            // 4.1.0 Phase 17c: two phases, write then extract, and the
+            // second is the slow one. Counting only the first left the
+            // bar full for the whole of the second.
+            totalBytes = bytes.size.toLong() * 2,
             errorMessage = null
         )
-        _events.tryEmit(Event.DecryptSuccess)
-        recordDecryptUsage(
-            _decryptState.value.cardMessageKeyFingerprint
-                ?: _decryptState.value.selectedKeyFingerprint
-        )
         viewModelScope.launch {
-            val plaintext = try { bytes.toString(Charsets.UTF_8) } catch (_: Exception) { "" }
+            // 4.1.0 Phase 16. A card bundle now reaches here at a size
+            // where mimeRouteWithAttachments is the wrong tool: it parses
+            // the whole container in memory and hands back every
+            // attachment as a ByteArray, on top of the ciphertext and
+            // plaintext already resident. Above INLINE_FILE_LIMIT the
+            // plaintext goes to scratch and the Phase 14 extractor lists
+            // the attachments from disk, exactly as the software
+            // streaming path does. Below it, nothing changes: small card
+            // results stay entirely in memory, which is the
+            // privacy-preferable behaviour and what every existing card
+            // decrypt does today.
+            val cardBundle = if (bytes.size.toLong() > INLINE_FILE_LIMIT) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val scratch = ScratchFiles.allocate(
+                            PGPonyApp.instance, outName, ScratchFiles.SCOPE_DECRYPT
+                        )
+                        // Chunked so the write is the measurable phase the
+                        // card's own work never can be.
+                        scratch.outputStream().buffered().use { out ->
+                            var off = 0
+                            while (off < bytes.size) {
+                                val n = minOf(256 * 1024, bytes.size - off)
+                                out.write(bytes, off, n)
+                                off += n
+                                _decryptState.value =
+                                    _decryptState.value.copy(processedBytes = off.toLong())
+                            }
+                        }
+                        if (!MimeStreamExtractor.looksLikeBundle(scratch)) {
+                            // No extraction phase to run, so close the bar
+                            // rather than leaving it stopped at half.
+                            _decryptState.value = _decryptState.value.copy(
+                                processedBytes = bytes.size.toLong() * 2
+                            )
+                            // Not a bundle: keep the plaintext on disk
+                            // anyway, it is too big to want a second copy
+                            // of, and let the file result sheet read it
+                            // from there.
+                            CardScratchOutcome(scratch, null)
+                        } else {
+                            val dir = java.io.File(scratch.parentFile, "attachments")
+                            dir.mkdirs()
+                            val extracted = MimeStreamExtractor.extract(scratch, dir) { consumed ->
+                                _decryptState.value = _decryptState.value.copy(
+                                    processedBytes = bytes.size.toLong() + consumed
+                                )
+                            }
+                            if (extracted != null) {
+                                runCatching { scratch.delete() }
+                                CardScratchOutcome(null, extracted)
+                            } else {
+                                CardScratchOutcome(scratch, null)
+                            }
+                        }
+                    }.getOrNull()
+                }
+            } else null
+
+            // 3.1.0 Phase 4 (J1): attachments → structured sheet, matching
+            // the software file path.
+            val cardFileMime = if (cardBundle == null) {
+                withContext(Dispatchers.Default) { mimeRouteWithAttachments(bytes) }
+            } else null
+            val extractedBundle = cardBundle?.bundle
+            _decryptState.value = _decryptState.value.copy(
+                isProcessing = false,
+                processedBytes = 0L,
+                totalBytes = 0L,
+                decryptedFileBytes = if (cardBundle == null) bytes else null,
+                decryptedFile = cardBundle?.file,
+                decryptedOutputFilename = outName,
+                mimeBody = extractedBundle?.body ?: cardFileMime?.body,
+                mimeAttachments = cardFileMime?.attachments ?: emptyList(),
+                mimeFileAttachments = extractedBundle?.attachments ?: emptyList(),
+                showStructuredResultSheet = cardFileMime != null || extractedBundle != null,
+                showFileDecryptResultSheet = cardFileMime == null && extractedBundle == null,
+                verificationResult = null,
+                signatureVerified = result.signatureVerified,
+                signerKeyID = result.signerKeyID,
+                errorMessage = null
+            )
+            _events.tryEmit(Event.DecryptSuccess)
+            recordDecryptUsage(
+                _decryptState.value.cardMessageKeyFingerprint
+                    ?: _decryptState.value.selectedKeyFingerprint
+            )
+            // 4.1.0 Phase 16: only the Unsigned banner carries the
+            // plaintext, and only the text paths render it, so a large
+            // card result does not need a second UTF-8 copy of itself
+            // made just to build a banner.
+            val plaintext = if (cardBundle != null) "" else {
+                withContext(Dispatchers.Default) {
+                    try { bytes.toString(Charsets.UTF_8) } catch (_: Exception) { "" }
+                }
+            }
             val verResult = buildVerificationResultForCard(result, plaintext)
             _decryptState.value = _decryptState.value.copy(verificationResult = verResult)
         }
@@ -2655,6 +3278,38 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
                 val verResult = buildVerificationResultForStream(result)
 
+                // 4.1.0 Phase 14 (issue #10, AraafRoyall). This is where
+                // the streamed path used to stop, hardcoding
+                // showStructuredResultSheet false and presenting the
+                // plaintext as a single file. For a Bundle that plaintext
+                // IS the multipart/mixed container, so every bundle over
+                // INLINE_FILE_LIMIT showed one opaque extensionless file
+                // (which nothing can open, hence "corrupted") while every
+                // bundle under the limit listed its attachments correctly.
+                // Not intermittent: a straight fork on size.
+                //
+                // The fix is NOT to raise the limit or to call
+                // mimeRouteWithAttachments here. Both need the whole
+                // plaintext in memory, which is the out of memory bug
+                // issue #6 was about. The container is walked on disk and
+                // each attachment written out as its own scratch file, so
+                // the fixed 64 KiB ceiling the streaming path exists for
+                // is preserved end to end.
+                val bundle = withContext(Dispatchers.IO) {
+                    if (!MimeStreamExtractor.looksLikeBundle(outFile)) {
+                        null
+                    } else {
+                        val dir = java.io.File(outFile.parentFile, "attachments")
+                        dir.mkdirs()
+                        MimeStreamExtractor.extract(outFile, dir)
+                    }
+                }
+                // The container is now a duplicate of material sitting in
+                // the extracted files, and it is plaintext. Drop it. It
+                // stays put when extraction did not apply, because then it
+                // is the result the user asked for.
+                if (bundle != null) runCatching { outFile.delete() }
+
                 _decryptState.value = _decryptState.value.copy(
                     outputText = "",
                     outputData = null,
@@ -2667,12 +3322,13 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     showPassphraseDialog = false,
                     verificationResult = verResult,
                     decryptedFileBytes = null,
-                    decryptedFile = outFile,
+                    decryptedFile = if (bundle != null) null else outFile,
                     decryptedOutputFilename = outFile.name,
-                    mimeBody = null,
+                    mimeBody = bundle?.body,
                     mimeAttachments = emptyList(),
-                    showStructuredResultSheet = false,
-                    showFileDecryptResultSheet = true
+                    mimeFileAttachments = bundle?.attachments ?: emptyList(),
+                    showStructuredResultSheet = bundle != null,
+                    showFileDecryptResultSheet = bundle == null
                 )
                 _events.tryEmit(Event.DecryptSuccess)
                 recordDecryptUsage(s.selectedKeyFingerprint)
@@ -2693,6 +3349,23 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     totalBytes = 0L,
                     errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase)
                 )
+            } catch (e: com.pgpony.android.crypto.PGPCryptoError.NoMatchingKey) {
+                // 4.1.0 — hidden-recipient offer, streaming twin. The partial
+                // plaintext goes either way: nothing was decrypted, and the
+                // card retry starts from the picked file again.
+                ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
+                _decryptState.value = _decryptState.value.copy(
+                    processedBytes = 0L,
+                    totalBytes = 0L
+                )
+                if (!offerCardForHiddenRecipient()) {
+                    _decryptState.value = _decryptState.value.copy(
+                        isProcessing = false,
+                        errorMessage = PGPonyApp.instance.getString(
+                            R.string.encdec_error_decryption_failed_format, e.message ?: ""
+                        )
+                    )
+                }
             } catch (e: Throwable) {
                 // 4.0.4 — Throwable, not Exception: an Error escaping here
                 // would leave isProcessing true with nothing to clear it,
@@ -2732,7 +3405,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         _decryptState.value = _decryptState.value.copy(
             showFileDecryptResultSheet = false,
             decryptedFileBytes = null,
-            decryptedFile = null
+            decryptedFile = null,
+            mimeFileAttachments = emptyList()
         )
     }
 
@@ -2839,6 +3513,16 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     isProcessing = false,
                     errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase)
                 )
+            } catch (e: com.pgpony.android.crypto.PGPCryptoError.NoMatchingKey) {
+                // 4.1.0 — the one failure worth turning into an offer.
+                if (!offerCardForHiddenRecipient()) {
+                    _decryptState.value = _decryptState.value.copy(
+                        isProcessing = false,
+                        errorMessage = PGPonyApp.instance.getString(
+                            R.string.encdec_error_decryption_failed_format, e.message ?: ""
+                        )
+                    )
+                }
             } catch (e: Exception) {
                 _decryptState.value = _decryptState.value.copy(
                     isProcessing = false,
@@ -2859,29 +3543,22 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * bare armored block is NOT an envelope and passes through as-is.
      */
     private fun effectiveDecryptInput(raw: String): String =
-        MimeParser.pgpMimeEncryptedPayload(raw) ?: raw
+        MimeEnvelope.unwrapText(raw)
 
     /**
      * 3.1.0 Phase 4 (J2) — file-mode variant: an encrypted .eml opened
      * as a FILE is text carrying the envelope. Unwrap to the armored
      * bytes when present; otherwise return [bytes] unchanged (binary
      * ciphertext, plain armored files).
+     *
+     * 4.1.0 Phase 7: the body moved to MimeEnvelope. It was duplicated
+     * byte for byte in ShareTargetViewModel.unwrapEnvelopeBytes, and
+     * Phase 6's fix had to be applied to both copies by hand. See that
+     * file for why the fixed-prefix marker scan was replaced outright
+     * rather than given a larger number.
      */
-    private fun effectiveDecryptFileBytes(bytes: ByteArray): ByteArray {
-        val head = try {
-            String(bytes, 0, minOf(bytes.size, 8192), Charsets.UTF_8)
-        } catch (_: Exception) {
-            return bytes
-        }
-        if (!head.contains("multipart/encrypted", ignoreCase = true)) return bytes
-        val text = try {
-            String(bytes, Charsets.UTF_8)
-        } catch (_: Exception) {
-            return bytes
-        }
-        val armored = MimeParser.pgpMimeEncryptedPayload(text) ?: return bytes
-        return armored.toByteArray(Charsets.UTF_8)
-    }
+    private fun effectiveDecryptFileBytes(bytes: ByteArray): ByteArray =
+        MimeEnvelope.unwrapBytes(bytes)
 
     // ── 3.1.0 Phase 4 (J1): content-based routing after decrypt ────────
 
@@ -2916,10 +3593,17 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     /** 3.1.0 Phase 4 (J1): dismiss the structured result sheet. Clears
      *  the decrypted attachment bytes — same hygiene as the file sheet. */
     fun dismissStructuredResult() {
+        // 4.1.0 Phase 14: the streamed bundle path put the extracted
+        // attachments on disk, so dropping the list is no longer enough.
+        // Same intent the buffered path always had: once the sheet is
+        // closed the user has saved or shared them or they have not, and
+        // decrypted material does not linger past that.
+        ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
         _decryptState.value = _decryptState.value.copy(
             showStructuredResultSheet = false,
             mimeBody = null,
-            mimeAttachments = emptyList()
+            mimeAttachments = emptyList(),
+            mimeFileAttachments = emptyList()
         )
     }
 
@@ -2948,15 +3632,43 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * to Hagrid by fingerprint). For A3 the only source is Hagrid.
      */
     fun lookupSigner() {
-        val claimedFp = _decryptState.value.pendingUnknownClaimedFingerprint
-            ?: return  // No fingerprint to look up — banner shouldn't be tappable
+        val s = _decryptState.value
+        val claimedFp = s.pendingUnknownClaimedFingerprint
+        // 4.1.0 Phase 14d. This used to return here when there was no
+        // claimed fingerprint, with a comment reasoning that the banner
+        // would not be tappable in that case. The banner is tappable
+        // unconditionally (VerificationBanner.kt:86), so on the decrypt
+        // path the yellow row simply did nothing when tapped: the
+        // decrypt results carry the signature's key ID but not the
+        // issuer fingerprint subpacket, so claimedFingerprint is null
+        // there. Only the clear-signed path, which goes through
+        // VerifyService, ever supplied one.
+        //
+        // Fall back to the key ID, which is what UnknownSigner's own doc
+        // comment prescribes for signatures lacking the subpacket.
+        val signerKeyId = (s.verificationResult as? VerificationResult.UnknownSigner)
+            ?.signerKeyID?.takeIf { it.isNotBlank() }
+        val query = claimedFp ?: signerKeyId ?: return
         _decryptState.value = _decryptState.value.copy(
             showSignerLookup = true,
             signerLookupState = SignerLookupState.Searching
         )
         viewModelScope.launch {
             val armored = try {
-                keyServer.searchByFingerprint(claimedFp)
+                // 4.1.0 Phase 14e. These were the Hagrid-only helpers, so
+                // the signer lookup searched keys.openpgp.org and nothing
+                // else. findByFingerprint has walked the configured
+                // directory (first-party keys.pgpony.app first) since
+                // Phase 6 and the import and exchange paths have used it
+                // all along; this one screen was still going direct, so a
+                // key published only to the first-party server, or a v6
+                // or PQC key that keys.openpgp.org will not serve at all,
+                // read as "not found".
+                if (claimedFp != null) {
+                    keyServer.findByFingerprint(claimedFp)?.armoredKey
+                } else {
+                    keyServer.findByKeyId(query)?.armoredKey
+                }
             } catch (e: Exception) {
                 _decryptState.value = _decryptState.value.copy(
                     signerLookupState = SignerLookupState.Failed(
@@ -2967,7 +3679,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             }
             if (armored.isNullOrBlank()) {
                 _decryptState.value = _decryptState.value.copy(
-                    signerLookupState = SignerLookupState.NotFound(claimedFp)
+                    signerLookupState = SignerLookupState.NotFound(query)
                 )
                 return@launch
             }

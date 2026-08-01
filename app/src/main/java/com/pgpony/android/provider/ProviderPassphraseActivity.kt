@@ -38,6 +38,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.pgpony.android.PGPonyTheme
 import com.pgpony.android.R
+import com.pgpony.android.ui.util.autofillPassword
 
 class ProviderPassphraseActivity : ComponentActivity() {
 
@@ -103,7 +104,16 @@ class ProviderPassphraseActivity : ComponentActivity() {
                                 label = {
                                     Text(stringResource(R.string.provider_passphrase_hint))
                                 },
-                                modifier = Modifier.fillMaxWidth()
+                                // 4.1.0 §3.4 (issue #8) — the provider-invoked
+                                // prompt, i.e. the exact field the reporter hits
+                                // decrypting in FairEmail. It runs in a PGPony
+                                // activity launched by the mail app, so it is
+                                // the one worth confirming on device: autofill
+                                // has to see THIS window, not just the in-app
+                                // ones. See ui/util/Autofill.kt.
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .autofillPassword { passphrase = it }
                             )
                         }
                     },

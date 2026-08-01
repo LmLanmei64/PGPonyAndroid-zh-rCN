@@ -57,7 +57,7 @@ class PGPonyApp : Application() {
         // Initialize Room database
         // Phase A6: schema bumped to v2 to add revocation columns.
         // HW Phase 0/1: schema bumped to v3 to add card-backed columns.
-        // MIGRATION_1_2 / MIGRATION_2_3 / MIGRATION_3_4 declared in data/PGPKeyEntity.kt.
+        // MIGRATION_1_2 / MIGRATION_2_3 / MIGRATION_3_4 declared in data/RoomMigrations.kt.
         // 3.0.0-KS1: schema bumped to v5 for keyserver activity timestamps (MIGRATION_4_5).
         // 4.0.0 Succession Phase 1: schema bumped to v6 for the OpenPGP API
         // provider's allowed_api_clients table (MIGRATION_5_6).

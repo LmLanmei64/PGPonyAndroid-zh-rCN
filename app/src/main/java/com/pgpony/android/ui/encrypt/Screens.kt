@@ -45,6 +45,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -62,11 +63,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.pgpony.android.MainActivity
+import com.pgpony.android.crypto.card.CardLinkKind
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
 import com.pgpony.android.data.PGPKeyEntity
 import com.pgpony.android.crypto.card.CardSigningService
 import com.pgpony.android.crypto.card.CardDecryptService
+import com.pgpony.android.ui.components.ReadOnlyTextOutput
+import com.pgpony.android.ui.util.autofillPassword
 import com.pgpony.android.crypto.PGPCryptoService
 import com.pgpony.android.crypto.card.OpenPgpCardException
 import com.pgpony.android.ui.components.KeyCard
@@ -93,6 +97,12 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
     // tapping Sign with a card key shows a PIN prompt, then a tap, then
     // results are reported back to the VM via onCardSign* hooks.
     val cardActivity = encryptContext as? MainActivity
+
+    // 4.0.5 — release NFC reader mode when the Encrypt screen goes away,
+    // not when a card operation finishes. See MainActivity.endCardOperation.
+    DisposableEffect(cardActivity) {
+        onDispose { cardActivity?.stopCardScan() }
+    }
     var showCardSignPin by remember { mutableStateOf(false) }
     // 3.1.0 Phase 7 (B1): prefill from the PIN cache when enabled and
     // unexpired; the dialog still shows (the NFC tap is needed anyway)
@@ -328,9 +338,25 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                         // no signing key, no card — straight to the VM, which
                         // validates the passphrase + confirm.
                         EncryptMode.PASSWORD -> viewModel.encryptWithPassword()
-                        // 3.1.0 Phase 5 (J3): Bundle — software signing only
-                        // (card path deliberately excluded from Bundle v1).
-                        EncryptMode.BUNDLE -> viewModel.encryptBundle()
+                        // 4.1.0 Phase 15: Bundle can card-sign now, same
+                        // PIN dialog and NFC tap as TEXT and FILE. The
+                        // exclusion in Bundle v1 was a scoping decision, not
+                        // a limitation: encryptStream has carried the card
+                        // signer since 4.0.0 Phase P2d.
+                        EncryptMode.BUNDLE -> {
+                            val cardSign = state.signMessage &&
+                                state.signingKey?.isCardBacked == true
+                            val hasBundleInput = state.bundleBody.isNotBlank() ||
+                                state.bundleAttachments.isNotEmpty()
+                            if (cardSign && state.selectedRecipients.isNotEmpty() &&
+                                hasBundleInput
+                            ) {
+                                cardSignPin = ""
+                                showCardSignPin = true
+                            } else {
+                                viewModel.encryptBundle()
+                            }
+                        }
                       }
                     }
                     // HW Phase 3 / "fingerprint to sign" — gate SOFTWARE
@@ -376,8 +402,13 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                             state.selectedRecipients.isNotEmpty() && state.hasSelectedFile
                         // Phase A1: password mode never signs with a card.
                         EncryptMode.PASSWORD -> false
-                        // 3.1.0 Phase 5 (J3): Bundle v1 never card-signs.
-                        EncryptMode.BUNDLE -> false
+                        // 4.1.0 Phase 15: Bundle card-signs now, so the
+                        // biometric gate has to predict it like the others.
+                        EncryptMode.BUNDLE -> state.signMessage &&
+                            state.signingKey?.isCardBacked == true &&
+                            state.selectedRecipients.isNotEmpty() &&
+                            (state.bundleBody.isNotBlank() ||
+                                state.bundleAttachments.isNotEmpty())
                     }
                     val signPrefs = encryptContext.getSharedPreferences(
                         "pgpony_prefs", android.content.Context.MODE_PRIVATE
@@ -460,13 +491,26 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                     style = MaterialTheme.typography.labelLarge
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                OutlinedTextField(
-                    value = state.outputText,
-                    onValueChange = {},
-                    readOnly = true,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    maxLines = 15
+                // 4.1.0, issue #10 — same swap as the Decrypt tab. Armored
+                // output is monospaced, so the style is passed through.
+                ReadOnlyTextOutput(
+                    text = state.outputText,
+                    dialogTitle = when (state.mode) {
+                        EncryptMode.SIGN -> stringResource(R.string.encrypt_output_signed_message)
+                        else -> stringResource(R.string.encrypt_output_encrypted_message)
+                    },
+                    onCopy = { full ->
+                        ClipboardService.copyText(
+                            encryptContext, full,
+                            label = encryptContext.getString(R.string.app_name)
+                        )
+                        haptics.tap()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    minHeight = 120.dp
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
@@ -611,9 +655,50 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                                 )
                             }) { result ->
                                 cardSignWaiting = false
-                                cardActivity?.stopCardScan()
+                                // 4.0.5 — do not stop reader mode here; the
+                                // card is still in the field. See #7.
+                                cardActivity?.endCardOperation()
                                 result
                                     .onSuccess { viewModel.onCardEncryptFileSuccess(it) }
+                                    .onFailure { e -> viewModel.onCardSignFailure(e.message ?: cardSignFailedMsg) }
+                            }
+                        } else if (state.mode == EncryptMode.BUNDLE) {
+                            // 4.1.0 Phase 15. The Bundle card route. The two
+                            // branches around it hand PGPCryptoService.encrypt
+                            // a whole ByteArray; this one goes through the
+                            // ViewModel so the container is assembled to a
+                            // scratch file and streamed. See
+                            // encryptBundleWithCard for why.
+                            cardActivity?.startCardOperation({ session ->
+                                session.select()
+                                val fp = session.getApplicationRelatedData().sigFingerprint
+                                    ?: throw OpenPgpCardException.Malformed(cardNoSigKeyMsg)
+                                // 3.1.0 Phase 7 Fix1: card slot fps are subkeys on
+                                // offline-primary layouts, tolerant loader.
+                                val pubRing = PGPonyApp.instance.keyRepository
+                                    .loadPublicKeyRingByCardFingerprint(fp)
+                                    ?: throw OpenPgpCardException.Malformed(cardPairFirstMsg)
+                                val recipientRings = recipientFps.mapNotNull {
+                                    PGPonyApp.instance.keyRepository.loadPublicKeyRing(it)
+                                }
+                                if (recipientRings.isEmpty()) {
+                                    throw OpenPgpCardException.Malformed(cardNoRecipientsMsg)
+                                }
+                                viewModel.encryptBundleWithCard(
+                                    session = session,
+                                    pin = pin.toByteArray(Charsets.UTF_8),
+                                    // 3.1.0 Phase 7 (A3): the [S]-slot key, a
+                                    // SUBKEY on offline-primary layouts.
+                                    cardSigningPublicKey =
+                                        CardSigningService.shared.signingPublicKey(pubRing, fp),
+                                    recipientRings = recipientRings
+                                )
+                            }) { result ->
+                                cardSignWaiting = false
+                                // 4.0.5 - see below.
+                                cardActivity?.endCardOperation()
+                                result
+                                    .onSuccess { viewModel.onCardBundleSuccess(it) }
                                     .onFailure { e -> viewModel.onCardSignFailure(e.message ?: cardSignFailedMsg) }
                             }
                         } else {
@@ -667,7 +752,8 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                                 }
                             }) { result ->
                                 cardSignWaiting = false
-                                cardActivity?.stopCardScan()
+                                // 4.0.5 — see above.
+                                cardActivity?.endCardOperation()
                                 result
                                     .onSuccess { viewModel.onCardSignSuccess(it) }
                                     .onFailure { e -> viewModel.onCardSignFailure(e.message ?: cardSignFailedMsg) }
@@ -694,11 +780,18 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
             icon = { Icon(Icons.Filled.Contactless, contentDescription = null) },
             title = { Text(stringResource(R.string.card_sign_dialog_title)) },
             text = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(stringResource(R.string.card_sign_hold_card))
-                }
+                // 4.1.0 Phase 17: a card-signed Bundle assembles and
+                // streams megabytes inside this dialog (Phase 15), and
+                // encryptBundleWithCard has been reporting bytes the whole
+                // time with nothing on screen to show them.
+                CardWaitBody(
+                    // Over a cable there is nothing to hold against the phone.
+                    label = if (cardActivity?.cardLink()?.preferred == CardLinkKind.USB)
+                        stringResource(R.string.card_usb_working)
+                    else stringResource(R.string.card_sign_hold_card),
+                    processed = state.processedBytes,
+                    total = state.totalBytes,
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -911,9 +1004,16 @@ private fun RecipientPickerSheet(
     val anySelected = selected.isNotEmpty()
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        // 4.1.0 — the scroll + insets triad, same as GenerateKeySheet. This
+        // sheet lists every key on the ring above a search field, so it is one
+        // of the likelier ones to outgrow the viewport. Verified free of any
+        // lazy list first: nesting verticalScroll around one throws.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp)
         ) {
@@ -1664,7 +1764,95 @@ private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewM
         }
     }
 
-    // 3) Attachment list
+    // 3) Recipients + sign controls, same composition as FileSection.
+    RecipientPickerCard(state = state, viewModel = viewModel)
+    Spacer(modifier = Modifier.height(16.dp))
+    // 4.1.0 Phase 14c. Two problems, one block.
+    //
+    // First, Bundle had the toggle but never the Sign as picker that
+    // EncryptModeBody and FileSection have carried since Phase A5, so a
+    // user with several key pairs could switch signing on and had no way
+    // to say which key should sign. Same composition as the other two.
+    //
+    // Second, the old gate read state.signingKey directly and hid the
+    // whole section when it was card backed. That meant a user whose
+    // default signer is a hardware key could not sign a Bundle at all,
+    // even with software key pairs sitting in the keyring, because
+    // nothing on this screen let them switch. Gating on the filtered
+    // list instead, and showing the picker whenever the current
+    // selection is unusable here, gives them the way out.
+    //
+    // The filter itself is not new policy: encryptBundle has always
+    // signed with software keys only (the card path is out of Bundle v1
+    // by design, an NFC tap mid compose adds failure modes the feature
+    // does not need yet). What is new is that the UI now says so instead
+    // of quietly disagreeing with it.
+    // 4.1.0 Phase 15: no longer filtered. Card keys sign bundles now.
+    val bundleSigningKeys = state.availableSigningKeys
+    val bundleSigningKey = state.signingKey
+    if (bundleSigningKey != null && bundleSigningKeys.isNotEmpty()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Switch(
+                checked = state.signMessage,
+                onCheckedChange = { viewModel.toggleSign(it) }
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.encrypt_also_sign_file_title),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    stringResource(
+                        R.string.encrypt_also_sign_subtitle_format,
+                        bundleSigningKey.userName.ifBlank { bundleSigningKey.userEmail }
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Shown when there is a real choice to make.
+        if (state.signMessage && bundleSigningKeys.size > 1) {
+            var showSignAsSheet by remember { mutableStateOf(false) }
+            Spacer(modifier = Modifier.height(8.dp))
+            SignAsRow(
+                key = bundleSigningKey,
+                onClick = { showSignAsSheet = true }
+            )
+            if (showSignAsSheet) {
+                SignAsSheet(
+                    keyPairs = bundleSigningKeys,
+                    currentSelection = bundleSigningKey,
+                    onSelect = { picked ->
+                        viewModel.setSigningKey(picked)
+                        showSignAsSheet = false
+                    },
+                    onDismiss = { showSignAsSheet = false },
+                    defaultSignerFingerprint = state.defaultSignerFingerprint,
+                    onSetDefault = { viewModel.setDefaultSigner(it) }
+                )
+            }
+        }
+    }
+
+    // 4) Attachment list, LAST.
+    //
+    // 4.1.0 Phase 18 (issue #12 item G, AraafRoyall): "we really need to
+    // put attachments list to bottom". He is on 4.1.0-rc2, so he already
+    // has the Phase 8 collapse and it did not settle it. Phase 8 read the
+    // complaint as "this list is too long"; what he means is "this list is
+    // in the way", and those are different problems.
+    //
+    // Below the recipients and the sign controls, adding files cannot move
+    // anything the user still has to reach. The collapse stays because it
+    // solves the other half: the Encrypt button lives just past the end of
+    // this composable, so a bounded list is what keeps it on screen.
     if (state.bundleAttachments.isNotEmpty()) {
         Spacer(modifier = Modifier.height(12.dp))
         Text(
@@ -1672,7 +1860,26 @@ private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewM
             style = MaterialTheme.typography.labelLarge
         )
         Spacer(modifier = Modifier.height(4.dp))
-        state.bundleAttachments.forEachIndexed { index, att ->
+        // 4.1.0 Phase 8 (issue #12) — "If there are many files it adds a long
+        // list". Every attachment grew this already-scrolling page, pushing
+        // Recipients and the Encrypt button arbitrarily far down.
+        //
+        // Deliberately NOT a scroll container. The Encrypt column already
+        // carries verticalScroll (Screens.kt ~144) and Compose throws at
+        // runtime on nested scrollables in the same direction — the hazard
+        // PHASE_4.1.0-5_NOTES.md documents for ContactLinkSheet and
+        // SignAsSheet. Collapsing is the correct shape here, not scrolling.
+        //
+        // take() preserves order from index 0, so the indices handed to
+        // removeBundleAttachment stay correct while collapsed.
+        val collapseAt = 8
+        var showAllAttachments by rememberSaveable { mutableStateOf(false) }
+        val attachmentsCollapsed =
+            state.bundleAttachments.size > collapseAt && !showAllAttachments
+        val visibleAttachments =
+            if (attachmentsCollapsed) state.bundleAttachments.take(collapseAt)
+            else state.bundleAttachments
+        visibleAttachments.forEachIndexed { index, att ->
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
@@ -1713,37 +1920,20 @@ private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewM
                 }
             }
         }
-    }
-
-    Spacer(modifier = Modifier.height(16.dp))
-
-    // 4) Recipients + software sign toggle — same composition as FileSection.
-    RecipientPickerCard(state = state, viewModel = viewModel)
-    Spacer(modifier = Modifier.height(16.dp))
-    val bundleSigningKey = state.signingKey
-    if (bundleSigningKey != null && bundleSigningKey.isCardBacked != true) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Switch(
-                checked = state.signMessage,
-                onCheckedChange = { viewModel.toggleSign(it) }
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
+        if (state.bundleAttachments.size > collapseAt) {
+            TextButton(
+                onClick = { showAllAttachments = !showAllAttachments },
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Text(
-                    stringResource(R.string.encrypt_also_sign_file_title),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    stringResource(
-                        R.string.encrypt_also_sign_subtitle_format,
-                        bundleSigningKey.userName.ifBlank { bundleSigningKey.userEmail }
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (attachmentsCollapsed) {
+                        stringResource(
+                            R.string.encrypt_bundle_show_all_format,
+                            state.bundleAttachments.size
+                        )
+                    } else {
+                        stringResource(R.string.encrypt_bundle_show_fewer)
+                    }
                 )
             }
         }
@@ -2093,6 +2283,51 @@ private fun queryDocumentMetadata(
  * spinner "slow" and "dead" look identical. Reported as exactly that:
  * "starts encrypting but never finishes".
  */
+/**
+ * 4.1.0 Phase 17. Body for the card wait dialogs: the spinner and its
+ * message, plus a determinate bar when there is a measurable phase in
+ * flight.
+ *
+ * The spinner never goes away, because the card's own work cannot be
+ * measured: a session-key unwrap or a signature is one APDU exchange
+ * that either returns or does not. The bar appears only for the phases
+ * around it that CAN be counted, which is the ciphertext read on the
+ * decrypt side and the container assembly plus encrypt on the Bundle
+ * sign side. Callers zero the totals when a phase ends, so the bar
+ * comes and goes and the spinner carries the rest.
+ */
+@Composable
+internal fun CardWaitBody(
+    label: String,
+    processed: Long,
+    total: Long,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(label)
+        }
+        if (total > 0L) {
+            Spacer(modifier = Modifier.height(12.dp))
+            LinearProgressIndicator(
+                progress = { (processed.toFloat() / total.toFloat()).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = stringResource(
+                    R.string.encdec_progress_format,
+                    formatFileSize(processed),
+                    formatFileSize(total),
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 @Composable
 internal fun StreamProgressRow(
     processed: Long,
@@ -2294,7 +2529,10 @@ private fun SignPassphraseDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    // 4.1.0 §3 (issue #8) — see ui/util/Autofill.kt.
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .autofillPassword { viewModel.updateSignPassphrase(it) }
                 )
                 state.errorMessage?.let {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -2432,7 +2670,10 @@ private fun DecryptPassphraseDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    // 4.1.0 §3 (issue #8) — see ui/util/Autofill.kt.
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .autofillPassword { viewModel.updatePassphrase(it) }
                 )
                 // Phase A10e: parity with the encrypt-side dialog —
                 // surface errorMessage inline. Previously the
@@ -2504,7 +2745,10 @@ private fun LegacySignPassphraseDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    // 4.1.0 §3 (issue #8) — see ui/util/Autofill.kt.
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .autofillPassword { viewModel.updateSignPassphrase(it) }
                 )
                 state.errorMessage?.let {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -2560,7 +2804,11 @@ private fun LegacyDecryptPassphraseDialog(
                 label = { Text("Enter passphrase") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 visualTransformation = PasswordVisualTransformation(),
-                singleLine = true
+                singleLine = true,
+                // 4.1.0 §3 (issue #8) — see ui/util/Autofill.kt. This is the
+                // prompt a decrypt raises mid-flow, so it is the one a manager
+                // most needs to recognise.
+                modifier = Modifier.autofillPassword { viewModel.updatePassphrase(it) }
             )
         },
         confirmButton = {
@@ -2584,7 +2832,7 @@ private fun LegacyDecryptPassphraseDialog(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewModel) {
     val context = LocalContext.current
@@ -2612,9 +2860,13 @@ private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewMo
         onDismissRequest = { viewModel.dismissSignFileSheet() },
         sheetState = sheetState,
     ) {
+        // 4.1.0 — scroll + insets triad; this sheet asks for a passphrase.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -2656,7 +2908,11 @@ private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewMo
             }
 
             // Armored / binary toggle
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 4.1.0 — FlowRow for the same reason as the Expiration chips in
+            // GenerateKeySheet. Only two chips here, so it is insurance
+            // rather than a live bug, but the failure mode when a fixed Row
+            // runs out of width is a chip that wraps one character per line.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = state.signFileArmor,
                     onClick = { viewModel.setSignFileArmor(true) },
@@ -2676,7 +2932,10 @@ private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewMo
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                // 4.1.0 §3 (issue #8) — see ui/util/Autofill.kt.
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .autofillPassword { viewModel.setSignFilePassphrase(it) },
             )
 
             state.errorMessage?.let { msg ->
@@ -2815,9 +3074,14 @@ private fun VerifyFileSheet(state: DecryptUiState, viewModel: EncryptDecryptView
         onDismissRequest = { viewModel.dismissVerifyFileSheet() },
         sheetState = sheetState,
     ) {
+        // 4.1.0 — scroll + insets triad. No text field here, so imePadding is
+        // insurance rather than a fix, but the overflow exposure is the same.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -3052,6 +3316,12 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
     // screen reload.
     val context = LocalContext.current
     val decryptActivity = context.findEncryptMainActivity()
+
+    // 4.0.5 — see the Encrypt screen: reader mode is released on dispose,
+    // never while the card may still be against the phone.
+    DisposableEffect(decryptActivity) {
+        onDispose { decryptActivity?.stopCardScan() }
+    }
     // 6.2.1 — shared per-action biometric gate for the Decrypt screen.
     // Honors "require biometric for decryption": runs [action] inside the
     // BiometricGate success callback when the setting is on and biometric is
@@ -3196,7 +3466,14 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         stringResource(
-                            R.string.decrypt_card_message_note,
+                            // 4.1.0 — a hidden-recipient message was NOT
+                            // "encrypted to your hardware key" as far as
+                            // anyone can tell from the packet; the card is a
+                            // candidate, not a match. Say so.
+                            if (state.isHiddenRecipientMessage)
+                                R.string.decrypt_card_message_note_hidden
+                            else
+                                R.string.decrypt_card_message_note,
                             state.cardMessageKeyName ?: stringResource(R.string.decrypt_card_message_fallback_name)
                         ),
                         style = MaterialTheme.typography.bodyMedium
@@ -3304,8 +3581,11 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                     onValueChange = { viewModel.updatePassphrase(it) },
                     label = { Text(stringResource(R.string.decrypt_passphrase_optional_label)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    // 4.1.0 §3 (issue #8) — see ui/util/Autofill.kt.
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .autofillPassword { viewModel.updatePassphrase(it) },
                     visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
                 Spacer(modifier = Modifier.height(12.dp))
@@ -3335,8 +3615,6 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                         // output. Op return types differ, so each takes its
                         // own startCardOperation call.
                         val started: Boolean? = if (state.mode == DecryptMode.FILE) {
-                            val fileBytes = state.selectedFileBytes
-                            val tooLargeForCard = state.fileTooLargeForCard
                             decryptActivity?.startCardOperation({ session ->
                                 session.select()
                                 val fp = cardFp
@@ -3347,17 +3625,21 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                                 val pubRing = PGPonyApp.instance.keyRepository
                                     .loadPublicKeyRingByCardFingerprint(fp)
                                     ?: throw OpenPgpCardException.Malformed(cardDecPairFirstMsg)
-                                // 4.0.4 — see the encrypt-side counterpart.
-                                if (fileBytes == null) throw OpenPgpCardException.Malformed(
-                                    if (tooLargeForCard) cardDecTooLargeMsg else cardDecNoKeyMsg
-                                )
+                                // 4.1.0 Phase 16: read the ciphertext here
+                                // rather than relying on the pick-time buffer,
+                                // which stops at INLINE_FILE_LIMIT. Null now
+                                // means past CARD_BUFFER_LIMIT or unreadable,
+                                // not merely "over 4 MB".
+                                val fileBytes = viewModel.cardDecryptInputBytes()
+                                    ?: throw OpenPgpCardException.Malformed(cardDecTooLargeMsg)
                                 CardDecryptService.shared.decryptBytes(
                                     session, pubRing, pin.toByteArray(Charsets.UTF_8), fileBytes,
                                     viewModel.cardVerificationRings()
                                 )
                             }) { result ->
                                 cardDecryptWaiting = false
-                                decryptActivity?.stopCardScan()
+                                // 4.0.5 — see above.
+                                decryptActivity?.endCardOperation()
                                 result
                                     .onSuccess { viewModel.onCardDecryptFileSuccess(it) }
                                     .onFailure { e -> viewModel.onCardDecryptFailure(e.message ?: cardDecFailedMsg) }
@@ -3380,7 +3662,8 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                                 )
                             }) { result ->
                                 cardDecryptWaiting = false
-                                decryptActivity?.stopCardScan()
+                                // 4.0.5 — see above.
+                                decryptActivity?.endCardOperation()
                                 result
                                     .onSuccess { viewModel.onCardDecryptSuccess(it) }
                                     .onFailure { e -> viewModel.onCardDecryptFailure(e.message ?: cardDecFailedMsg) }
@@ -3480,12 +3763,22 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                OutlinedTextField(
-                    value = state.outputText,
-                    onValueChange = {},
-                    readOnly = true,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
-                    maxLines = 15
+                // 4.1.0, issue #10 — was a read-only OutlinedTextField holding
+                // the whole plaintext. That builds full editing state for the
+                // entire string no matter what maxLines says, and paid for it
+                // again on every recomposition of this scrolling tab. See
+                // ui/components/ReadOnlyTextOutput.kt.
+                ReadOnlyTextOutput(
+                    text = state.outputText,
+                    dialogTitle = stringResource(R.string.decrypt_output_decrypted),
+                    onCopy = { full ->
+                        ClipboardService.copyText(
+                            context, full,
+                            label = context.getString(R.string.decrypt_clipboard_label)
+                        )
+                        haptics.tap()
+                    },
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
@@ -3562,6 +3855,14 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
         com.pgpony.android.ui.decrypt.StructuredDecryptionResultScreen(
             body = state.mimeBody,
             attachments = state.mimeAttachments,
+            // 4.1.0 Phase 14 (issue #10): a bundle decrypted above
+            // INLINE_FILE_LIMIT arrives here instead, one scratch file per
+            // attachment. Only ever one of the two lists is populated.
+            fileAttachments = state.mimeFileAttachments,
+            // 4.1.0 Phase 14b: same banner the file sheet shows, and the
+            // same signer lookup the Decrypt tab wires up.
+            verificationResult = state.verificationResult,
+            onTapUnknownSigner = { viewModel.lookupSigner() },
             onDismiss = { viewModel.dismissStructuredResult() }
         )
     }
@@ -3583,11 +3884,13 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
             icon = { Icon(Icons.Filled.Contactless, contentDescription = null) },
             title = { Text(stringResource(R.string.card_decrypt_title)) },
             text = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(stringResource(R.string.card_decrypt_hold_card))
-                }
+                CardWaitBody(
+                    label = if (decryptActivity?.cardLink()?.preferred == CardLinkKind.USB)
+                        stringResource(R.string.card_usb_working)
+                    else stringResource(R.string.card_decrypt_hold_card),
+                    processed = state.processedBytes,
+                    total = state.totalBytes,
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -3641,9 +3944,13 @@ private fun DecryptKeyPickerSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
     ) {
+        // 4.1.0 — scroll + insets triad, as above. Also lists the whole ring.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp)
         ) {

@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,6 +34,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.pgpony.android.crypto.card.CardLinkAdvice
+import com.pgpony.android.crypto.card.CardLinkAvailability
+import com.pgpony.android.crypto.card.CardLinkKind
 import com.pgpony.android.MainActivity
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
@@ -53,8 +57,11 @@ fun CardSignScreen(onBack: () -> Unit) {
     val activity = context as? MainActivity
     val clipboard = LocalClipboardManager.current
 
-    val nfcAvailable = remember { activity?.isNfcAvailable() == true }
-    val nfcEnabled = remember { activity?.isNfcEnabled() == true }
+    // 4.1.0 USB Phase 2 — computed per composition, not remembered once, so a
+    // reader plugged in before this screen opened is seen. Used ONLY for
+    // gating and copy: which transport an operation actually runs on is
+    // decided in MainActivity.startCardOperation.
+    val link = activity?.cardLink() ?: CardLinkAvailability.NONE
 
     var message by remember { mutableStateOf("") }
     // 3.1.0 Phase 7 (B1): prefill from the PIN cache when enabled.
@@ -119,7 +126,7 @@ fun CardSignScreen(onBack: () -> Unit) {
                 title = { Text(stringResource(R.string.card_sign_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.card_scan_back))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.card_scan_back))
                     }
                 }
             )
@@ -133,16 +140,23 @@ fun CardSignScreen(onBack: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             when {
-                activity == null || !nfcAvailable ->
-                    SignCentered(Icons.Filled.Nfc, stringResource(R.string.card_scan_nfc_unavailable))
-
-                !nfcEnabled ->
-                    SignCentered(Icons.Filled.Nfc, stringResource(R.string.card_scan_nfc_disabled))
+                activity == null || !link.anyUsable ->
+                    SignCentered(
+                        Icons.Filled.Nfc,
+                        stringResource(
+                            if (link.advice == CardLinkAdvice.EnableNfc)
+                                R.string.card_scan_nfc_disabled
+                            else R.string.card_scan_nfc_unavailable
+                        )
+                    )
 
                 else -> when (val s = state.value) {
                     is SignState.Waiting -> SignCentered(
-                        Icons.Filled.Contactless,
-                        stringResource(R.string.card_sign_hold_card),
+                        if (link.preferred == CardLinkKind.USB) Icons.Filled.Usb
+                        else Icons.Filled.Contactless,
+                        if (link.preferred == CardLinkKind.USB)
+                            stringResource(R.string.card_usb_working)
+                        else stringResource(R.string.card_sign_hold_card),
                         showSpinner = true
                     )
 

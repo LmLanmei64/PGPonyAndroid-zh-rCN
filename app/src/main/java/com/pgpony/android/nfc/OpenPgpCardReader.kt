@@ -58,9 +58,24 @@ class OpenPgpCardReader(private val activity: Activity) {
      * (readCardInfo and changeUserPin both do). Used for PIN change now
      * and signing in Phase 2b.
      */
+    /**
+     * 4.1.0 - [holdUntilRemovedMs], when greater than zero, keeps the card
+     * connected and reader mode engaged after a SUCCESSFUL operation until
+     * the user lifts the card (or the cap elapses). [onResult] is delivered
+     * only once that wait is over, so a caller that tears down reader mode on
+     * result - ProviderCardOpActivity, which must close to return its result
+     * to the calling mail app - never leaves a tag sitting in the field for
+     * the platform dispatcher to grab. [onAwaitingRemoval] fires on the main
+     * thread when the wait begins, so the UI can say why it is still up.
+     *
+     * The in-app card screens do not need this: they hold reader mode for as
+     * long as the screen is on top, which already covers the lift.
+     */
     fun <T> startOperation(
         operation: (OpenPgpCardSession) -> T,
-        onResult: (Result<T>) -> Unit
+        onResult: (Result<T>) -> Unit,
+        holdUntilRemovedMs: Long = 0L,
+        onAwaitingRemoval: (() -> Unit)? = null
     ): Boolean {
         val nfc = adapter ?: return false
         if (!nfc.isEnabled) return false
@@ -81,7 +96,7 @@ class OpenPgpCardReader(private val activity: Activity) {
             // One tap per start. Ignored taps leave reader mode engaged,
             // so the system NFC dispatcher never sees the tag.
             if (handled.compareAndSet(false, true)) {
-                handleTag(tag, operation, onResult)
+                handleTag(tag, operation, onResult, holdUntilRemovedMs, onAwaitingRemoval)
             }
         }, flags, extras)
         return true
@@ -106,7 +121,9 @@ class OpenPgpCardReader(private val activity: Activity) {
     private fun <T> handleTag(
         tag: Tag,
         operation: (OpenPgpCardSession) -> T,
-        onResult: (Result<T>) -> Unit
+        onResult: (Result<T>) -> Unit,
+        holdUntilRemovedMs: Long = 0L,
+        onAwaitingRemoval: (() -> Unit)? = null
     ) {
         val isoDep = IsoDep.get(tag)
         if (isoDep == null) {
@@ -119,8 +136,18 @@ class OpenPgpCardReader(private val activity: Activity) {
         }
         var transport: IsoDepCardTransport? = null
         val result: Result<T> = try {
-            transport = IsoDepCardTransport(isoDep)
-            Result.success(operation(OpenPgpCardSession(transport)))
+            val t = IsoDepCardTransport(isoDep)
+            transport = t
+            val value = operation(OpenPgpCardSession(t))
+            // 4.1.0 - hold the card before anyone can tear reader mode down.
+            // awaitRemoval swallows its own failures and returns, so this can
+            // only delay the result, never turn a completed operation into a
+            // failed one.
+            if (holdUntilRemovedMs > 0L) {
+                onAwaitingRemoval?.let { cb -> mainHandler.post { cb() } }
+                t.awaitRemoval(holdUntilRemovedMs)
+            }
+            Result.success(value)
         } catch (e: OpenPgpCardException) {
             Result.failure(e)
         } catch (e: Exception) {

@@ -928,22 +928,8 @@ class ShareTargetViewModel(
      * Quick Action binary path; mirrors the main VM's
      * effectiveDecryptFileBytes.
      */
-    private fun unwrapEnvelopeBytes(bytes: ByteArray): ByteArray {
-        val head = try {
-            String(bytes, 0, minOf(bytes.size, 8192), Charsets.UTF_8)
-        } catch (_: Exception) {
-            return bytes
-        }
-        if (!head.contains("multipart/encrypted", ignoreCase = true)) return bytes
-        val text = try {
-            String(bytes, Charsets.UTF_8)
-        } catch (_: Exception) {
-            return bytes
-        }
-        val armored = com.pgpony.android.crypto.mime.MimeParser
-            .pgpMimeEncryptedPayload(text) ?: return bytes
-        return armored.toByteArray(Charsets.UTF_8)
-    }
+    private fun unwrapEnvelopeBytes(bytes: ByteArray): ByteArray =
+        com.pgpony.android.crypto.mime.MimeEnvelope.unwrapBytes(bytes)
 
     private fun stripPgpExtension(name: String): String =
         name.removeSuffix(".pgp").removeSuffix(".gpg").removeSuffix(".asc")
