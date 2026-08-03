@@ -18,8 +18,10 @@ package com.pgpony.android.ui.onboarding
 import android.content.SharedPreferences
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -62,9 +64,15 @@ fun OnboardingPage(
     // 4.2.0 rather than answered by accident here.
     val existingKeyCount = keyringState.keyPairCount
 
+    // 4.1.1: the slide content had no scroll, so at a large display size or
+    // font scale the generate CTA on slide 2 sat below the pager viewport
+    // with no way to reach it. Issue #23, "impossible to create keys", and
+    // the reporter was right. fillMaxSize stays so short slides still
+    // center; the scroll only engages once content overflows the pager.
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 32.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center

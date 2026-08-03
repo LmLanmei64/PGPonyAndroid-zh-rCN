@@ -40,7 +40,9 @@ package com.pgpony.android.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
@@ -166,9 +168,15 @@ fun LockScreen(onUnlock: () -> Unit) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
+        // 4.1.1: issue #23's class, found by the same audit. If the Unlock
+        // button ever lands below the viewport at a large font scale, the
+        // whole app is sealed behind the lock, which is a worse version of
+        // the bug than the one reported. Scroll engages only on overflow;
+        // the centered layout is unchanged when content fits.
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center

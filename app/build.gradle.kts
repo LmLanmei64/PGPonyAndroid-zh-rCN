@@ -196,8 +196,18 @@ android {
         // versionCode stayed 410 across all three release candidates and the
         // final, so every hop upgraded in place with no reinstall and no
         // keyring loss.
-        versionCode = 410
-        versionName = "4.1.0"
+        //
+        // 4.1.1, 3 August: patch promised on issue #23. At a large display
+        // and font scale the onboarding slides clipped with no scroll, so
+        // the generate CTA on the creation slide could sit below the pager
+        // viewport: impossible to create a key on a fresh install, with no
+        // workaround. Same class as the 4.1.0 Samsung generate-sheet fix,
+        // caught on three more surfaces by auditing every screen without a
+        // scroll container: the onboarding slides, the bundle encryption
+        // result sheet, and the biometric LockScreen. Scroll added to each;
+        // zero visual change when content fits the viewport.
+        versionCode = 411
+        versionName = "4.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

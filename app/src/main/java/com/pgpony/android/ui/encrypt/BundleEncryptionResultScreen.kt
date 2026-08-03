@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Email
@@ -89,9 +91,15 @@ fun BundleEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
     val attachmentCount = state.bundleAttachments.size
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        // 4.1.1: issue #23's class, caught by the same audit. Four stacked
+        // action rows fit a reference device with room to spare, and a large
+        // font scale spends that room; without a scroll container the Done
+        // row is the first thing to leave the screen. Scroll goes first in
+        // the chain; the existing padding and inset order is unchanged.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 8.dp)
                 .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,

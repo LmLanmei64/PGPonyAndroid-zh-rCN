@@ -1,0 +1,1 @@
+Fixes creating a key at a large display or font size. The onboarding slides could not scroll, so on phones set to a bigger display or font scale the Create Key button could sit below the screen edge with no way to reach it. The bundle encryption result and the biometric lock screen had the same missing scroll and got the same fix. Nothing changes at default display settings.
