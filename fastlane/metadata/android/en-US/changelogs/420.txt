@@ -1,0 +1,3 @@
+Fixes decrypting files encrypted to a post-quantum (ML-KEM) key. File decrypt used a different code path than text decrypt, and that path did not know about composite keys yet, so a file encrypted to a v6 or v5 composite key would not open at all. It does now.
+
+Note: a very large file encrypted this way (well over 100 MB) may still fail with a memory error on some phones. Text and ordinary (non-PQC) file decrypt are not affected. A fix that removes this limit is in progress.

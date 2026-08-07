@@ -206,8 +206,30 @@ android {
         // scroll container: the onboarding slides, the bundle encryption
         // result sheet, and the biometric LockScreen. Scroll added to each;
         // zero visual change when content fits the viewport.
-        versionCode = 411
-        versionName = "4.1.1"
+        //
+        // 4.2.0, in progress: opens with the composite (PQC) file decrypt
+        // fix for issue #33, folded in here rather than shipped as a
+        // standalone 4.1.2 patch. The composite trial was only ever wired
+        // into the buffered text decrypt path, so a file encrypted to an
+        // ML-KEM key reached the streaming path instead, BC's PKESK parser
+        // threw on the unknown algorithm, and the file would not open at
+        // all, on both the v6 IETF and v5 LibrePGP composite formats. The
+        // stream now sniffs the leading ESK packets before handing
+        // anything to BC; only when a composite PKESK is actually present
+        // does it fall back to buffering the whole message through the
+        // validated decryptors the text path already used. Classical and
+        // password-only files keep the true streaming path, untouched.
+        //
+        // Known limitation, confirmed on device: because a composite file
+        // has to be fully buffered, a large one (a 164.5 MB .dmg.gpg
+        // reproduced this) can exceed available memory and fail with "file
+        // too large for the available memory" instead of decrypting. This
+        // is the accepted cost noted in the fix itself, not a regression.
+        // The real fix, streaming the ciphertext through via the
+        // session-key handoff, is open work for this 4.2.0 line, not yet
+        // done.
+        versionCode = 420
+        versionName = "4.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
