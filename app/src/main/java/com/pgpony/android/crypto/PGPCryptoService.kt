@@ -303,6 +303,27 @@ class PGPCryptoService private constructor() {
                 )
                 ring to com.pgpony.android.crypto.pqc.CompositeKeyGen.publicRingOf(ring)
             }
+            KeyAlgorithm.MLKEM1024_X448_V6 -> {
+                // IETF composite (v6), ML-KEM-1024 + X448 (algo 36). Same graft
+                // as the 768 case, driven by the IETF_1024 suite.
+                val base = buildV6Ed25519X25519KeyRings(userID, passphrase, creationDate, expirationSeconds)
+                val ring = com.pgpony.android.crypto.pqc.CompositeKeyGen.addCompositeSubkey(
+                    base.first, com.pgpony.android.crypto.pqc.CompositeSuite.IETF_1024,
+                    passphrase, creationTime = creationDate
+                )
+                ring to com.pgpony.android.crypto.pqc.CompositeKeyGen.publicRingOf(ring)
+            }
+            KeyAlgorithm.MLKEM1024_X448_LIBREPGP -> {
+                // LibrePGP composite (v5), Kyber-1024 + X448, driven by the
+                // LIBREPGP_1024 suite (v4 EdDSA primary + v5 composite subkey).
+                val baseSec = buildEd25519KeyRingGenerator(userID, passphrase, creationDate, expirationSeconds)
+                    .generateSecretKeyRing()
+                val ring = com.pgpony.android.crypto.pqc.CompositeKeyGen.addCompositeSubkey(
+                    baseSec, com.pgpony.android.crypto.pqc.CompositeSuite.LIBREPGP_1024,
+                    passphrase, creationTime = creationDate
+                )
+                ring to com.pgpony.android.crypto.pqc.CompositeKeyGen.publicRingOf(ring)
+            }
             else -> throw PGPCryptoError.KeyGenerationFailed("Cannot generate ${algorithm.displayName} keys — import only")
         }
 

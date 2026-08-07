@@ -63,9 +63,8 @@ enum class KeyAlgorithm(
         /** Algorithms that can be selected in the key generation UI. */
         val generatable = listOf(
             RSA_2048, RSA_4096, ED25519_CV25519, V6_ED25519,
-            MLKEM768_X25519_V6, MLKEM768_X25519_LIBREPGP
-            // 4.2.0 §1.1: MLKEM1024_X448_{V6,LIBREPGP} join this list in
-            // Slice 4, together with their keygen arms in PGPCryptoService.
+            MLKEM768_X25519_V6, MLKEM768_X25519_LIBREPGP,
+            MLKEM1024_X448_V6, MLKEM1024_X448_LIBREPGP
         )
 
         /**
