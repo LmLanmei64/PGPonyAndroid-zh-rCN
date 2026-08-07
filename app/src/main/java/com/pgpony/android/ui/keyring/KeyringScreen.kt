@@ -524,6 +524,10 @@ private fun GenerateKeySheet(state: KeyringUiState, viewModel: KeyringViewModel)
             // compatible with older OpenPGP software.
             Text(
                 text = when {
+                    state.generateAlgorithm.isComposite && state.generateAlgorithm.isV6 ->
+                        stringResource(R.string.keyring_generate_algorithm_caption_pqc_ietf)
+                    state.generateAlgorithm.isComposite ->
+                        stringResource(R.string.keyring_generate_algorithm_caption_pqc_librepgp)
                     state.generateAlgorithm.isV6 ->
                         stringResource(R.string.keyring_generate_algorithm_caption_v6)
                     state.generateAlgorithm == KeyAlgorithm.ED25519_CV25519 ->
