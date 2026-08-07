@@ -39,7 +39,18 @@ enum class KeyAlgorithm(
     // algorithm 8): Kyber/ML-KEM-768 + X25519 on a v5 encryption subkey
     // under a v4 EdDSA primary (GnuPG 2.5.x keys). Import + encrypt
     // supported (validated against gpg 2.5.21); not offered for keygen.
-    MLKEM768_X25519_LIBREPGP("ML-KEM-768+X25519 (LibrePGP)", "ML-KEM v5", 0);
+    MLKEM768_X25519_LIBREPGP("ML-KEM-768+X25519 (LibrePGP)", "ML-KEM v5", 0),
+
+    // 4.2.0 §1.1 — IETF post-quantum composite (draft-ietf-openpgp-pqc,
+    // algorithm 36): ML-KEM-1024 + X448 on a v6 encryption subkey. Distinct
+    // code point from algo 35, so it needs no material inspection to label.
+    MLKEM1024_X448_V6("ML-KEM-1024+X448 (v6)", "ML-KEM v6", 0, isV6 = true),
+
+    // 4.2.0 §1.1 — LibrePGP post-quantum composite (algorithm 8): Kyber/
+    // ML-KEM-1024 + X448 on a v5 encryption subkey. Algorithm 8 is SHARED
+    // with the 768 variant, so 768-vs-1024 is told apart by the curve OID
+    // (X448 1.3.101.111) in detectAlgorithm, not by the algorithm id.
+    MLKEM1024_X448_LIBREPGP("ML-KEM-1024+X448 (LibrePGP)", "ML-KEM v5", 0);
 
     /**
      * Whether this algorithm uses native Curve25519 for encryption (ECDH subkey).
@@ -53,6 +64,8 @@ enum class KeyAlgorithm(
         val generatable = listOf(
             RSA_2048, RSA_4096, ED25519_CV25519, V6_ED25519,
             MLKEM768_X25519_V6, MLKEM768_X25519_LIBREPGP
+            // 4.2.0 §1.1: MLKEM1024_X448_{V6,LIBREPGP} join this list in
+            // Slice 4, together with their keygen arms in PGPCryptoService.
         )
 
         /**
@@ -68,7 +81,8 @@ enum class KeyAlgorithm(
             }
             return if (keyVersion == 6) {
                 when (algorithmID) {
-                    35 -> MLKEM768_X25519_V6 // ML-KEM-768+X25519 composite
+                    35 -> MLKEM768_X25519_V6  // ML-KEM-768+X25519 composite
+                    36 -> MLKEM1024_X448_V6   // ML-KEM-1024+X448 composite
                     27 -> V6_ED25519       // Ed25519 signing key
                     25 -> V6_X25519        // X25519 encryption subkey
                     28 -> V6_ED448         // Ed448 signing key
