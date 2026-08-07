@@ -45,10 +45,11 @@ object CompositePkesk {
     fun encodeAlgoFields(
         ephemeralX25519: ByteArray,
         mlkemCiphertext: ByteArray,
-        wrappedSessionKey: ByteArray
+        wrappedSessionKey: ByteArray,
+        suite: CompositeSuite = CompositeSuite.IETF_768
     ): ByteArray {
-        require(ephemeralX25519.size == CompositeKem.X25519_KEY_LEN) { "bad X25519 ephemeral length" }
-        require(mlkemCiphertext.size == CompositeKem.MLKEM768_CT_LEN) { "bad ML-KEM ciphertext length" }
+        require(ephemeralX25519.size == suite.curve.keyLen) { "bad ECC ephemeral length" }
+        require(mlkemCiphertext.size == suite.mlkem.ctLen) { "bad ML-KEM ciphertext length" }
         require(wrappedSessionKey.size in 1..255) { "wrapped session key length out of range" }
 
         val out = ByteArrayOutputStream()
@@ -64,7 +65,8 @@ object CompositePkesk {
         recipientFpV6: ByteArray,
         ephemeralX25519: ByteArray,
         mlkemCiphertext: ByteArray,
-        wrappedSessionKey: ByteArray
+        wrappedSessionKey: ByteArray,
+        suite: CompositeSuite = CompositeSuite.IETF_768
     ): ByteArray {
         val out = ByteArrayOutputStream()
         out.write(VERSION_6)
@@ -76,8 +78,8 @@ object CompositePkesk {
             out.write(6)      // recipient key version
             out.write(recipientFpV6)
         }
-        out.write(CompositeKem.ALGORITHM_ID) // 35
-        out.write(encodeAlgoFields(ephemeralX25519, mlkemCiphertext, wrappedSessionKey))
+        out.write(suite.ietfAlgId) // 35 or 36
+        out.write(encodeAlgoFields(ephemeralX25519, mlkemCiphertext, wrappedSessionKey, suite))
         return out.toByteArray()
     }
 

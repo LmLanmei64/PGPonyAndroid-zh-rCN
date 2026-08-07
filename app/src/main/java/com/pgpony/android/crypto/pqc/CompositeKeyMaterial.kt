@@ -18,7 +18,7 @@ object CompositeKeyMaterial {
 
     /** The composite ML-KEM+X25519 encryption subkey in [ring], if present. */
     fun encryptionSubkey(ring: PGPPublicKeyRing): PGPPublicKey? =
-        ring.publicKeys.asSequence().firstOrNull { it.algorithm == ALGORITHM_ID }
+        ring.publicKeys.asSequence().firstOrNull { CompositeSuite.ietfFor(it.algorithm) != null }
 
     /** Does [ring] carry a composite ML-KEM+X25519 encryption subkey? */
     fun isComposite(ring: PGPPublicKeyRing): Boolean = encryptionSubkey(ring) != null

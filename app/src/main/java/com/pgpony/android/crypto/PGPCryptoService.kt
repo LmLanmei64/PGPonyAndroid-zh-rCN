@@ -798,7 +798,7 @@ class PGPCryptoService private constructor() {
             for (ring in recipientPublicKeys) {
                 val encKey = findEncryptionKey(ring)
                     ?: throw PGPCryptoError.EncryptionFailed("No encryption subkey found for ${fingerprintHex(ring.publicKey)}")
-                if (encKey.algorithm == com.pgpony.android.crypto.pqc.CompositeKem.ALGORITHM_ID) {
+                if (com.pgpony.android.crypto.pqc.CompositeSuite.ietfFor(encKey.algorithm) != null) {
                     encryptedGen.addMethod(
                         com.pgpony.android.crypto.pqc.CompositeEncryptionMethodGenerator(encKey)
                     )
@@ -1077,7 +1077,7 @@ class PGPCryptoService private constructor() {
                     ?: throw PGPCryptoError.EncryptionFailed(
                         "No encryption subkey found for ${fingerprintHex(ring.publicKey)}"
                     )
-                if (encKey.algorithm == com.pgpony.android.crypto.pqc.CompositeKem.ALGORITHM_ID) {
+                if (com.pgpony.android.crypto.pqc.CompositeSuite.ietfFor(encKey.algorithm) != null) {
                     encryptedGen.addMethod(
                         com.pgpony.android.crypto.pqc.CompositeEncryptionMethodGenerator(encKey)
                     )
