@@ -27,7 +27,6 @@ import org.bouncycastle.openpgp.PGPEncryptedDataList
 import org.bouncycastle.openpgp.PGPSecretKeyRing
 import org.bouncycastle.openpgp.PGPSessionKey
 import org.bouncycastle.openpgp.operator.bc.BcSessionKeyDataDecryptorFactory
-import org.bouncycastle.pqc.crypto.mlkem.MLKEMParameters
 import org.bouncycastle.pqc.crypto.mlkem.MLKEMPrivateKeyParameters
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -64,7 +63,10 @@ object CompositeDecryptor {
             ?: throw NoMatchingKey("matched key is not a composite secret key")
 
         // Rebuild the recipient's composite secret and derive the KEK.
-        val mlkemSec = MLKEMPrivateKeyParameters(MLKEMParameters.ml_kem_768, material.mlkemSeed)
+        // 4.2.0 §1.1: the PKESK told us which suite (35 or 36); use it for the
+        // ML-KEM parameter set and to route the combiner to X25519 or X448.
+        val suite = split.parsed.suite
+        val mlkemSec = MLKEMPrivateKeyParameters(suite.mlkem.params, material.mlkemSeed)
         val (recipientXPub, _) = CompositeKeyMaterial.publicMaterial(secKey.publicKey)
             ?: throw NoMatchingKey("composite public material malformed")
 
@@ -73,7 +75,8 @@ object CompositeDecryptor {
             mlkemCiphertext = split.parsed.mlkemCiphertext,
             recipientX25519Sec = material.x25519Secret,
             recipientMlkemSec = mlkemSec,
-            recipientX25519Pub = recipientXPub
+            recipientX25519Pub = recipientXPub,
+            suite = suite
         )
         val sessionKey = CompositeKem.unwrapSessionKey(kek, split.parsed.wrappedSessionKey)
 
@@ -201,7 +204,7 @@ object CompositeDecryptor {
         rings.asSequence()
             .flatMap { it.secretKeys.asSequence() }
             .firstOrNull {
-                it.publicKey.algorithm == CompositeKeyMaterial.ALGORITHM_ID &&
+                CompositeSuite.ietfFor(it.publicKey.algorithm) != null &&
                     it.publicKey.fingerprint.contentEquals(fp)
             }
 

@@ -30,7 +30,9 @@ object CompositePkesk {
         val recipientFingerprint: ByteArray,
         val ephemeralX25519: ByteArray,
         val mlkemCiphertext: ByteArray,
-        val wrappedSessionKey: ByteArray
+        val wrappedSessionKey: ByteArray,
+        /** Which IETF suite (algo 35 or 36) the packet declared. */
+        val suite: CompositeSuite = CompositeSuite.IETF_768
     )
 
     /**
@@ -96,14 +98,17 @@ object CompositePkesk {
                 val fpLen = count - 1
                 fp = body.copyOfRange(i, i + fpLen); i += fpLen
             }
-            if ((body[i++].toInt() and 0xFF) != CompositeKem.ALGORITHM_ID) return null
-            val eph = body.copyOfRange(i, i + CompositeKem.X25519_KEY_LEN)
-            i += CompositeKem.X25519_KEY_LEN
-            val ct = body.copyOfRange(i, i + CompositeKem.MLKEM768_CT_LEN)
-            i += CompositeKem.MLKEM768_CT_LEN
+            // 4.2.0 §1.1: dispatch on the algorithm octet (35 or 36) rather
+            // than requiring 35, so an inbound ML-KEM-1024 PKESK parses with
+            // X448 (56) ephemeral and ML-KEM-1024 (1568) ciphertext lengths.
+            val suite = CompositeSuite.ietfFor(body[i++].toInt() and 0xFF) ?: return null
+            val eph = body.copyOfRange(i, i + suite.curve.keyLen)
+            i += suite.curve.keyLen
+            val ct = body.copyOfRange(i, i + suite.mlkem.ctLen)
+            i += suite.mlkem.ctLen
             val skLen = body[i++].toInt() and 0xFF
             val wrapped = body.copyOfRange(i, i + skLen)
-            return Parsed(fp, eph, ct, wrapped)
+            return Parsed(fp, eph, ct, wrapped, suite)
         } catch (e: Exception) {
             return null
         }

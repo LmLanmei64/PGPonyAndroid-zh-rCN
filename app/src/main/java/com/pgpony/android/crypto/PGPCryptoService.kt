@@ -2243,6 +2243,9 @@ class PGPCryptoService private constructor() {
         if (ring.publicKeys.asSequence().any { it.algorithm == 35 }) {
             return KeyAlgorithm.MLKEM768_X25519_V6
         }
+        if (ring.publicKeys.asSequence().any { it.algorithm == 36 }) {
+            return KeyAlgorithm.MLKEM1024_X448_V6
+        }
         if (ring.publicKeys.asSequence().any { it.algorithm == 8 && it.version == 5 }) {
             return KeyAlgorithm.MLKEM768_X25519_LIBREPGP
         }
