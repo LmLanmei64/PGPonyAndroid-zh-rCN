@@ -28,7 +28,6 @@ import org.bouncycastle.openpgp.PGPSecretKey
 import org.bouncycastle.openpgp.PGPSecretKeyRing
 import org.bouncycastle.openpgp.PGPSessionKey
 import org.bouncycastle.openpgp.operator.bc.BcSessionKeyDataDecryptorFactory
-import org.bouncycastle.pqc.crypto.mlkem.MLKEMParameters
 import org.bouncycastle.pqc.crypto.mlkem.MLKEMPrivateKeyParameters
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -60,10 +59,12 @@ object CompositeLibrePGPDecryptor {
         val v5fp = CompositeLibrePGPKeyMaterial.v5Fingerprint(packet)
         val (recipientXPub, _) = CompositeLibrePGPKeyMaterial.publicMaterial(packet)
 
-        val mlkemSec = MLKEMPrivateKeyParameters(MLKEMParameters.ml_kem_768, material.kyberSeed)
+        // algo 8 is shared; the key's curve OID says which parameter set.
+        val suite = CompositeLibrePGPKeyMaterial.suiteOf(packet)
+        val mlkemSec = MLKEMPrivateKeyParameters(suite.mlkem.params, material.kyberSeed)
         val fixedInfo = CompositeKemLibrePGP.fixedInfo(pkesk.symAlgo, v5fp)
         val kek = CompositeKemLibrePGP.decapsulate(
-            pkesk.eccEphemeral, pkesk.kyberCiphertext, material.x25519Secret, recipientXPub, mlkemSec, fixedInfo
+            pkesk.eccEphemeral, pkesk.kyberCiphertext, material.x25519Secret, recipientXPub, mlkemSec, fixedInfo, suite
         )
         val sessionKey = CompositeKemLibrePGP.unwrapSessionKey(kek, pkesk.wrappedSessionKey)
 

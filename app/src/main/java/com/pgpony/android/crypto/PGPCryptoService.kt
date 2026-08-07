@@ -2246,8 +2246,12 @@ class PGPCryptoService private constructor() {
         if (ring.publicKeys.asSequence().any { it.algorithm == 36 }) {
             return KeyAlgorithm.MLKEM1024_X448_V6
         }
-        if (ring.publicKeys.asSequence().any { it.algorithm == 8 && it.version == 5 }) {
-            return KeyAlgorithm.MLKEM768_X25519_LIBREPGP
+        ring.publicKeys.asSequence().firstOrNull { it.algorithm == 8 && it.version == 5 }?.let { sub ->
+            // algo 8 is a shared code point: the curve OID (X25519 vs X448)
+            // says whether this is the 768 or the 1024 composite.
+            return if (com.pgpony.android.crypto.pqc.CompositeLibrePGPKeyMaterial
+                    .suiteOf(sub.encoded).curve == com.pgpony.android.crypto.pqc.EccCurve.X448
+            ) KeyAlgorithm.MLKEM1024_X448_LIBREPGP else KeyAlgorithm.MLKEM768_X25519_LIBREPGP
         }
         return detectAlgorithm(masterKey)
     }
