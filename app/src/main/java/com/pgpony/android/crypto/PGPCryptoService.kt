@@ -1552,45 +1552,98 @@ class PGPCryptoService private constructor() {
         var usedSymmetric = false
         var integrityObj: org.bouncycastle.openpgp.PGPEncryptedData? = null
         try {
-            val decoder = org.bouncycastle.openpgp.PGPUtil.getDecoderStream(input)
-            val pgpFactory = JcaPGPObjectFactory(decoder)
-            val encData = findEncryptedData(pgpFactory)
-                ?: throw PGPCryptoError.DecryptionFailed("No encrypted data found in message")
-
             var decryptedStream: java.io.InputStream? = null
             var pbeData: PGPPBEEncryptedData? = null
-            // 4.0.5 — same two-pass resolution as [decrypt]; this is the
-            // path the OpenPGP API provider and large-file decrypt take, so
-            // hidden-recipient messages have to work here too. Trial
-            // decryption reads only the session-key packets, so the body
-            // stream is untouched and needs no rewind.
-            val pkesks = mutableListOf<PGPPublicKeyEncryptedData>()
             var sawWildcardPkesk = false
-            for (obj in encData.encryptedDataObjects) {
-                when (obj) {
-                    is PGPPublicKeyEncryptedData -> {
-                        pkesks.add(obj)
-                        if (obj.keyID == WILDCARD_KEY_ID) sawWildcardPkesk = true
-                    }
-                    is PGPPBEEncryptedData -> {
-                        if (pbeData == null) pbeData = obj
-                    }
+
+            // 4.1.2 (issue #33): the composite (PQC) trial was only ever
+            // wired into [decrypt], so a file encrypted to an ML-KEM key
+            // arrived here, BC's PKESK parser threw on the unknown
+            // algorithm, and the user's own file would not open. BC cannot
+            // be handed a composite message at all, so the trial has to
+            // happen BEFORE the decoder, and a stream cannot be rewound
+            // the way [decrypt]'s byte array can. So: sniff the leading
+            // ESK packets from a bounded, resettable head. Only when a
+            // composite PKESK is actually present is the whole message
+            // buffered and run through the same validated decryptors the
+            // text path uses; classical messages keep the true streaming
+            // path untouched, and a sniff miss falls through to BC, which
+            // fails exactly as it did before this block existed. Accepted
+            // cost for the patch: a PQC file holds its ciphertext in
+            // memory (the plaintext still streams out in chunks). The
+            // session-key handoff that would stream the ciphertext too is
+            // written into the 4.2.0 roster, not smuggled in here.
+            val sniffLimit = 1 shl 16
+            val buffered = java.io.BufferedInputStream(input, sniffLimit)
+            buffered.mark(sniffLimit)
+            val head = readHead(buffered, sniffLimit)
+            buffered.reset()
+            var effectiveInput: java.io.InputStream = buffered
+            val sniff = compositeSniffBytes(head)
+            if (com.pgpony.android.crypto.pqc.CompositeDecryptor.sniffHead(sniff) ||
+                com.pgpony.android.crypto.pqc.CompositeLibrePGPDecryptor.sniffHead(sniff)
+            ) {
+                val whole = buffered.readBytes()
+                val composite = com.pgpony.android.crypto.pqc.CompositeDecryptor.tryDecrypt(
+                    whole, secretKeyRings, passphrase
+                )
+                val librePgp = if (composite == null)
+                    com.pgpony.android.crypto.pqc.CompositeLibrePGPDecryptor.tryDecrypt(
+                        whole, secretKeyRings, passphrase
+                    ) else null
+                decryptedStream = composite?.stream ?: librePgp?.stream
+                if (composite != null) {
+                    integrityObj = composite.integrity
+                } else if (librePgp != null) {
+                    integrityObj = librePgp.integrity
+                }
+                if (decryptedStream == null) {
+                    // Sniff said composite but both decryptors declined
+                    // (they return null only when no composite PKESK is
+                    // present): treat it as a false positive and hand BC
+                    // the buffered bytes, since [buffered] is consumed.
+                    effectiveInput = java.io.ByteArrayInputStream(whole)
                 }
             }
-            resolvePkesk(pkesks, secretKeyRings, passphrase)?.let { match ->
-                decryptedStream = match.stream
-                integrityObj = match.data
-            }
-            if (decryptedStream == null && pbeData != null) {
-                if (passphrase.isNullOrEmpty()) throw PGPCryptoError.PassphraseRequired()
-                usedSymmetric = true
-                decryptedStream = pbeData.getDataStream(
-                    org.bouncycastle.openpgp.operator.bc.BcPBEDataDecryptorFactory(
-                        passphrase.toCharArray(),
-                        org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider()
+
+            if (decryptedStream == null) {
+                val decoder = org.bouncycastle.openpgp.PGPUtil.getDecoderStream(effectiveInput)
+                val pgpFactory = JcaPGPObjectFactory(decoder)
+                val encData = findEncryptedData(pgpFactory)
+                    ?: throw PGPCryptoError.DecryptionFailed("No encrypted data found in message")
+
+                // 4.0.5 — same two-pass resolution as [decrypt]; this is the
+                // path the OpenPGP API provider and large-file decrypt take, so
+                // hidden-recipient messages have to work here too. Trial
+                // decryption reads only the session-key packets, so the body
+                // stream is untouched and needs no rewind.
+                val pkesks = mutableListOf<PGPPublicKeyEncryptedData>()
+                for (obj in encData.encryptedDataObjects) {
+                    when (obj) {
+                        is PGPPublicKeyEncryptedData -> {
+                            pkesks.add(obj)
+                            if (obj.keyID == WILDCARD_KEY_ID) sawWildcardPkesk = true
+                        }
+                        is PGPPBEEncryptedData -> {
+                            if (pbeData == null) pbeData = obj
+                        }
+                    }
+                }
+                resolvePkesk(pkesks, secretKeyRings, passphrase)?.let { match ->
+                    decryptedStream = match.stream
+                    integrityObj = match.data
+                }
+                if (decryptedStream == null && pbeData != null) {
+                    if (passphrase.isNullOrEmpty()) throw PGPCryptoError.PassphraseRequired()
+                    usedSymmetric = true
+                    decryptedStream = pbeData.getDataStream(
+                        org.bouncycastle.openpgp.operator.bc.BcPBEDataDecryptorFactory(
+                            passphrase.toCharArray(),
+                            org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider()
+                        )
                     )
-                )
-                integrityObj = pbeData
+                    integrityObj = pbeData
+                }
             }
             if (decryptedStream == null) {
                 throw PGPCryptoError.NoMatchingKey(hiddenRecipient = sawWildcardPkesk)
@@ -1634,6 +1687,41 @@ class PGPCryptoService private constructor() {
         } catch (e: Exception) {
             if (usedSymmetric) throw PGPCryptoError.InvalidPassphrase()
             throw PGPCryptoError.DecryptionFailed(e.message ?: "Unknown error")
+        }
+    }
+
+    /** 4.1.2: fill [limit] bytes (or to EOF) from [s] without reading
+     *  past them; the caller holds a mark. A plain InputStream.read may
+     *  return short counts, hence the loop. */
+    private fun readHead(s: java.io.InputStream, limit: Int): ByteArray {
+        val buf = ByteArray(limit)
+        var off = 0
+        while (off < limit) {
+            val n = s.read(buf, off, limit - off)
+            if (n < 0) break
+            off += n
+        }
+        return buf.copyOf(off)
+    }
+
+    /** 4.1.2: decode an armored head to packet bytes for the composite
+     *  sniff. The head is usually truncated mid-armor, so decode errors
+     *  are expected; whatever decoded before the failure is returned,
+     *  which always covers the leading ESK packets the sniff reads. */
+    private fun compositeSniffBytes(head: ByteArray): ByteArray {
+        if (head.isEmpty() || head[0].toInt() != '-'.code) return head
+        return try {
+            val out = java.io.ByteArrayOutputStream()
+            val armored = ArmoredInputStream(java.io.ByteArrayInputStream(head))
+            val buf = ByteArray(4096)
+            while (true) {
+                val n = try { armored.read(buf) } catch (e: Exception) { -1 }
+                if (n < 0) break
+                out.write(buf, 0, n)
+            }
+            out.toByteArray()
+        } catch (e: Exception) {
+            ByteArray(0)
         }
     }
 

@@ -74,6 +74,30 @@ object CompositeLibrePGPDecryptor {
         return Result(sessionEnc.getDataStream(factory), sessionEnc)
     }
 
+    /** 4.1.2 (issue #33): head-sniff for the streaming decrypt path.
+     *  True when the leading ESK packets include a v3 algo-8 composite
+     *  PKESK. Truncated or unparseable heads read as false; the caller
+     *  falls through to BouncyCastle, same failure as before the sniff
+     *  existed, so a miss cannot regress anything. */
+    fun sniffHead(head: ByteArray): Boolean {
+        var i = 0
+        while (i < head.size) {
+            val h = try { header(head, i) } catch (e: Exception) { null } ?: return false
+            if (h.tag != TAG_PKESK && h.tag != TAG_SKESK) return false
+            val end = h.bodyStart + h.bodyLen
+            if (h.tag == TAG_PKESK) {
+                if (h.bodyLen < 0 || end > head.size) return false
+                val ok = try {
+                    parsePkesk(head.copyOfRange(h.bodyStart, end)) != null
+                } catch (e: Exception) { false }
+                if (ok) return true
+            }
+            if (end <= i) return false
+            i = end
+        }
+        return false
+    }
+
     // ── PKESK parsing ────────────────────────────────────────────────
 
     private class Pkesk(
@@ -118,12 +142,18 @@ object CompositeLibrePGPDecryptor {
         var pkesk: Pkesk? = null
         val n = data.size
         while (i < n) {
-            val h = header(data, i) ?: break
-            val isEsk = h.tag == TAG_PKESK || h.tag == TAG_SKESK
-            if (!isEsk) {
+            // 4.1.2 (issue #33): same fix as CompositeDecryptor.split, and
+            // for the same reason. Tag first, lengths only for ESKs; the
+            // body packet keeps its framing (partial lengths included) and
+            // BC reads it natively.
+            val first = data[i].toInt() and 0xFF
+            if (first and 0x80 == 0) break
+            val tag = if (first and 0x40 != 0) first and 0x3F else (first shr 2) and 0x0F
+            if (tag != TAG_PKESK && tag != TAG_SKESK) {
                 val p = pkesk ?: return null
                 return Split(p, data.copyOfRange(i, n))
             }
+            val h = header(data, i) ?: break
             if (h.tag == TAG_PKESK && pkesk == null) {
                 parsePkesk(data.copyOfRange(h.bodyStart, h.bodyStart + h.bodyLen))?.let { pkesk = it }
             }
