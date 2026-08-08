@@ -37,6 +37,21 @@ enum class EccCurve(val keyLen: Int, val oidTail: ByteArray) {
     X25519(32, byteArrayOf(0x2b, 0x65, 0x6e)),
     X448(56, byteArrayOf(0x2b, 0x65, 0x6f));
 
+    /**
+     * Adjust a raw ECC point value to exactly [keyLen] octets. A LibrePGP
+     * composite stores the point as a variable-length MPI, but the KEM needs
+     * the fixed curve length: trim the low [keyLen] if longer (drops a 0x40
+     * native-point prefix or high zero octets), left-pad if shorter (restores
+     * a minimal MPI, as gpg emits, back to the curve length). Feeding the raw
+     * MPI bytes instead makes the KDF disagree with gpg and the session-key
+     * unwrap fail with "checksum failed".
+     */
+    fun normalizePoint(b: ByteArray): ByteArray = when {
+        b.size == keyLen -> b
+        b.size > keyLen -> b.copyOfRange(b.size - keyLen, b.size)
+        else -> ByteArray(keyLen - b.size) + b
+    }
+
     companion object {
         /** Match a v5 key packet's OID body (length-prefixed bytes) to a curve. */
         fun fromOidTail(bytes: ByteArray): EccCurve? =

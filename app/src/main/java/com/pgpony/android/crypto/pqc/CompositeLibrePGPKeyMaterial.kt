@@ -83,8 +83,8 @@ object CompositeLibrePGPKeyMaterial {
             ?: throw IllegalArgumentException("unknown LibrePGP composite curve OID")
         p += oidLen
         val bits = ((pub[p].toInt() and 0xFF) shl 8) or (pub[p + 1].toInt() and 0xFF); p += 2
-        val pointLen = (bits + 7) / 8            // includes the 0x40 native prefix
-        val ecc = pub.copyOfRange(p + pointLen - curve.keyLen, p + pointLen)
+        val pointLen = (bits + 7) / 8
+        val ecc = curve.normalizePoint(pub.copyOfRange(p, p + pointLen))
         p += pointLen
         val kyberLen = readUInt32(pub, p); p += 4
         val kyber = pub.copyOfRange(p, p + kyberLen)

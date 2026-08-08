@@ -117,10 +117,15 @@ object CompositeKemLibrePGP {
         fixedInfo: ByteArray,
         suite: CompositeSuite = CompositeSuite.LIBREPGP_768
     ): ByteArray {
-        val ecdh = ecdhAgree(suite, recipientX25519Sec, eccCiphertext)
-        val eccSs = eccKemKdf(ecdh, eccCiphertext, recipientX25519Pub)
+        // Normalize to the fixed curve length; gpg emits a minimal MPI that
+        // can be shorter, and the KEM (agreement, KDF, combiner) needs the
+        // full curve.keyLen octets on both sides.
+        val eccCt = suite.curve.normalizePoint(eccCiphertext)
+        val recipPub = suite.curve.normalizePoint(recipientX25519Pub)
+        val ecdh = ecdhAgree(suite, recipientX25519Sec, eccCt)
+        val eccSs = eccKemKdf(ecdh, eccCt, recipPub)
         val mlkemShared = MLKEMExtractor(recipientMlkemSec).extractSecret(mlkemCiphertext)
-        return combine(eccSs, eccCiphertext, mlkemShared, mlkemCiphertext, fixedInfo)
+        return combine(eccSs, eccCt, mlkemShared, mlkemCiphertext, fixedInfo)
     }
 
     /** RFC-3394 AES-256 key unwrap the session key blob under [kek]. */
