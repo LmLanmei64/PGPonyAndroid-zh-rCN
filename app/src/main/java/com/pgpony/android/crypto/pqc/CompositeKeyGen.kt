@@ -250,11 +250,18 @@ object CompositeKeyGen {
         suite: CompositeSuite
     ): Pair<ByteArray, ByteArray> {
         val oid = byteArrayOf(0x03) + suite.curve.oidTail // len 3 + curve OID (110/111)
-        val point = byteArrayOf(0x40) + xPub              // native-point prefix
-        // MPI bit length: the leading 0x40 carries 7 significant bits, so the
-        // length is point.size*8 - 1 (263 for X25519's 33, 455 for X448's 57).
-        val bits = point.size * 8 - 1
-        val pointMpi = byteArrayOf((bits ushr 8).toByte(), bits.toByte()) + point
+        // Composite ECC component: the raw curve point (no 0x40 native-point
+        // prefix) as a MINIMAL-length OpenPGP MPI, byte-for-byte how gpg
+        // 2.5.x stores and re-serializes it inside a composite (algo 8).
+        // Two things this must get right, each found via gpg interop:
+        //   - No 0x40 prefix. gpg's KEM wants the bare point; the prefixed
+        //     form failed encryption with "pubkey_encrypt: Invalid data".
+        //   - Minimal, not fixed width. gpg canonicalizes to a minimal MPI
+        //     when it verifies the subkey binding signature, so a fixed-width
+        //     point with a leading zero byte makes gpg report a bad binding
+        //     and drop the subkey. gpg's KEM left-pads a short MPI back to
+        //     the curve length, so minimal still decodes correctly.
+        val pointMpi = canonicalMpi(xPub)
         val pubMat = oid + pointMpi + uint32(mPub.size) + mPub // 1227
         val pub = ByteArrayOutputStream().apply {
             write(5)
