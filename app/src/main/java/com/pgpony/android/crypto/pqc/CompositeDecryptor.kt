@@ -53,32 +53,7 @@ object CompositeDecryptor {
         val binary = toBinary(encryptedData)
         val split = split(binary) ?: return null // no composite PKESK
 
-        val secKey = findSecretKey(split.parsed.recipientFingerprint, secretKeyRings)
-            ?: throw NoMatchingKey(
-                "no held composite secret key for recipient " +
-                    split.parsed.recipientFingerprint.toHex()
-            )
-
-        val material = CompositeSecretKeyMaterial.extract(secKey, passphrase?.toCharArray())
-            ?: throw NoMatchingKey("matched key is not a composite secret key")
-
-        // Rebuild the recipient's composite secret and derive the KEK.
-        // 4.2.0 §1.1: the PKESK told us which suite (35 or 36); use it for the
-        // ML-KEM parameter set and to route the combiner to X25519 or X448.
-        val suite = split.parsed.suite
-        val mlkemSec = MLKEMPrivateKeyParameters(suite.mlkem.params, material.mlkemSeed)
-        val (recipientXPub, _) = CompositeKeyMaterial.publicMaterial(secKey.publicKey)
-            ?: throw NoMatchingKey("composite public material malformed")
-
-        val kek = CompositeKem.decapsulate(
-            ephemeralX25519 = split.parsed.ephemeralX25519,
-            mlkemCiphertext = split.parsed.mlkemCiphertext,
-            recipientX25519Sec = material.x25519Secret,
-            recipientMlkemSec = mlkemSec,
-            recipientX25519Pub = recipientXPub,
-            suite = suite
-        )
-        val sessionKey = CompositeKem.unwrapSessionKey(kek, split.parsed.wrappedSessionKey)
+        val sessionKey = recover(split.parsed, secretKeyRings, passphrase)
 
         // Hand the recovered session key to BC's SEIPD decryptor. The SEIPD
         // sits alone (no ESK packet), so use the session-key entry point.
@@ -115,6 +90,71 @@ object CompositeDecryptor {
             i = end
         }
         return false
+    }
+
+    /** 4.2.0 workstream A: recover the message session key from the
+     *  leading ESK region ALONE, without the body. [eskRegion] holds the
+     *  complete leading ESK packets (headers included) as consumed by the
+     *  streaming caller. Returns null when no composite (algo 35/36) PKESK
+     *  is present; throws like [tryDecrypt] when one is present but cannot
+     *  be opened. AES-256 is the v6 pairing (the session key is wrapped
+     *  bare; the algorithm lives in the SEIPDv2 packet). */
+    fun recoverSessionKey(
+        eskRegion: ByteArray,
+        secretKeyRings: List<PGPSecretKeyRing>,
+        passphrase: String? = null
+    ): PGPSessionKey? {
+        val parsed = firstCompositePkesk(eskRegion) ?: return null
+        return PGPSessionKey(
+            SymmetricKeyAlgorithmTags.AES_256,
+            recover(parsed, secretKeyRings, passphrase)
+        )
+    }
+
+    /** The shared decapsulation core behind [tryDecrypt] and
+     *  [recoverSessionKey]: match the recipient key, extract its material,
+     *  decapsulate with the PKESK's suite, unwrap the session key. */
+    private fun recover(
+        parsed: CompositePkesk.Parsed,
+        secretKeyRings: List<PGPSecretKeyRing>,
+        passphrase: String?
+    ): ByteArray {
+        val secKey = findSecretKey(parsed.recipientFingerprint, secretKeyRings)
+            ?: throw NoMatchingKey(
+                "no held composite secret key for recipient " +
+                    parsed.recipientFingerprint.toHex()
+            )
+        val material = CompositeSecretKeyMaterial.extract(secKey, passphrase?.toCharArray())
+            ?: throw NoMatchingKey("matched key is not a composite secret key")
+        val suite = parsed.suite
+        val mlkemSec = MLKEMPrivateKeyParameters(suite.mlkem.params, material.mlkemSeed)
+        val (recipientXPub, _) = CompositeKeyMaterial.publicMaterial(secKey.publicKey)
+            ?: throw NoMatchingKey("composite public material malformed")
+        val kek = CompositeKem.decapsulate(
+            ephemeralX25519 = parsed.ephemeralX25519,
+            mlkemCiphertext = parsed.mlkemCiphertext,
+            recipientX25519Sec = material.x25519Secret,
+            recipientMlkemSec = mlkemSec,
+            recipientX25519Pub = recipientXPub,
+            suite = suite
+        )
+        return CompositeKem.unwrapSessionKey(kek, parsed.wrappedSessionKey)
+    }
+
+    /** First parseable composite PKESK in a region of ESK packets, walking
+     *  definite-length packets only; null on none. */
+    private fun firstCompositePkesk(region: ByteArray): CompositePkesk.Parsed? {
+        var i = 0
+        while (i < region.size) {
+            val h = try { header(region, i) } catch (e: Exception) { null } ?: return null
+            val end = h.bodyStart + h.bodyLen
+            if (h.bodyLen < 0 || end > region.size || end <= i) return null
+            if (h.tag == TAG_PKESK) {
+                CompositePkesk.parseBody(region.copyOfRange(h.bodyStart, end))?.let { return it }
+            }
+            i = end
+        }
+        return null
     }
 
     // ── packet splitting ─────────────────────────────────────────────

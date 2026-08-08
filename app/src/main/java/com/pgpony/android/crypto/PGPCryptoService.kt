@@ -1589,11 +1589,16 @@ class PGPCryptoService private constructor() {
             // buffered and run through the same validated decryptors the
             // text path uses; classical messages keep the true streaming
             // path untouched, and a sniff miss falls through to BC, which
-            // fails exactly as it did before this block existed. Accepted
-            // cost for the patch: a PQC file holds its ciphertext in
-            // memory (the plaintext still streams out in chunks). The
-            // session-key handoff that would stream the ciphertext too is
-            // written into the 4.2.0 roster, not smuggled in here.
+            // fails exactly as it did before this block existed.
+            //
+            // 4.2.0 workstream A: the buffering this comment used to
+            // apologize for is gone. On a sniff hit the leading ESK
+            // packets (always definite-length) are consumed from the
+            // stream, the session key is recovered from the composite
+            // PKESK alone via the validated decryptors, and BC gets the
+            // body stream untouched, so the ciphertext is never held in
+            // memory. A false-positive sniff stitches the consumed ESK
+            // bytes back in front of the stream and falls through to BC.
             val sniffLimit = 1 shl 16
             val buffered = java.io.BufferedInputStream(input, sniffLimit)
             buffered.mark(sniffLimit)
@@ -1604,26 +1609,41 @@ class PGPCryptoService private constructor() {
             if (com.pgpony.android.crypto.pqc.CompositeDecryptor.sniffHead(sniff) ||
                 com.pgpony.android.crypto.pqc.CompositeLibrePGPDecryptor.sniffHead(sniff)
             ) {
-                val whole = buffered.readBytes()
-                val composite = com.pgpony.android.crypto.pqc.CompositeDecryptor.tryDecrypt(
-                    whole, secretKeyRings, passphrase
-                )
-                val librePgp = if (composite == null)
-                    com.pgpony.android.crypto.pqc.CompositeLibrePGPDecryptor.tryDecrypt(
-                        whole, secretKeyRings, passphrase
-                    ) else null
-                decryptedStream = composite?.stream ?: librePgp?.stream
-                if (composite != null) {
-                    integrityObj = composite.integrity
-                } else if (librePgp != null) {
-                    integrityObj = librePgp.integrity
-                }
-                if (decryptedStream == null) {
-                    // Sniff said composite but both decryptors declined
-                    // (they return null only when no composite PKESK is
-                    // present): treat it as a false positive and hand BC
-                    // the buffered bytes, since [buffered] is consumed.
-                    effectiveInput = java.io.ByteArrayInputStream(whole)
+                // Session-key handoff. Armor decodes on the fly; the
+                // decoded stream is buffered so the ESK consumer can
+                // mark/reset across packet headers.
+                val binaryIn: java.io.InputStream =
+                    if (head.isNotEmpty() && head[0].toInt() == '-'.code)
+                        java.io.BufferedInputStream(
+                            ArmoredInputStream(buffered), DECRYPT_STREAM_CHUNK
+                        )
+                    else buffered
+                val eskRegion = readLeadingEskPackets(binaryIn)
+                val session =
+                    com.pgpony.android.crypto.pqc.CompositeDecryptor
+                        .recoverSessionKey(eskRegion, secretKeyRings, passphrase)
+                        ?: com.pgpony.android.crypto.pqc.CompositeLibrePGPDecryptor
+                            .recoverSessionKey(eskRegion, secretKeyRings, passphrase)
+                if (session != null) {
+                    // [binaryIn] now sits at the encrypted body packet,
+                    // framing (partial lengths included) intact; BC reads
+                    // it natively and streams.
+                    val bcpgIn = org.bouncycastle.bcpg.BCPGInputStream(binaryIn)
+                    val encList = org.bouncycastle.openpgp.PGPEncryptedDataList(bcpgIn)
+                    val sessionEnc = encList.extractSessionKeyEncryptedData()
+                    decryptedStream = sessionEnc.getDataStream(
+                        org.bouncycastle.openpgp.operator.bc.BcSessionKeyDataDecryptorFactory(session)
+                    )
+                    integrityObj = sessionEnc
+                } else {
+                    // Sniff said composite but neither recoverer found a
+                    // composite PKESK: false positive. Reassemble the
+                    // consumed ESK bytes in front of the remainder and
+                    // fall through to BC, which fails or succeeds exactly
+                    // as it would have without the sniff.
+                    effectiveInput = java.io.SequenceInputStream(
+                        java.io.ByteArrayInputStream(eskRegion), binaryIn
+                    )
                 }
             }
 
@@ -1723,6 +1743,74 @@ class PGPCryptoService private constructor() {
             off += n
         }
         return buf.copyOf(off)
+    }
+
+    /** 4.2.0 workstream A: consume the leading ESK packets (PKESK tag 1 /
+     *  SKESK tag 3) from [s], returning them verbatim (headers included)
+     *  and leaving the stream positioned at the first non-ESK packet, the
+     *  encrypted body. ESK packets always carry definite lengths (the
+     *  4.1.2 finding), so this never has to parse a partial length; any
+     *  malformed or indeterminate header stops the consume with the
+     *  stream reset to that packet's start. [s] must support mark. */
+    private fun readLeadingEskPackets(s: java.io.InputStream): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val hdr = ByteArray(6)
+        while (true) {
+            s.mark(8)
+            val first = s.read()
+            if (first < 0 || first and 0x80 == 0) { s.reset(); break }
+            val tag = if (first and 0x40 != 0) first and 0x3F else (first shr 2) and 0x0F
+            if (tag != 1 && tag != 3) { s.reset(); break }
+            hdr[0] = first.toByte()
+            var hlen = 1
+            var bodyLen = -1
+            if (first and 0x40 != 0) { // new format
+                val l0 = s.read()
+                if (l0 >= 0) {
+                    hdr[hlen++] = l0.toByte()
+                    when {
+                        l0 < 192 -> bodyLen = l0
+                        l0 < 224 -> {
+                            val l1 = s.read()
+                            if (l1 >= 0) { hdr[hlen++] = l1.toByte(); bodyLen = ((l0 - 192) shl 8) + l1 + 192 }
+                        }
+                        l0 == 255 -> {
+                            var v = 0; var ok = true
+                            repeat(4) {
+                                val b = s.read()
+                                if (b < 0) ok = false else { hdr[hlen++] = b.toByte(); v = (v shl 8) or b }
+                            }
+                            if (ok) bodyLen = v
+                        }
+                        // 224..254 would be a partial length: not legal on an ESK.
+                    }
+                }
+            } else { // old format
+                val lt = first and 0x03
+                var v = 0; var ok = true
+                val n = when (lt) { 0 -> 1; 1 -> 2; 2 -> 4; else -> 0 }
+                if (n == 0) ok = false // indeterminate: not legal on an ESK
+                repeat(n) {
+                    val b = s.read()
+                    if (b < 0) ok = false else { hdr[hlen++] = b.toByte(); v = (v shl 8) or b }
+                }
+                if (ok) bodyLen = v
+            }
+            if (bodyLen < 0) { s.reset(); break }
+            out.write(hdr, 0, hlen)
+            var remaining = bodyLen
+            val buf = ByteArray(minOf(remaining, 8192).coerceAtLeast(1))
+            while (remaining > 0) {
+                val n = s.read(buf, 0, minOf(remaining, buf.size))
+                if (n < 0) throw PGPCryptoError.DecryptionFailed("Truncated ESK packet")
+                out.write(buf, 0, n)
+                remaining -= n
+            }
+            if (out.size() > MAX_ESK_REGION) {
+                throw PGPCryptoError.DecryptionFailed("ESK region exceeds sane bounds")
+            }
+        }
+        return out.toByteArray()
     }
 
     /** 4.1.2: decode an armored head to packet bytes for the composite
@@ -2380,6 +2468,15 @@ class PGPCryptoService private constructor() {
      * that sees it should try its own secret keys against the packet.
      */
     private val WILDCARD_KEY_ID = 0L
+
+    /** Buffer size for the armored-decode wrapper on the streaming
+     *  composite path (workstream A). */
+    private val DECRYPT_STREAM_CHUNK = 1 shl 13
+
+    /** Upper bound on the leading ESK region a message may carry before
+     *  the streaming consumer refuses it (a composite PKESK is ~1.7 KB;
+     *  this allows hundreds of recipients). */
+    private val MAX_ESK_REGION = 1 shl 20
 
     /** A PKESK we managed to open, with the packet it came from. */
     private class PkeskMatch(

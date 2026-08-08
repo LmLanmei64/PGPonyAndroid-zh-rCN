@@ -51,22 +51,7 @@ object CompositeLibrePGPDecryptor {
         val split = split(binary) ?: return null // no LibrePGP algo-8 PKESK
         val pkesk = split.pkesk
 
-        val secKey = findSecretKey(pkesk.keyId, secretKeyRings)
-            ?: throw NoMatchingKey("no held LibrePGP composite secret key for ${pkesk.keyId.toHex()}")
-        val packet = secKey.encoded
-
-        val material = CompositeLibrePGPKeyMaterial.extractFromPacket(packet, passphrase?.toCharArray())
-        val v5fp = CompositeLibrePGPKeyMaterial.v5Fingerprint(packet)
-        val (recipientXPub, _) = CompositeLibrePGPKeyMaterial.publicMaterial(packet)
-
-        // algo 8 is shared; the key's curve OID says which parameter set.
-        val suite = CompositeLibrePGPKeyMaterial.suiteOf(packet)
-        val mlkemSec = MLKEMPrivateKeyParameters(suite.mlkem.params, material.kyberSeed)
-        val fixedInfo = CompositeKemLibrePGP.fixedInfo(pkesk.symAlgo, v5fp)
-        val kek = CompositeKemLibrePGP.decapsulate(
-            pkesk.eccEphemeral, pkesk.kyberCiphertext, material.x25519Secret, recipientXPub, mlkemSec, fixedInfo, suite
-        )
-        val sessionKey = CompositeKemLibrePGP.unwrapSessionKey(kek, pkesk.wrappedSessionKey)
+        val sessionKey = recover(pkesk, secretKeyRings, passphrase)
 
         val bcpgIn = BCPGInputStream(ByteArrayInputStream(split.remainder))
         val encList = PGPEncryptedDataList(bcpgIn)
@@ -97,6 +82,58 @@ object CompositeLibrePGPDecryptor {
             i = end
         }
         return false
+    }
+
+    /** 4.2.0 workstream A: recover the session key from the leading ESK
+     *  region alone. Returns null when no v3 algo-8 composite PKESK is
+     *  present; throws like [tryDecrypt] when one is present but cannot be
+     *  opened. The symmetric algorithm comes from the PKESK itself. */
+    fun recoverSessionKey(
+        eskRegion: ByteArray,
+        secretKeyRings: List<PGPSecretKeyRing>,
+        passphrase: String? = null
+    ): PGPSessionKey? {
+        val pkesk = firstPkesk(eskRegion) ?: return null
+        return PGPSessionKey(pkesk.symAlgo, recover(pkesk, secretKeyRings, passphrase))
+    }
+
+    /** Shared decapsulation core behind [tryDecrypt] and [recoverSessionKey]. */
+    private fun recover(
+        pkesk: Pkesk,
+        secretKeyRings: List<PGPSecretKeyRing>,
+        passphrase: String?
+    ): ByteArray {
+        val secKey = findSecretKey(pkesk.keyId, secretKeyRings)
+            ?: throw NoMatchingKey("no held LibrePGP composite secret key for ${pkesk.keyId.toHex()}")
+        val packet = secKey.encoded
+
+        val material = CompositeLibrePGPKeyMaterial.extractFromPacket(packet, passphrase?.toCharArray())
+        val v5fp = CompositeLibrePGPKeyMaterial.v5Fingerprint(packet)
+        val (recipientXPub, _) = CompositeLibrePGPKeyMaterial.publicMaterial(packet)
+
+        // algo 8 is shared; the key's curve OID says which parameter set.
+        val suite = CompositeLibrePGPKeyMaterial.suiteOf(packet)
+        val mlkemSec = MLKEMPrivateKeyParameters(suite.mlkem.params, material.kyberSeed)
+        val fixedInfo = CompositeKemLibrePGP.fixedInfo(pkesk.symAlgo, v5fp)
+        val kek = CompositeKemLibrePGP.decapsulate(
+            pkesk.eccEphemeral, pkesk.kyberCiphertext, material.x25519Secret, recipientXPub, mlkemSec, fixedInfo, suite
+        )
+        return CompositeKemLibrePGP.unwrapSessionKey(kek, pkesk.wrappedSessionKey)
+    }
+
+    /** First parseable v3 algo-8 PKESK in a region of ESK packets. */
+    private fun firstPkesk(region: ByteArray): Pkesk? {
+        var i = 0
+        while (i < region.size) {
+            val h = try { header(region, i) } catch (e: Exception) { null } ?: return null
+            val end = h.bodyStart + h.bodyLen
+            if (h.bodyLen < 0 || end > region.size || end <= i) return null
+            if (h.tag == TAG_PKESK) {
+                parsePkesk(region.copyOfRange(h.bodyStart, end))?.let { return it }
+            }
+            i = end
+        }
+        return null
     }
 
     // ── PKESK parsing ────────────────────────────────────────────────
