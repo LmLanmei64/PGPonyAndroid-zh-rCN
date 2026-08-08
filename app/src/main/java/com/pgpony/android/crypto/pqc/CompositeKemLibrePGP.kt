@@ -94,12 +94,18 @@ object CompositeKemLibrePGP {
      * agreement, ecc_ct is the 32-byte ephemeral point, and ecc_pk is the
      * recipient's 32-byte X25519 public key.
      */
-    private fun eccKemKdf(ecdh: ByteArray, eccCt: ByteArray, eccPk: ByteArray): ByteArray {
-        val d = SHA3Digest(256)
+    private fun eccKemKdf(
+        suite: CompositeSuite, ecdh: ByteArray, eccCt: ByteArray, eccPk: ByteArray
+    ): ByteArray {
+        // gpg's ECC key-share KDF hash scales with the curve (Kyber spec):
+        // SHA3-256 for X25519, SHA3-512 for X448. Using 256 for X448 yields a
+        // different eccKeyShare, hence a different KEK and "checksum failed".
+        val hashBits = if (suite.curve == EccCurve.X448) 512 else 256
+        val d = SHA3Digest(hashBits)
         d.update(ecdh, 0, ecdh.size)
         d.update(eccCt, 0, eccCt.size)
         d.update(eccPk, 0, eccPk.size)
-        val out = ByteArray(32)
+        val out = ByteArray(hashBits / 8)
         d.doFinal(out, 0)
         return out
     }
@@ -123,7 +129,7 @@ object CompositeKemLibrePGP {
         val eccCt = suite.curve.normalizePoint(eccCiphertext)
         val recipPub = suite.curve.normalizePoint(recipientX25519Pub)
         val ecdh = ecdhAgree(suite, recipientX25519Sec, eccCt)
-        val eccSs = eccKemKdf(ecdh, eccCt, recipPub)
+        val eccSs = eccKemKdf(suite, ecdh, eccCt, recipPub)
         val mlkemShared = MLKEMExtractor(recipientMlkemSec).extractSecret(mlkemCiphertext)
         return combine(eccSs, eccCt, mlkemShared, mlkemCiphertext, fixedInfo)
     }
@@ -168,7 +174,7 @@ object CompositeKemLibrePGP {
         val (ephSec, ephPub) = genEphemeral(suite, random)
 
         val ecdh = ecdhAgree(suite, ephSec, recipientX25519Pub)
-        val eccSs = eccKemKdf(ecdh, ephPub, recipientX25519Pub)
+        val eccSs = eccKemKdf(suite, ecdh, ephPub, recipientX25519Pub)
         val mlkemPub = MLKEMPublicKeyParameters(suite.mlkem.params, recipientKyberPub)
         val enc = MLKEMGenerator(random).generateEncapsulated(mlkemPub)
 
