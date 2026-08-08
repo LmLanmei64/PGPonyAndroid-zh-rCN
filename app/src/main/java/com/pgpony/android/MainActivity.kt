@@ -913,11 +913,12 @@ fun PGPonyMainScreen(
         }
     }
 
-    if (isLocked) {
-        LockScreen(onUnlock = { isLocked = false })
-        return
-    }
-
+    // 4.2.0 RC2 (D#19): navController used to be created AFTER this gate,
+    // so the whole NavHost (and everything nested in it) was torn down on
+    // lock and rebuilt from scratch on unlock. Hoisted above the gate so
+    // the nav graph, and every screen's own state, stays composed and
+    // alive across a lock/unlock cycle; LockScreen now renders as an
+    // overlay near the end of this function instead of an early return.
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -1069,202 +1070,219 @@ fun PGPonyMainScreen(
         }
     }
 
-    Scaffold(
-        // 4.0.0 Phase 6c (GitHub Issue B) — edge-to-edge. The window
-        // background is black (themes.xml); enableEdgeToEdge() makes the
-        // system bars transparent, so any area the app doesn't paint
-        // shows through as a black strip. This root Scaffold previously
-        // consumed the system-bar insets and padded the whole NavHost
-        // inward, leaving the status- and nav-bar regions unpainted —
-        // the reporter's dead black bands. Setting contentWindowInsets
-        // to zero here hands inset handling DOWN: each screen's own
-        // Scaffold/TopAppBar draws its surface behind the status bar,
-        // and the NavigationBar below draws its surface behind the
-        // navigation bar. Content now fills the display; no black strips.
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        bottomBar = {
-            NavigationBar {
-                bottomNavScreens.forEach { screen ->
-                    val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
-                    NavigationBarItem(
-                        icon = {
-                            Icon(
-                                imageVector = if (selected) screen.selectedIcon else screen.unselectedIcon,
-                                contentDescription = stringResource(screen.titleResId)
-                            )
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            // 4.0.0 Phase 6c (GitHub Issue B) — edge-to-edge. The window
+            // background is black (themes.xml); enableEdgeToEdge() makes the
+            // system bars transparent, so any area the app doesn't paint
+            // shows through as a black strip. This root Scaffold previously
+            // consumed the system-bar insets and padded the whole NavHost
+            // inward, leaving the status- and nav-bar regions unpainted —
+            // the reporter's dead black bands. Setting contentWindowInsets
+            // to zero here hands inset handling DOWN: each screen's own
+            // Scaffold/TopAppBar draws its surface behind the status bar,
+            // and the NavigationBar below draws its surface behind the
+            // navigation bar. Content now fills the display; no black strips.
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            bottomBar = {
+                NavigationBar {
+                    bottomNavScreens.forEach { screen ->
+                        val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
+                        NavigationBarItem(
+                            icon = {
+                                Icon(
+                                    imageVector = if (selected) screen.selectedIcon else screen.unselectedIcon,
+                                    contentDescription = stringResource(screen.titleResId)
+                                )
+                            },
+                            label = { NavBarLabel(stringResource(screen.titleResId)) },
+                            selected = selected,
+                            onClick = {
+                                navController.navigate(screen.route) {
+                                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        ) { padding ->
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Keyring.route,
+                modifier = Modifier.padding(padding)
+            ) {
+                composable(Screen.Keyring.route) {
+                    // Phase A4a: tapping a key card navigates to the new
+                    // KeyDetailScreen. The route uses the key's fingerprint
+                    // as a path arg; the detail VM loads the key in a
+                    // LaunchedEffect on the resolved arg.
+                    KeyringScreen(
+                        viewModel = keyringVm,
+                        onKeyClick = { fingerprint ->
+                            navController.navigate("keyring/$fingerprint")
                         },
-                        label = { NavBarLabel(stringResource(screen.titleResId)) },
-                        selected = selected,
-                        onClick = {
-                            navController.navigate(screen.route) {
-                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                        onScanCard = { navController.navigate("card_scan") }
+                    )
+                }
+                // Phase A4a: KeyDetailScreen route.
+                composable(
+                    route = "keyring/{fingerprint}",
+                    arguments = listOf(navArgument("fingerprint") { type = NavType.StringType })
+                ) { backStackEntry ->
+                    val fingerprint = backStackEntry.arguments?.getString("fingerprint").orEmpty()
+                    // viewModel() with a factory parameter produces a
+                    // back-stack-entry-scoped VM — fresh instance per
+                    // navigation, disposed when popped. Matches the
+                    // ephemeral semantics of a per-key detail screen.
+                    val detailVm: KeyDetailViewModel = viewModel(factory = factory)
+                    KeyDetailScreen(
+                        fingerprint = fingerprint,
+                        viewModel = detailVm,
+                        onBack = { navController.popBackStack() },
+                        onChangeCardPin = { navController.navigate("card_pin_change") }
+                    )
+                }
+                // HW Phase 1: NFC hardware-key scan destination. Reached from
+                // the Keyring FAB. Self-contained — talks to KeyRepository and
+                // the Activity's reader-mode helpers directly, no shared VM.
+                composable("card_scan") {
+                    CardScanScreen(
+                        onBack = { navController.popBackStack() },
+                        onChangePin = { navController.navigate("card_pin_change") },
+                        onSignTest = { navController.navigate("card_sign") },
+                        onDecryptTest = { navController.navigate("card_decrypt") },
+                        onManageCard = { navController.navigate("card_management") },
+                        onGenerateKey = { navController.navigate("card_keygen") }
+                    )
+                }
+                // HW Phase 2: Change the card's user PIN (PW1).
+                composable("card_pin_change") {
+                    CardPinChangeScreen(
+                        onBack = { navController.popBackStack() },
+                        // After a successful change there's nothing left to do on
+                        // the card screens, so return straight to the Keyring tab
+                        // (popping card_scan + card_pin_change off the stack).
+                        onDone = {
+                            navController.navigate(Screen.Keyring.route) {
+                                popUpTo(Screen.Keyring.route) { inclusive = false }
                                 launchSingleTop = true
-                                restoreState = true
                             }
                         }
                     )
                 }
+                // Phase C0: Password Store (pass) — list + import. Opt-in via Settings.
+                composable("pass_store") {
+                    PassStoreListScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenStore = { storeId -> navController.navigate("pass_browser/$storeId") }
+                    )
+                }
+                // Phase C1: browse a store's folder tree.
+                composable(
+                    "pass_browser/{storeId}",
+                    arguments = listOf(navArgument("storeId") { type = NavType.StringType })
+                ) { entry ->
+                    val storeId = entry.arguments?.getString("storeId") ?: ""
+                    PassBrowserScreen(
+                        storeId = storeId,
+                        onBack = { navController.popBackStack() },
+                        onOpenEntry = { sid, rel ->
+                            navController.navigate("pass_entry/$sid/${android.net.Uri.encode(rel)}")
+                        }
+                    )
+                }
+                // Phase C1: decrypt + view a single entry.
+                composable(
+                    "pass_entry/{storeId}/{relPath}",
+                    arguments = listOf(
+                        navArgument("storeId") { type = NavType.StringType },
+                        navArgument("relPath") { type = NavType.StringType }
+                    )
+                ) { entry ->
+                    val storeId = entry.arguments?.getString("storeId") ?: ""
+                    val relPath = entry.arguments?.getString("relPath") ?: ""
+                    PassEntryScreen(
+                        storeId = storeId,
+                        relativePath = relPath,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                // Phase B1: on-card key generation.
+                composable("card_keygen") {
+                    CardKeygenScreen(
+                        onBack = { navController.popBackStack() },
+                        onDone = {
+                            navController.navigate(Screen.Keyring.route) {
+                                popUpTo(Screen.Keyring.route) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        }
+                    )
+                }
+                // Phase B2: admin-PIN lifecycle (change admin PIN, unblock user
+                // PIN, factory reset).
+                composable("card_management") {
+                    CardManagementScreen(
+                        onBack = { navController.popBackStack() },
+                        onDone = {
+                            navController.navigate(Screen.Keyring.route) {
+                                popUpTo(Screen.Keyring.route) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        }
+                    )
+                }
+                // HW Phase 2b: clear-sign a test message with the card key.
+                composable("card_sign") {
+                    CardSignScreen(onBack = { navController.popBackStack() })
+                }
+                // HW Phase 3b: decrypt a test message with the card key.
+                composable("card_decrypt") {
+                    CardDecryptScreen(onBack = { navController.popBackStack() })
+                }
+                composable(Screen.Encrypt.route) { EncryptScreen(viewModel = encDecVm) }
+                composable(Screen.Decrypt.route) { DecryptScreen(viewModel = encDecVm) }
+                composable(Screen.Exchange.route) { ExchangeScreen(viewModel = exchangeVm) }
+                composable(Screen.Contacts.route) { ContactsScreen(viewModel = contactsVm) }
+                composable("backup") {
+                    // Consume the pending bytes exactly once so navigating
+                    // back and forth doesn't re-trigger the restore.
+                    val initial = remember {
+                        pendingRestoreBytes.value.also { pendingRestoreBytes.value = null }
+                    }
+                    com.pgpony.android.ui.backup.BackupScreen(
+                        onDismiss = { navController.popBackStack() },
+                        initialRestoreBytes = initial,
+                        onRestored = { keyringVm.loadKeys() }
+                    )
+                }
+                composable(Screen.Settings.route) {
+                    SettingsScreen(
+                        viewModel = settingsVm,
+                        onReplayOnboarding = { onboardingDone = false },
+                        onOpenPassStore = { navController.navigate("pass_store") },
+                        onKeysChanged = { keyringVm.loadKeys() }
+                    )
+                }
             }
         }
-    ) { padding ->
-        NavHost(
-            navController = navController,
-            startDestination = Screen.Keyring.route,
-            modifier = Modifier.padding(padding)
-        ) {
-            composable(Screen.Keyring.route) {
-                // Phase A4a: tapping a key card navigates to the new
-                // KeyDetailScreen. The route uses the key's fingerprint
-                // as a path arg; the detail VM loads the key in a
-                // LaunchedEffect on the resolved arg.
-                KeyringScreen(
-                    viewModel = keyringVm,
-                    onKeyClick = { fingerprint ->
-                        navController.navigate("keyring/$fingerprint")
-                    },
-                    onScanCard = { navController.navigate("card_scan") }
-                )
-            }
-            // Phase A4a: KeyDetailScreen route.
-            composable(
-                route = "keyring/{fingerprint}",
-                arguments = listOf(navArgument("fingerprint") { type = NavType.StringType })
-            ) { backStackEntry ->
-                val fingerprint = backStackEntry.arguments?.getString("fingerprint").orEmpty()
-                // viewModel() with a factory parameter produces a
-                // back-stack-entry-scoped VM — fresh instance per
-                // navigation, disposed when popped. Matches the
-                // ephemeral semantics of a per-key detail screen.
-                val detailVm: KeyDetailViewModel = viewModel(factory = factory)
-                KeyDetailScreen(
-                    fingerprint = fingerprint,
-                    viewModel = detailVm,
-                    onBack = { navController.popBackStack() },
-                    onChangeCardPin = { navController.navigate("card_pin_change") }
-                )
-            }
-            // HW Phase 1: NFC hardware-key scan destination. Reached from
-            // the Keyring FAB. Self-contained — talks to KeyRepository and
-            // the Activity's reader-mode helpers directly, no shared VM.
-            composable("card_scan") {
-                CardScanScreen(
-                    onBack = { navController.popBackStack() },
-                    onChangePin = { navController.navigate("card_pin_change") },
-                    onSignTest = { navController.navigate("card_sign") },
-                    onDecryptTest = { navController.navigate("card_decrypt") },
-                    onManageCard = { navController.navigate("card_management") },
-                    onGenerateKey = { navController.navigate("card_keygen") }
-                )
-            }
-            // HW Phase 2: Change the card's user PIN (PW1).
-            composable("card_pin_change") {
-                CardPinChangeScreen(
-                    onBack = { navController.popBackStack() },
-                    // After a successful change there's nothing left to do on
-                    // the card screens, so return straight to the Keyring tab
-                    // (popping card_scan + card_pin_change off the stack).
-                    onDone = {
-                        navController.navigate(Screen.Keyring.route) {
-                            popUpTo(Screen.Keyring.route) { inclusive = false }
-                            launchSingleTop = true
-                        }
-                    }
-                )
-            }
-            // Phase C0: Password Store (pass) — list + import. Opt-in via Settings.
-            composable("pass_store") {
-                PassStoreListScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenStore = { storeId -> navController.navigate("pass_browser/$storeId") }
-                )
-            }
-            // Phase C1: browse a store's folder tree.
-            composable(
-                "pass_browser/{storeId}",
-                arguments = listOf(navArgument("storeId") { type = NavType.StringType })
-            ) { entry ->
-                val storeId = entry.arguments?.getString("storeId") ?: ""
-                PassBrowserScreen(
-                    storeId = storeId,
-                    onBack = { navController.popBackStack() },
-                    onOpenEntry = { sid, rel ->
-                        navController.navigate("pass_entry/$sid/${android.net.Uri.encode(rel)}")
-                    }
-                )
-            }
-            // Phase C1: decrypt + view a single entry.
-            composable(
-                "pass_entry/{storeId}/{relPath}",
-                arguments = listOf(
-                    navArgument("storeId") { type = NavType.StringType },
-                    navArgument("relPath") { type = NavType.StringType }
-                )
-            ) { entry ->
-                val storeId = entry.arguments?.getString("storeId") ?: ""
-                val relPath = entry.arguments?.getString("relPath") ?: ""
-                PassEntryScreen(
-                    storeId = storeId,
-                    relativePath = relPath,
-                    onBack = { navController.popBackStack() }
-                )
-            }
-            // Phase B1: on-card key generation.
-            composable("card_keygen") {
-                CardKeygenScreen(
-                    onBack = { navController.popBackStack() },
-                    onDone = {
-                        navController.navigate(Screen.Keyring.route) {
-                            popUpTo(Screen.Keyring.route) { inclusive = false }
-                            launchSingleTop = true
-                        }
-                    }
-                )
-            }
-            // Phase B2: admin-PIN lifecycle (change admin PIN, unblock user
-            // PIN, factory reset).
-            composable("card_management") {
-                CardManagementScreen(
-                    onBack = { navController.popBackStack() },
-                    onDone = {
-                        navController.navigate(Screen.Keyring.route) {
-                            popUpTo(Screen.Keyring.route) { inclusive = false }
-                            launchSingleTop = true
-                        }
-                    }
-                )
-            }
-            // HW Phase 2b: clear-sign a test message with the card key.
-            composable("card_sign") {
-                CardSignScreen(onBack = { navController.popBackStack() })
-            }
-            // HW Phase 3b: decrypt a test message with the card key.
-            composable("card_decrypt") {
-                CardDecryptScreen(onBack = { navController.popBackStack() })
-            }
-            composable(Screen.Encrypt.route) { EncryptScreen(viewModel = encDecVm) }
-            composable(Screen.Decrypt.route) { DecryptScreen(viewModel = encDecVm) }
-            composable(Screen.Exchange.route) { ExchangeScreen(viewModel = exchangeVm) }
-            composable(Screen.Contacts.route) { ContactsScreen(viewModel = contactsVm) }
-            composable("backup") {
-                // Consume the pending bytes exactly once so navigating
-                // back and forth doesn't re-trigger the restore.
-                val initial = remember {
-                    pendingRestoreBytes.value.also { pendingRestoreBytes.value = null }
-                }
-                com.pgpony.android.ui.backup.BackupScreen(
-                    onDismiss = { navController.popBackStack() },
-                    initialRestoreBytes = initial,
-                    onRestored = { keyringVm.loadKeys() }
-                )
-            }
-            composable(Screen.Settings.route) {
-                SettingsScreen(
-                    viewModel = settingsVm,
-                    onReplayOnboarding = { onboardingDone = false },
-                    onOpenPassStore = { navController.navigate("pass_store") },
-                    onKeysChanged = { keyringVm.loadKeys() }
-                )
-            }
+
+        // 4.2.0 RC2 (D#19): LockScreen renders as an overlay on top of
+        // the still-composed NavHost rather than replacing it, so
+        // navigation and screen state (e.g. mid Password Store flow)
+        // survive a lock/unlock cycle instead of being torn down and
+        // rebuilt on unlock. FLAG_SECURE is deliberately NOT what keeps
+        // this content out of the recents thumbnail (see the G8 note
+        // below this function): FLAG_SECURE stays scoped to
+        // PassEntryScreen only. Recents protection is API 33+'s
+        // setRecentsScreenshotEnabled(false) plus the G8 privacy cover
+        // on pre-33, both already scoped to the whole activity task and
+        // unaffected by whether the NavHost is composed underneath.
+        if (isLocked) {
+            LockScreen(onUnlock = { isLocked = false })
         }
     }
 }
