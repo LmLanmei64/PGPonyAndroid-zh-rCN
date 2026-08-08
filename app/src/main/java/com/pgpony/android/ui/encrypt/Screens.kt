@@ -413,7 +413,26 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                     val signPrefs = encryptContext.getSharedPreferences(
                         "pgpony_prefs", android.content.Context.MODE_PRIVATE
                     )
-                    if ((willSoftwareSign || willCardSign) && signPrefs.getBoolean("biometric_sign", false) &&
+                    // 4.2.0 (issue #17, per AraafRoyall's 8 August answer):
+                    // same fix as the Decrypt screen's performDecrypt. SIGN
+                    // and TEXT are the two modes whose button stays enabled
+                    // with empty input (see the `enabled =` predicate below,
+                    // `else -> true`), so they're the two modes that could
+                    // reach here with nothing to sign. willSoftwareSign /
+                    // willCardSign above don't check for that, so an empty
+                    // tap with biometric-for-signing on used to prompt a
+                    // fingerprint before runPrimaryAction's own validation
+                    // (signOnly's blank check, encrypt()'s blank check) ever
+                    // ran. Checking the same condition first and skipping
+                    // the gate lets that validation error surface
+                    // immediately instead.
+                    val wouldFailInputValidation = when (state.mode) {
+                        EncryptMode.SIGN -> viewModel.signInputIsBlank()
+                        EncryptMode.TEXT -> state.inputText.isBlank()
+                        else -> false
+                    }
+                    if ((willSoftwareSign || willCardSign) && !wouldFailInputValidation &&
+                        signPrefs.getBoolean("biometric_sign", false) &&
                         cardActivity != null &&
                         BiometricGate.canAuthenticate(cardActivity) == BiometricAvailability.Available
                     ) {
@@ -3349,13 +3368,28 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
             action()
         }
     }
-    val performDecrypt: () -> Unit = {
-        gateDecryptBiometric {
-            when (state.mode) {
-                DecryptMode.TEXT -> viewModel.decrypt()
-                DecryptMode.FILE -> viewModel.decryptFile()
-            }
+    // 4.2.0 (issue #17, per AraafRoyall's 8 August answer): don't disable
+    // the button (no reason given for being disabled is worse than a live
+    // button), but don't ask for a fingerprint before checking there's
+    // anything to decrypt either. runDecrypt's own VM calls already
+    // validate blank input / no file and surface the right error message;
+    // the bug was performDecrypt running the biometric gate unconditionally
+    // BEFORE that validation, so an empty tap prompted a fingerprint and
+    // only then showed the error. Checking the same condition here first
+    // and skipping the gate when it would fail lets the error surface
+    // immediately, exactly as it does when biometric-for-decrypt is off.
+    val runDecrypt: () -> Unit = {
+        when (state.mode) {
+            DecryptMode.TEXT -> viewModel.decrypt()
+            DecryptMode.FILE -> viewModel.decryptFile()
         }
+    }
+    val performDecrypt: () -> Unit = {
+        val wouldFailInputValidation = when (state.mode) {
+            DecryptMode.TEXT -> state.inputText.isBlank()
+            DecryptMode.FILE -> !state.hasSelectedFile
+        }
+        if (wouldFailInputValidation) runDecrypt() else gateDecryptBiometric(runDecrypt)
     }
 
     // Refresh keys every time screen appears
