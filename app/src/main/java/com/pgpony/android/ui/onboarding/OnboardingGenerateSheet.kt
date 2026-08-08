@@ -161,7 +161,7 @@ fun OnboardingGenerateSheet(
 
 // ── Form ───────────────────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun FormContent(
     name: String,
@@ -227,19 +227,20 @@ private fun FormContent(
     )
     Spacer(modifier = Modifier.height(16.dp))
 
-    // Key type (v4 vs v6). Mirrors the Keyring-tab generator so a first key
-    // created during onboarding can be an RFC 9580 v6 key instead of v4 only.
-    // Only the two Ed25519 options are offered here; RSA stays in the full
-    // Keyring generator. Reuses the existing algorithm string resources so no
-    // new strings are introduced.
+    // Key type. Mirrors the Keyring-tab generator EXACTLY: the tour offers
+    // every generatable type, the same as iOS's tour. 4.2.0-RC1 feedback
+    // (issue #1) caught that this list was still the two Ed25519 options
+    // from before the PQC types existed; the tour and the generator now
+    // share KeyAlgorithm.generatable so they cannot drift again. FlowRow,
+    // not Row: eight chips must wrap on a narrow or large-text screen.
     Text(
         stringResource(R.string.keyring_generate_algorithm_label),
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
     Spacer(modifier = Modifier.height(4.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(KeyAlgorithm.ED25519_CV25519, KeyAlgorithm.V6_ED25519).forEach { algo ->
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        KeyAlgorithm.generatable.forEach { algo ->
             FilterChip(
                 selected = algorithm == algo,
                 onClick = { onAlgorithmChange(algo) },
@@ -249,10 +250,17 @@ private fun FormContent(
     }
     Spacer(modifier = Modifier.height(6.dp))
     Text(
-        text = if (algorithm.isV6) {
-            stringResource(R.string.keyring_generate_algorithm_caption_v6)
-        } else {
-            stringResource(R.string.keyring_generate_algorithm_caption_ed25519)
+        text = when {
+            algorithm.isComposite && algorithm.isV6 ->
+                stringResource(R.string.keyring_generate_algorithm_caption_pqc_ietf)
+            algorithm.isComposite ->
+                stringResource(R.string.keyring_generate_algorithm_caption_pqc_librepgp)
+            algorithm.isV6 ->
+                stringResource(R.string.keyring_generate_algorithm_caption_v6)
+            algorithm == KeyAlgorithm.ED25519_CV25519 ->
+                stringResource(R.string.keyring_generate_algorithm_caption_ed25519)
+            else ->
+                stringResource(R.string.keyring_generate_algorithm_caption_rsa)
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant

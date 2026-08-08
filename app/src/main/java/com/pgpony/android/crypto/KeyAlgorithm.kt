@@ -36,10 +36,12 @@ enum class KeyAlgorithm(
     MLKEM768_X25519_V6("ML-KEM-768+X25519 (v6)", "ML-KEM-768 v6", 0, isV6 = true),
 
     // 4.0.0 Phase 2b — LibrePGP post-quantum composite (draft-koch-librepgp,
-    // algorithm 8): Kyber/ML-KEM-768 + X25519 on a v5 encryption subkey
-    // under a v4 EdDSA primary (GnuPG 2.5.x keys). Import + encrypt
-    // supported (validated against gpg 2.5.21); not offered for keygen.
-    MLKEM768_X25519_LIBREPGP("ML-KEM-768+X25519 (LibrePGP)", "ML-KEM-768 v5", 0),
+    // algorithm 8): Kyber-768 + X25519 on a v5 encryption subkey under a v4
+    // EdDSA primary (GnuPG 2.5.x keys). Naming rule (issue #1 feedback,
+    // 4.2.0-RC1): the LibrePGP formats display as "Kyber", matching what
+    // GnuPG prints (ky768_cv25519), and "ML-KEM" is reserved for the IETF
+    // draft formats, which track the standardized construction.
+    MLKEM768_X25519_LIBREPGP("Kyber 768 (X25519)", "Kyber 768", 0),
 
     // 4.2.0 §1.1 — IETF post-quantum composite (draft-ietf-openpgp-pqc,
     // algorithm 36): ML-KEM-1024 + X448 on a v6 encryption subkey. Distinct
@@ -50,7 +52,7 @@ enum class KeyAlgorithm(
     // ML-KEM-1024 + X448 on a v5 encryption subkey. Algorithm 8 is SHARED
     // with the 768 variant, so 768-vs-1024 is told apart by the curve OID
     // (X448 1.3.101.111) in detectAlgorithm, not by the algorithm id.
-    MLKEM1024_X448_LIBREPGP("ML-KEM-1024+X448 (LibrePGP)", "ML-KEM-1024 v5", 0);
+    MLKEM1024_X448_LIBREPGP("Kyber 1024 (X448)", "Kyber 1024", 0);
 
     /**
      * Whether this algorithm uses native Curve25519 for encryption (ECDH subkey).

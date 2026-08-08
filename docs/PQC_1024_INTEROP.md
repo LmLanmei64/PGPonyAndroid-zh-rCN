@@ -84,7 +84,9 @@ gpg --export --armor $G > G.cert
 
 ### 1b. Generate key P in PGPony
 
-In PGPony: Keyring, generate a key, choose **ML-KEM-1024+X448 (LibrePGP)**.
+In PGPony: Keyring, generate a key, choose **Kyber 1024 (X448)** (the
+LibrePGP format; renamed from ML-KEM-1024+X448 (LibrePGP) after RC1
+feedback).
 Then export its public key (Key detail, share or export) to the desktop as
 `P.cert`, and import G:
 
@@ -128,7 +130,7 @@ Expect the probe text on stdout.
 
 **C. Cert import both ways.** Already exercised above: gpg imported P
 (`gpg --import P.cert` succeeded and `gpg -k` shows `ky1024_cv448`), and
-PGPony imported G and labeled it ML-KEM-1024 (LibrePGP) in the keyring. Tick
+PGPony imported G and labeled it Kyber 1024 (X448) in the keyring. Tick
 both only if each side shows the key with the right algorithm, not just
 "imported".
 
@@ -138,7 +140,7 @@ both only if each side shows the key with the right algorithm, not just
 |---|---|
 | A. gpg encrypt to P -> PGPony decrypt |  |
 | B. PGPony encrypt to G -> gpg decrypt |  |
-| C1. PGPony imports G, labels ML-KEM-1024 (LibrePGP) |  |
+| C1. PGPony imports G, labels Kyber 1024 (X448) |  |
 | C2. gpg imports P, shows ky1024_cv448 |  |
 
 A green A and B is the real proof that PGPony's Kyber-1024 + X448 KMAC256
