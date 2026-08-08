@@ -516,8 +516,8 @@
     <string name="keyring_generate_algorithm_caption_v6">OpenPGP v6 (RFC 9580). Modern format with a dedicated signing subkey and hardware-key support. Pick a v4 type if your recipients use older software.</string>
     <string name="keyring_generate_algorithm_caption_ed25519">Fast, compact elliptic-curve keys (OpenPGP v4). Widely supported — a good default.</string>
     <string name="keyring_generate_algorithm_caption_rsa">Classic RSA keys (OpenPGP v4). Maximum compatibility; larger and slower than Ed25519.</string>
-    <string name="keyring_generate_algorithm_caption_pqc_ietf">Post-quantum hybrid: ML-KEM (Kyber) plus an elliptic curve on a modern v6 key, following the IETF OpenPGP PQC draft. Resists quantum attacks; readable only by up-to-date OpenPGP software. ML-KEM-1024 is the higher-strength option.</string>
-    <string name="keyring_generate_algorithm_caption_pqc_librepgp">Post-quantum hybrid: Kyber plus an elliptic curve in the LibrePGP format GnuPG 2.5.x uses (gpg shows these as ky768_cv25519 and ky1024_cv448). Resists quantum attacks; for GnuPG and compatible tools. Kyber 1024 is the higher-strength option.</string>
+    <string name="keyring_generate_algorithm_caption_pqc_ietf">Post-quantum hybrid: ML-KEM plus an elliptic curve on a modern v6 key, following RFC 9980, the OpenPGP post-quantum standard. Resists quantum attacks; readable only by up-to-date OpenPGP software. ML-KEM-1024 is the higher-strength option.</string>
+    <string name="keyring_generate_algorithm_caption_pqc_librepgp">Post-quantum hybrid: ML-KEM (the algorithm GnuPG still calls Kyber) plus an elliptic curve, in the LibrePGP format GnuPG 2.5.x uses. gpg shows these keys as ky768_cv25519 and ky1024_cv448. ML-KEM-1024 is the higher-strength option.</string>
     <string name="keyring_generate_expiration_label">Expiration</string>
     <string name="keyring_generate_passphrase_label">Passphrase (optional)</string>
     <string name="keyring_generate_passphrase_confirm_label">Confirm Passphrase</string>
