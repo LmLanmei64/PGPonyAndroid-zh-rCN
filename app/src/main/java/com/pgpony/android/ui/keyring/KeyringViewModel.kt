@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
 import com.pgpony.android.crypto.KeyAlgorithm
+import com.pgpony.android.crypto.pqc.CompositeLibrePGPKeyMaterial
 import com.pgpony.android.data.PGPKeyEntity
 import com.pgpony.android.data.PgpSubkeyEntity
 import com.pgpony.android.data.repository.ImportPreview
@@ -141,7 +142,18 @@ data class KeyringUiState(
     // preserves the existing createdAt-DESC order on upgrade until the
     // user picks alphabetical or drags something.
     val sortMode: SortMode = SortMode.MANUAL,
-    val manualOrder: List<String> = emptyList()
+    val manualOrder: List<String> = emptyList(),
+    // 4.2.0 RC2 workstream F — LibrePGP composite keys (768/1024)
+    // generated before the RC2 wire fixes use an ECC point encoding gpg
+    // cannot encrypt to (see CompositeLibrePGPKeyMaterial.usesLegacyPointEncoding).
+    // legacyCompositeFingerprints is computed once per load/refresh from
+    // allKeys; dismissedRegenHintFingerprints is loaded from prefs at
+    // init, same pattern as manualOrder. The hint is one-time per key: once
+    // dismissed a fingerprint stays out of regenHintKeys even after a
+    // reload, but a NEWLY imported affected key (a fingerprint not yet
+    // dismissed) still surfaces.
+    val legacyCompositeFingerprints: Set<String> = emptySet(),
+    val dismissedRegenHintFingerprints: Set<String> = emptySet()
 ) {
     // ── 4.1.0 Phase 12b — three sections ──────────────────────────────
     //
@@ -153,6 +165,12 @@ data class KeyringUiState(
     // First cut is whether the user can ACT with the key. Second is
     // whether it has a face attached, which is what contactId already
     // means.
+
+    /** Affected keys not yet dismissed, in keyring display order (My Keys
+     *  first, matching how a user scans the list top to bottom). */
+    val regenHintKeys: List<PGPKeyEntity> get() = allKeys.filter {
+        it.fingerprint in legacyCompositeFingerprints && it.fingerprint !in dismissedRegenHintFingerprints
+    }
 
     val myKeys: List<PGPKeyEntity> get() = sortKeys(allKeys.filter { it.section() == KeySection.MINE })
     val contactKeys: List<PGPKeyEntity> get() = sortKeys(allKeys.filter { it.section() == KeySection.CONTACT })
@@ -237,8 +255,37 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
             ?.split("\n")
             ?.filter { it.isNotBlank() }
             ?: emptyList()
-        _state.value = _state.value.copy(sortMode = savedMode, manualOrder = savedOrder)
+        val dismissedRegenHints = prefs.getString("keyring_regen_hint_dismissed", null)
+            ?.split("\n")
+            ?.filter { it.isNotBlank() }
+            ?.toSet()
+            ?: emptySet()
+        _state.value = _state.value.copy(
+            sortMode = savedMode,
+            manualOrder = savedOrder,
+            dismissedRegenHintFingerprints = dismissedRegenHints
+        )
         loadKeys()
+    }
+
+    /**
+     * 4.2.0 RC2 workstream F — which of [keys] carry a v5 algo-8 LibrePGP
+     * composite subkey using the pre-fix ECC point encoding. Only keys with
+     * a cached armored public key can be checked; a key missing one (e.g.
+     * still mid-import) is skipped rather than treated as affected.
+     */
+    private fun computeLegacyCompositeFingerprints(keys: List<PGPKeyEntity>): Set<String> =
+        keys.filter { it.algorithm.isComposite && !it.algorithm.isV6 }
+            .mapNotNull { key -> key.armoredPublicKey?.let { key.fingerprint to it } }
+            .filter { (_, armored) -> CompositeLibrePGPKeyMaterial.keyNeedsRegeneration(armored) }
+            .map { (fp, _) -> fp }
+            .toSet()
+
+    /** Persist that the regeneration hint for [fingerprint] was dismissed. */
+    fun dismissRegenHint(fingerprint: String) {
+        val updated = _state.value.dismissedRegenHintFingerprints + fingerprint
+        prefs.edit().putString("keyring_regen_hint_dismissed", updated.joinToString("\n")).apply()
+        _state.value = _state.value.copy(dismissedRegenHintFingerprints = updated)
     }
 
     /** Change the sort mode and persist it. */
@@ -316,6 +363,7 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
                 _state.value = _state.value.copy(
                     allKeys = keys,
                     subkeysByPrimaryId = subkeyMap,
+                    legacyCompositeFingerprints = computeLegacyCompositeFingerprints(keys),
                     isLoading = false
                 )
             } catch (e: Exception) {
@@ -362,6 +410,7 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
                 _state.value = _state.value.copy(
                     allKeys = keys,
                     subkeysByPrimaryId = subkeyMap,
+                    legacyCompositeFingerprints = computeLegacyCompositeFingerprints(keys),
                     isRefreshing = false
                 )
             } catch (e: Exception) {

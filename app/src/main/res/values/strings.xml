@@ -508,6 +508,17 @@
     <!-- ── First-visit tooltip ──────────────────────────────────────── -->
     <string name="keyring_tooltip_fab">Tap the + button in the bottom-right to generate your first key pair or import an existing one.</string>
 
+    <!-- ── 4.2.0 RC2 workstream F: legacy composite regeneration hint ─
+         Shown once (dismissible) per affected key. These are LibrePGP
+         composite (ML-KEM+X25519/X448) keys generated before the RC2 wire
+         fixes; their ECC point uses an encoding gpg cannot encrypt to. -->
+    <plurals name="keyring_regen_hint_title">
+        <item quantity="one">One key needs regenerating</item>
+        <item quantity="other">%1$d keys need regenerating</item>
+    </plurals>
+    <string name="keyring_regen_hint_body">Generated before a wire-format fix in this release, so gpg cannot encrypt to it. Generate a new post-quantum key to replace it.</string>
+    <string name="keyring_regen_hint_dismiss_cd">Dismiss</string>
+
     <!-- ── Generate Key sheet ───────────────────────────────────────── -->
     <string name="keyring_generate_title">Generate Key Pair</string>
     <string name="keyring_generate_name_label">Name</string>

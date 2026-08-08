@@ -35,6 +35,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import com.pgpony.android.R
 import com.pgpony.android.LocalBillingService
@@ -274,6 +277,20 @@ fun KeyringScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // 4.2.0 RC2 workstream F — one-time, dismissible hint for
+                    // LibrePGP composite keys generated before the wire
+                    // fixes. Sits above My Keys since it always concerns
+                    // the user's own key pairs.
+                    if (state.regenHintKeys.isNotEmpty()) {
+                        item(key = "regen_hint_banner") {
+                            RegenHintBanner(
+                                count = state.regenHintKeys.size,
+                                onDismiss = {
+                                    state.regenHintKeys.forEach { viewModel.dismissRegenHint(it.fingerprint) }
+                                }
+                            )
+                        }
+                    }
                     // 4.1.0 Phase 12b — three sections through one builder.
                     // The first two were already identical apart from the
                     // list, the heading and the colour; a third copy is not
@@ -401,6 +418,55 @@ fun KeyringScreen(
 }
 
 // ── Keyring sections ───────────────────────────────────────────────────
+
+/**
+ * 4.2.0 RC2 workstream F — banner listing how many keys carry the pre-fix
+ * LibrePGP composite encoding gpg cannot encrypt to. Dismissing it dismisses
+ * every currently-listed fingerprint at once (the caller passes the exact
+ * set backing [count]); a NEW affected key imported later still surfaces
+ * its own hint since its fingerprint isn't in the dismissed set yet.
+ */
+@Composable
+private fun RegenHintBanner(count: Int, onDismiss: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = pluralStringResource(R.plurals.keyring_regen_hint_title, count, count),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = stringResource(R.string.keyring_regen_hint_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = stringResource(R.string.keyring_regen_hint_dismiss_cd)
+                )
+            }
+        }
+    }
+}
 
 /**
  * 4.1.0 Phase 12b — one keyring section: a heading, then its keys.
