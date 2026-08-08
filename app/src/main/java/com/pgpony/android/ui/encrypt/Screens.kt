@@ -1313,25 +1313,14 @@ private fun EncryptModeBody(state: EncryptUiState, viewModel: EncryptDecryptView
         // sheet visibility is local to this composable — it's pure UI
         // state with no business value to keep on the ViewModel.
         if (state.signMessage && state.availableSigningKeys.size > 1) {
-            var showSignAsSheet by remember { mutableStateOf(false) }
             Spacer(modifier = Modifier.height(8.dp))
-            SignAsRow(
+            SignAsPicker(
                 key = state.signingKey,
-                onClick = { showSignAsSheet = true }
+                keyPairs = state.availableSigningKeys,
+                defaultSignerFingerprint = state.defaultSignerFingerprint,
+                onSelect = { viewModel.setSigningKey(it) },
+                onSetDefault = { viewModel.setDefaultSigner(it) }
             )
-            if (showSignAsSheet) {
-                SignAsSheet(
-                    keyPairs = state.availableSigningKeys,
-                    currentSelection = state.signingKey,
-                    onSelect = { picked ->
-                        viewModel.setSigningKey(picked)
-                        showSignAsSheet = false
-                    },
-                    onDismiss = { showSignAsSheet = false },
-                    defaultSignerFingerprint = state.defaultSignerFingerprint,
-                    onSetDefault = { viewModel.setDefaultSigner(it) }
-                )
-            }
         }
     }
 
@@ -1417,6 +1406,47 @@ private fun SignAsRow(
     }
 }
 
+/**
+ * 4.2.0 RC2 (D#22): the tappable-row-plus-sheet picker, lifted out of
+ * SignModeBody where it originated. Before this it was duplicated
+ * verbatim in four places: SignModeBody itself, EncryptModeBody's
+ * sign-while-encrypting section, the bundle-mode sign section, and the
+ * file/RECIPIENTS-mode sign section, each with its own local
+ * `var showSignAsSheet` plus identical SignAsRow/SignAsSheet wiring, and
+ * only the key/key-list variable names differing. All four call sites
+ * used the same semantics (currentSelection = key, onSelect commits via
+ * viewModel.setSigningKey, defaultSignerFingerprint/onSetDefault from
+ * state/viewModel), so callers here differ only in which key and key
+ * list they pass.
+ */
+@Composable
+private fun SignAsPicker(
+    key: com.pgpony.android.data.PGPKeyEntity?,
+    keyPairs: List<com.pgpony.android.data.PGPKeyEntity>,
+    defaultSignerFingerprint: String,
+    onSelect: (com.pgpony.android.data.PGPKeyEntity) -> Unit,
+    onSetDefault: (com.pgpony.android.data.PGPKeyEntity) -> Unit
+) {
+    var showSignAsSheet by remember { mutableStateOf(false) }
+    SignAsRow(
+        key = key,
+        onClick = { showSignAsSheet = true }
+    )
+    if (showSignAsSheet) {
+        SignAsSheet(
+            keyPairs = keyPairs,
+            currentSelection = key,
+            onSelect = { picked ->
+                onSelect(picked)
+                showSignAsSheet = false
+            },
+            onDismiss = { showSignAsSheet = false },
+            defaultSignerFingerprint = defaultSignerFingerprint,
+            onSetDefault = onSetDefault
+        )
+    }
+}
+
 @Composable
 private fun SignModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewModel) {
     // Phase A2: read-only "Sign as" row showing the first available key
@@ -1437,24 +1467,13 @@ private fun SignModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewMod
         )
     } else if (state.availableSigningKeys.size > 1) {
         // Phase A5 — picker mode. Tappable row + sheet on tap.
-        var showSignAsSheet by remember { mutableStateOf(false) }
-        SignAsRow(
+        SignAsPicker(
             key = key,
-            onClick = { showSignAsSheet = true }
+            keyPairs = state.availableSigningKeys,
+            defaultSignerFingerprint = state.defaultSignerFingerprint,
+            onSelect = { viewModel.setSigningKey(it) },
+            onSetDefault = { viewModel.setDefaultSigner(it) }
         )
-        if (showSignAsSheet) {
-            SignAsSheet(
-                keyPairs = state.availableSigningKeys,
-                currentSelection = key,
-                onSelect = { picked ->
-                    viewModel.setSigningKey(picked)
-                    showSignAsSheet = false
-                },
-                onDismiss = { showSignAsSheet = false },
-                defaultSignerFingerprint = state.defaultSignerFingerprint,
-                onSetDefault = { viewModel.setDefaultSigner(it) }
-            )
-        }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             stringResource(R.string.encrypt_sign_only_explainer),
@@ -1819,25 +1838,14 @@ private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewM
 
         // Shown when there is a real choice to make.
         if (state.signMessage && bundleSigningKeys.size > 1) {
-            var showSignAsSheet by remember { mutableStateOf(false) }
             Spacer(modifier = Modifier.height(8.dp))
-            SignAsRow(
+            SignAsPicker(
                 key = bundleSigningKey,
-                onClick = { showSignAsSheet = true }
+                keyPairs = bundleSigningKeys,
+                defaultSignerFingerprint = state.defaultSignerFingerprint,
+                onSelect = { viewModel.setSigningKey(it) },
+                onSetDefault = { viewModel.setDefaultSigner(it) }
             )
-            if (showSignAsSheet) {
-                SignAsSheet(
-                    keyPairs = bundleSigningKeys,
-                    currentSelection = bundleSigningKey,
-                    onSelect = { picked ->
-                        viewModel.setSigningKey(picked)
-                        showSignAsSheet = false
-                    },
-                    onDismiss = { showSignAsSheet = false },
-                    defaultSignerFingerprint = state.defaultSignerFingerprint,
-                    onSetDefault = { viewModel.setDefaultSigner(it) }
-                )
-            }
         }
     }
 
@@ -2199,25 +2207,14 @@ private fun FileSection(state: EncryptUiState, viewModel: EncryptDecryptViewMode
             }
         }
         if (state.signMessage && state.availableSigningKeys.size > 1) {
-            var showSignAsSheet by remember { mutableStateOf(false) }
             Spacer(modifier = Modifier.height(8.dp))
-            SignAsRow(
+            SignAsPicker(
                 key = state.signingKey,
-                onClick = { showSignAsSheet = true }
+                keyPairs = state.availableSigningKeys,
+                defaultSignerFingerprint = state.defaultSignerFingerprint,
+                onSelect = { viewModel.setSigningKey(it) },
+                onSetDefault = { viewModel.setDefaultSigner(it) }
             )
-            if (showSignAsSheet) {
-                SignAsSheet(
-                    keyPairs = state.availableSigningKeys,
-                    currentSelection = state.signingKey,
-                    onSelect = { picked ->
-                        viewModel.setSigningKey(picked)
-                        showSignAsSheet = false
-                    },
-                    onDismiss = { showSignAsSheet = false },
-                    defaultSignerFingerprint = state.defaultSignerFingerprint,
-                    onSetDefault = { viewModel.setDefaultSigner(it) }
-                )
-            }
         }
     }
     // 3.1.0 Phase 2 (C4): end of the RECIPIENTS-only block (recipient
