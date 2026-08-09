@@ -79,12 +79,16 @@ import com.pgpony.android.ui.decrypt.SignerLookupSheet
 import com.pgpony.android.ui.decrypt.VerificationBanner
 import com.pgpony.android.ui.keyring.BiometricAvailability
 import com.pgpony.android.ui.keyring.BiometricGate
+import com.pgpony.android.saf.findDocumentCreatorHost
 import com.pgpony.android.ui.util.ClipboardService
 import com.pgpony.android.ui.util.rememberHaptics
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ── Encrypt Screen ─────────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
     val state by viewModel.encryptState.collectAsState()
@@ -173,33 +177,44 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
             // in source (additive rule; the body composable is reused by
             // the Text toggle) but the segment is no longer rendered.
             val visibleModes = EncryptMode.entries.filter { it != EncryptMode.PASSWORD }
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                visibleModes.forEachIndexed { index, mode ->
+            // RC3 §J (#16): a 5th segment (Sign File) made
+            // SingleChoiceSegmentedButtonRow overflow the screen on narrow
+            // phones — NorseHorse device testing found the fix attempted
+            // here first (horizontalScroll around the segmented row) left
+            // the last tab permanently cut off with no working drag, a
+            // Material3 connected-button-shapes / scroll-gesture conflict.
+            // FlowRow of FilterChips wraps to a second line instead of
+            // truncating, and is the same component the armor toggle below
+            // already uses for a similar "a few mutually exclusive choices"
+            // shape.
+            // RC3 §J (#16), per NorseHorse device testing: with no
+            // fillMaxWidth the row only claimed as much width as its
+            // chips needed and sat flush left, leaving dead space on the
+            // right where the old fillMaxWidth segmented row used to
+            // reach — read as "not centered". fillMaxWidth + Center makes
+            // the chip group sit centered in the available width instead.
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            ) {
+                visibleModes.forEach { mode ->
                     val modeLabel = when (mode) {
                         EncryptMode.TEXT -> stringResource(R.string.encrypt_mode_text)
                         EncryptMode.SIGN -> stringResource(R.string.encrypt_mode_sign)
                         EncryptMode.FILE -> stringResource(R.string.encrypt_mode_file)
+                        // RC3 §J (#16): file-only signing, promoted from a
+                        // File-mode sheet to its own tab for parity with
+                        // Decrypt's Verify tab.
+                        EncryptMode.SIGN_FILE -> stringResource(R.string.encrypt_mode_sign_file)
                         EncryptMode.PASSWORD -> stringResource(R.string.encrypt_mode_password)
                         // 3.1.0 Phase 5 (J3)
                         EncryptMode.BUNDLE -> stringResource(R.string.encrypt_mode_bundle)
                     }
-                    SegmentedButton(
+                    FilterChip(
                         selected = state.mode == mode,
                         onClick = { viewModel.setMode(mode) },
-                        shape = SegmentedButtonDefaults.itemShape(
-                            index = index,
-                            // 3.1.0 Phase 6 Fix1: count follows the VISIBLE
-                            // modes, not the enum.
-                            count = visibleModes.size
-                        ),
-                        // Phase A10b: FILE mode is now functional; the
-                        // disabled-state placeholder is gone. All three
-                        // modes are tappable.
-                        enabled = true
-                    ) {
-                        // 3.1.0 Phase 5 Fix3: never wrap a segment label.
-                        Text(modeLabel, maxLines = 1)
-                    }
+                        label = { Text(modeLabel, maxLines = 1) }
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -213,7 +228,7 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
             // compatibility; only the rendered call site is gated.
             // 3.1.0 Phase 5 (J3): BUNDLE has its own body field inside
             // BundleModeBody, so the shared field hides there too.
-            if (state.mode != EncryptMode.FILE && state.mode != EncryptMode.BUNDLE) {
+            if (state.mode != EncryptMode.FILE && state.mode != EncryptMode.BUNDLE && state.mode != EncryptMode.SIGN_FILE) {
                 OutlinedTextField(
                     value = state.inputText,
                     onValueChange = { viewModel.updateEncryptInput(it) },
@@ -255,6 +270,9 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                 // FileModePlaceholder composable stays in this file
                 // (additive-only) but is no longer rendered.
                 EncryptMode.FILE -> FileSection(state = state, viewModel = viewModel)
+                // RC3 §J (#16): Sign File promoted from a File-mode sheet to
+                // its own tab body — same inner content, no ModalBottomSheet.
+                EncryptMode.SIGN_FILE -> SignFileModeBody(state = state, viewModel = viewModel)
                 // Phase A1: passphrase-only (`gpg -c`) — no recipient picker.
                 EncryptMode.PASSWORD -> PasswordModeBody(state = state, viewModel = viewModel)
                 // 3.1.0 Phase 5 (J3): Bundle compose.
@@ -264,6 +282,15 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
             Spacer(modifier = Modifier.height(12.dp))
 
             // ── Errors + primary action ────────────────────────────────
+            // RC3 §J (#16), per NorseHorse device testing: this whole
+            // section (shared error display + the primary Encrypt/Sign
+            // button) duplicated SignFileModeBody's own error text when
+            // it rendered unconditionally underneath it — SignFileModeBody
+            // already shows state.errorMessage itself, and the primary
+            // button below is irrelevant to Sign File mode anyway (it has
+            // its own Sign button). Wrapping the guard around both instead
+            // of just the button fixes the double error text.
+            if (state.mode != EncryptMode.SIGN_FILE) {
             state.errorMessage?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.height(8.dp))
@@ -357,6 +384,10 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                                 viewModel.encryptBundle()
                             }
                         }
+                        // RC3 §J (#16): unreachable — this whole button is
+                        // hidden for SIGN_FILE (wrapped above); arm present
+                        // only for exhaustiveness.
+                        EncryptMode.SIGN_FILE -> {}
                       }
                     }
                     // HW Phase 3 / "fingerprint to sign" — gate SOFTWARE
@@ -409,6 +440,10 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                             state.selectedRecipients.isNotEmpty() &&
                             (state.bundleBody.isNotBlank() ||
                                 state.bundleAttachments.isNotEmpty())
+                        // RC3 §J (#16): this whole button is hidden for
+                        // SIGN_FILE (wrapped above); arm present only for
+                        // exhaustiveness.
+                        EncryptMode.SIGN_FILE -> false
                     }
                     val signPrefs = encryptContext.getSharedPreferences(
                         "pgpony_prefs", android.content.Context.MODE_PRIVATE
@@ -485,19 +520,6 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
                 )
             }
             Spacer(modifier = Modifier.height(16.dp))
-
-            // Phase A5 — "Sign a file" entry, FILE mode only: sign a file on
-            // its own (no encryption) → standalone detached signature.
-            if (state.mode == EncryptMode.FILE) {
-                OutlinedButton(
-                    onClick = { viewModel.openSignFileSheet() },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(stringResource(R.string.sign_file_entry_button))
-                }
-                Spacer(modifier = Modifier.height(16.dp))
             }
 
             // ── Output ─────────────────────────────────────────────────
@@ -859,10 +881,6 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
         )
     }
 
-    // Phase A5 — "Sign a file" sheet (Encrypt tab, FILE mode).
-    if (state.showSignFileSheet) {
-        SignFileSheet(state = state, viewModel = viewModel)
-    }
 }
 
 // ── Phase A10d: Recipient picker polish + ASCII armor toggle ───────────
@@ -2456,6 +2474,10 @@ private fun SignPassphraseDialog(
         EncryptMode.PASSWORD -> stringResource(R.string.encrypt_action_encrypt)
         // 3.1.0 Phase 5 (J3)
         EncryptMode.BUNDLE -> stringResource(R.string.encrypt_action_sign_and_encrypt)
+        // RC3 §J (#16): this dialog never opens in SIGN_FILE mode either
+        // (its own inline passphrase field handles that); arm present for
+        // exhaustiveness only.
+        EncryptMode.SIGN_FILE -> stringResource(R.string.encrypt_action_encrypt)
     }
     val bodyText = stringResource(R.string.encrypt_passphrase_intro) + when (state.mode) {
         EncryptMode.SIGN -> stringResource(R.string.encrypt_passphrase_intro_sign)
@@ -2464,6 +2486,7 @@ private fun SignPassphraseDialog(
         EncryptMode.PASSWORD -> stringResource(R.string.encrypt_passphrase_intro_text)
         // 3.1.0 Phase 5 (J3)
         EncryptMode.BUNDLE -> stringResource(R.string.encrypt_passphrase_intro_text)
+        EncryptMode.SIGN_FILE -> stringResource(R.string.encrypt_passphrase_intro_text)
     }
     val withoutSigningLabel = when (state.mode) {
         EncryptMode.FILE -> stringResource(R.string.encrypt_passphrase_skip_signing_file)
@@ -2584,6 +2607,9 @@ private fun SignPassphraseDialog(
                             EncryptMode.PASSWORD -> {} // no signing-key unlock in symmetric mode
                             // 3.1.0 Phase 5 (J3)
                             EncryptMode.BUNDLE -> viewModel.encryptBundle(passphrase = state.signPassphrase)
+                            // RC3 §J (#16): unreachable — SIGN_FILE has its
+                            // own inline passphrase field, not this dialog.
+                            EncryptMode.SIGN_FILE -> {}
                         }
                     }
                 ) {
@@ -2619,6 +2645,9 @@ private fun DecryptPassphraseDialog(
     val primaryLabel = when (state.mode) {
         DecryptMode.FILE -> stringResource(R.string.decrypt_action_decrypt_file)
         DecryptMode.TEXT -> stringResource(R.string.decrypt_action_decrypt)
+        // RC3 §J (#16): this dialog never opens in Verify mode (verify
+        // doesn't decrypt); arm present for exhaustiveness only.
+        DecryptMode.VERIFY -> stringResource(R.string.decrypt_action_decrypt)
     }
 
     AlertDialog(
@@ -2712,6 +2741,7 @@ private fun DecryptPassphraseDialog(
                     when (state.mode) {
                         DecryptMode.TEXT -> viewModel.decrypt()
                         DecryptMode.FILE -> viewModel.decryptFile(passphrase = state.passphrase)
+                        DecryptMode.VERIFY -> {}
                     }
                 }
             ) {
@@ -2785,6 +2815,7 @@ private fun LegacySignPassphraseDialog(
                     EncryptMode.PASSWORD -> {} // no signing-key unlock in symmetric mode
                     // 3.1.0 Phase 5 (J3)
                     EncryptMode.BUNDLE -> viewModel.encryptBundle(passphrase = state.signPassphrase)
+                    EncryptMode.SIGN_FILE -> {}
                 }
             }) {
                 Text(
@@ -2832,6 +2863,7 @@ private fun LegacyDecryptPassphraseDialog(
                 when (state.mode) {
                     DecryptMode.TEXT -> viewModel.decrypt()
                     DecryptMode.FILE -> viewModel.decryptFile(passphrase = state.passphrase)
+                    DecryptMode.VERIFY -> {}
                 }
             }) {
                 Text(
@@ -2850,41 +2882,35 @@ private fun LegacyDecryptPassphraseDialog(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewModel) {
+private fun SignFileModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewModel) {
     val context = LocalContext.current
     val activity = context.findEncryptMainActivity()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val pickFile: () -> Unit = {
         activity?.startDocumentPicker(arrayOf("*/*")) { uri ->
             if (uri != null) {
-                try {
-                    val (name, _) = queryDocumentMetadata(context, uri)
-                    val bytes = context.contentResolver.openInputStream(uri)?.use {
-                        it.readBytes()
-                    } ?: ByteArray(0)
-                    val fallback = uri.lastPathSegment?.substringAfterLast('/')
-                    viewModel.setSignFile(name ?: fallback ?: "file", bytes)
-                } catch (e: Exception) {
-                    // Silent — user taps the row again.
-                }
+                // RC3 §J (#16), iOS 8.1.0 §3a parity: nothing is read
+                // here at all — the Uri is stored and runSignFile streams
+                // the file from disk at sign time (signDetachedStream,
+                // 64 KiB chunks). No buffer, no cap, no ceiling. The
+                // ACTION_OPEN_DOCUMENT read grant outlives this lambda
+                // for the life of the task, which covers the sign that
+                // follows in the same session.
+                val (name, _) = queryDocumentMetadata(context, uri)
+                val fallback = uri.lastPathSegment?.substringAfterLast('/')
+                viewModel.setSignFile(name ?: fallback ?: "file", uri)
             }
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = { viewModel.dismissSignFileSheet() },
-        sheetState = sheetState,
-    ) {
+    // RC3 §J: coroutine scope + one-line status for the Save to Files
+    // write below (this body has no snackbar host of its own).
+    val signFileSaveScope = rememberCoroutineScope()
+    var signFileSaveNote by remember { mutableStateOf<String?>(null) }
+
         // 4.1.0 — scroll + insets triad; this sheet asks for a passphrase.
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .imePadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
@@ -2986,7 +3012,58 @@ private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewMo
                         )
                     }
                 }
+                // RC3 §J (NorseHorse device testing): the share chooser
+                // alone dead-ended anyone who just wanted the .asc next
+                // to the file — on many devices it has no local
+                // save-to-Files target. Real ACTION_CREATE_DOCUMENT save
+                // first, share second. octet-stream MIME so SAF doesn't
+                // append an extension over "file.dmg.asc" (same reasoning
+                // as FileEncryptionResultScreen 3.1.0 Ph2 Fix1).
                 Button(
+                    onClick = {
+                        val host = context.findDocumentCreatorHost()
+                        if (host == null) {
+                            signFileSaveNote = context.getString(R.string.result_save_failed_note)
+                        } else {
+                            host.startDocumentCreator(
+                                "application/octet-stream",
+                                state.signFileResultName ?: "signature.asc",
+                            ) { uri ->
+                                if (uri != null) {
+                                    signFileSaveScope.launch {
+                                        val ok = withContext(Dispatchers.IO) {
+                                            try {
+                                                context.contentResolver.openOutputStream(uri)?.use { out ->
+                                                    out.write(state.signFileResultBytes ?: ByteArray(0))
+                                                    out.flush()
+                                                } != null
+                                            } catch (e: Exception) {
+                                                false
+                                            }
+                                        }
+                                        signFileSaveNote = context.getString(
+                                            if (ok) R.string.result_save_saved_note
+                                            else R.string.result_save_failed_note
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.SaveAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.sign_file_save_button))
+                }
+                signFileSaveNote?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedButton(
                     onClick = {
                         shareSignatureFile(
                             context,
@@ -3005,7 +3082,7 @@ private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewMo
                     onClick = { viewModel.runSignFile() },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.signFileProcessing &&
-                        state.signFileBytes != null &&
+                        state.signFileUri != null &&
                         state.signFileSelectedKey != null,
                 ) {
                     if (state.signFileProcessing) {
@@ -3016,7 +3093,6 @@ private fun SignFileSheet(state: EncryptUiState, viewModel: EncryptDecryptViewMo
                 }
             }
         }
-    }
 
     if (state.showSignFileKeyPicker) {
         SignAsSheet(
@@ -3060,46 +3136,42 @@ private fun shareSignatureFile(context: Context, bytes: ByteArray, filename: Str
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VerifyFileSheet(state: DecryptUiState, viewModel: EncryptDecryptViewModel) {
+private fun DecryptVerifyBody(state: DecryptUiState, viewModel: EncryptDecryptViewModel) {
     val context = LocalContext.current
     val activity = context.findEncryptMainActivity()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val pickInto: (isSignature: Boolean) -> Unit = { isSignature ->
         activity?.startDocumentPicker(arrayOf("*/*")) { uri ->
             if (uri != null) {
-                try {
-                    val (name, _) = queryDocumentMetadata(context, uri)
-                    val bytes = context.contentResolver.openInputStream(uri)?.use {
-                        it.readBytes()
-                    } ?: ByteArray(0)
-                    val fallback = uri.lastPathSegment?.substringAfterLast('/')
-                    if (isSignature) {
-                        viewModel.setVerifyFileSignature(name ?: fallback ?: "signature", bytes)
+                val (name, _) = queryDocumentMetadata(context, uri)
+                val fallback = uri.lastPathSegment?.substringAfterLast('/')
+                if (isSignature) {
+                    // RC3 §J (#16): the SIGNATURE is the one piece still
+                    // read into memory (parseFirstSignatureBytes needs the
+                    // whole packet, and a real one is a few hundred
+                    // bytes). The 1 MiB cap exists so picking the wrong
+                    // file here fails fast instead of buffering a movie.
+                    val bytes = viewModel.readAtMost(uri, SIGNATURE_FILE_BUFFER_LIMIT)
+                    if (bytes == null) {
+                        viewModel.reportVerifyFileTooLarge()
                     } else {
-                        viewModel.setVerifyFileSigned(name ?: fallback ?: "file", bytes)
+                        viewModel.setVerifyFileSignature(name ?: fallback ?: "signature", bytes)
                     }
-                } catch (e: Exception) {
-                    // Silent — user taps the row again.
+                } else {
+                    // RC3 §J (#16), iOS 8.1.0 §3a parity: the signed
+                    // CONTENT is never read here — the Uri is stored and
+                    // runVerifyFile streams it (verifyDetachedStream,
+                    // 64 KiB chunks). No buffer, no cap, no ceiling.
+                    viewModel.setVerifyFileSigned(name ?: fallback ?: "file", uri)
                 }
             }
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = { viewModel.dismissVerifyFileSheet() },
-        sheetState = sheetState,
-    ) {
         // 4.1.0 — scroll + insets triad. No text field here, so imePadding is
         // insurance rather than a fix, but the overflow exposure is the same.
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .imePadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
@@ -3130,11 +3202,23 @@ private fun VerifyFileSheet(state: DecryptUiState, viewModel: EncryptDecryptView
                 )
             }
 
+            // RC3 §J (#16): surfaces reportVerifyFileTooLarge — this body
+            // had no error display at all before (the sheet it was
+            // promoted from didn't need one; the crash IS the reason one
+            // is needed now).
+            state.errorMessage?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
             Button(
                 onClick = { viewModel.runVerifyFile() },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.verifyFileProcessing &&
-                    state.verifyFileSignedBytes != null &&
+                    state.verifyFileSignedUri != null &&
                     state.verifyFileSigBytes != null,
             ) {
                 if (state.verifyFileProcessing) {
@@ -3144,7 +3228,6 @@ private fun VerifyFileSheet(state: DecryptUiState, viewModel: EncryptDecryptView
                 Text(stringResource(R.string.verify_file_verify_button))
             }
         }
-    }
 }
 
 @Composable
@@ -3382,12 +3465,16 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
         when (state.mode) {
             DecryptMode.TEXT -> viewModel.decrypt()
             DecryptMode.FILE -> viewModel.decryptFile()
+            // RC3 §J (#16): unreachable — the Decrypt button is hidden in
+            // Verify mode (wrapped below); arm present for exhaustiveness.
+            DecryptMode.VERIFY -> {}
         }
     }
     val performDecrypt: () -> Unit = {
         val wouldFailInputValidation = when (state.mode) {
             DecryptMode.TEXT -> state.inputText.isBlank()
             DecryptMode.FILE -> !state.hasSelectedFile
+            DecryptMode.VERIFY -> true
         }
         if (wouldFailInputValidation) runDecrypt() else gateDecryptBiometric(runDecrypt)
     }
@@ -3446,6 +3533,11 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
+
+            // RC3 §J (#16): Verify promoted to its own tab — everything
+            // below (input, key picker, Decrypt button, output) is the
+            // Text/File body; Verify gets its own inline body instead.
+            if (state.mode != DecryptMode.VERIFY) {
 
             // Input — hidden in FILE mode; the picker chip below
             // takes its place.
@@ -3751,19 +3843,6 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
             }
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Phase A3 — "Verify a file" entry: pick an original file + its
-            // detached .sig/.asc and check the signature. Opens a self-
-            // contained sheet; independent of the decrypt path above.
-            OutlinedButton(
-                onClick = { viewModel.openVerifyFileSheet() },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Filled.VerifiedUser, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.verify_file_entry_button))
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-
             // Output
             if (state.outputText.isNotBlank()) {
                 Text(
@@ -3839,6 +3918,9 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
                     Text(stringResource(R.string.common_clear))
                 }
             }
+            } else {
+                DecryptVerifyBody(state = state, viewModel = viewModel)
+            }
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
@@ -3867,11 +3949,6 @@ fun DecryptScreen(viewModel: EncryptDecryptViewModel) {
             onImport = { armoredKey -> viewModel.importDiscoveredSigner(armoredKey) },
             onDismiss = { viewModel.dismissSignerLookup() }
         )
-    }
-
-    // Phase A3 — "Verify a file" sheet.
-    if (state.showVerifyFileSheet) {
-        VerifyFileSheet(state = state, viewModel = viewModel)
     }
 
     // ── Phase A10c: file-decrypt result sheet ─────────────────────────

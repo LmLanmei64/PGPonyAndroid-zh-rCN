@@ -48,6 +48,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -75,6 +76,7 @@ fun RevocationResultSheet(
     armoredLength: Int,
     onCopy: () -> Unit,
     onSaveFile: () -> Unit,
+    onShare: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -183,8 +185,26 @@ fun RevocationResultSheet(
                 Text(stringResource(R.string.result_sheet_copy_button))
             }
 
+            // RC3 §J (NorseHorse device testing): Save is a real
+            // ACTION_CREATE_DOCUMENT save now — the system-share chooser
+            // this button used to open has no local save-to-Files target
+            // on many devices, so "Save as file" could dead-end. The
+            // chooser moved to its own Share button below.
             OutlinedButton(
                 onClick = onSaveFile,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SaveAlt,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.result_sheet_save_button))
+            }
+
+            OutlinedButton(
+                onClick = onShare,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(
@@ -193,7 +213,7 @@ fun RevocationResultSheet(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.result_sheet_save_button))
+                Text(stringResource(R.string.result_sheet_share_button))
             }
 
             OutlinedButton(

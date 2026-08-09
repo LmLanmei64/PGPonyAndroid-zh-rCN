@@ -116,7 +116,7 @@ object KeyShareIntents {
      *       `Jane_Smith_ABCD9876_private.asc`
      *       `kgstew96_DEAD1234_revocation.asc`
      */
-    private fun buildExportFilename(
+    fun buildExportFilename(
         ownerLabel: String,
         shortFingerprint: String,
         suffix: String

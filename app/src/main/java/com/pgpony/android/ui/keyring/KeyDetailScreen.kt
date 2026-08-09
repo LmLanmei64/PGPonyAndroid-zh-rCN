@@ -63,6 +63,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import com.pgpony.android.saf.findDocumentCreatorHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -82,7 +83,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -572,7 +575,24 @@ fun KeyDetailScreen(
                 }
                 // Sheet stays open so user can also Save if they want.
             },
+            // RC3 §J (NorseHorse device testing): onSaveFile is a real
+            // ACTION_CREATE_DOCUMENT save now; the share chooser it used
+            // to open lives on onShare. Same split on all three export
+            // sheets below.
             onSaveFile = {
+                saveArmoredToFile(
+                    context = context,
+                    scope = scope,
+                    snackbarHostState = snackbarHostState,
+                    armored = pendingCert,
+                    suggestedName = KeyShareIntents.buildExportFilename(
+                        ownerLabel = ownerLabel,
+                        shortFingerprint = keyForRevoke.shortFingerprint,
+                        suffix = "_revocation"
+                    )
+                )
+            },
+            onShare = {
                 val launched = KeyShareIntents.shareRevocationCertificate(
                     context = context,
                     armoredCert = pendingCert,
@@ -687,6 +707,19 @@ fun KeyDetailScreen(
                 // also want to save the file.
             },
             onSaveFile = {
+                saveArmoredToFile(
+                    context = context,
+                    scope = scope,
+                    snackbarHostState = snackbarHostState,
+                    armored = pendingPrivate,
+                    suggestedName = KeyShareIntents.buildExportFilename(
+                        ownerLabel = ownerLabel,
+                        shortFingerprint = keyForResultSheet.shortFingerprint,
+                        suffix = "_private"
+                    )
+                )
+            },
+            onShare = {
                 val launched = KeyShareIntents.shareArmoredPrivateKey(
                     context = context,
                     armoredPrivate = pendingPrivate,
@@ -740,6 +773,19 @@ fun KeyDetailScreen(
                 }
             },
             onSaveFile = {
+                saveArmoredToFile(
+                    context = context,
+                    scope = scope,
+                    snackbarHostState = snackbarHostState,
+                    armored = pendingPublic,
+                    suggestedName = KeyShareIntents.buildExportFilename(
+                        ownerLabel = ownerLabel,
+                        shortFingerprint = keyForPublicSheet.shortFingerprint,
+                        suffix = "_public"
+                    )
+                )
+            },
+            onShare = {
                 val launched = KeyShareIntents.sharePublicKey(
                     context = context,
                     armored = pendingPublic,
@@ -803,6 +849,57 @@ private fun ensureContactsPermission(
  * convenience for any future direct-share entry point that wants to
  * bypass the result sheet.
  */
+/**
+ * RC3 §J (NorseHorse device testing) — write armored key material to a
+ * destination the user picks via ACTION_CREATE_DOCUMENT. The export
+ * sheets' "Save as .asc file" buttons used to open the system-share
+ * chooser, which on many devices has no local save-to-Files target at
+ * all — a save button that couldn't save. Same SAF idiom as
+ * ShareTargetScreen.saveResult / FileEncryptionResultScreen.
+ *
+ * MIME is application/octet-stream, not application/pgp-keys: SAF
+ * appends the MIME's canonical extension to any suggested name that
+ * lacks it, which would mangle the "_public.asc" convention gpg users
+ * expect (same reasoning as FileEncryptionResultScreen 3.1.0 Ph2 Fix1).
+ * A cancelled picker is silent — the user chose that.
+ */
+private fun saveArmoredToFile(
+    context: android.content.Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    snackbarHostState: SnackbarHostState,
+    armored: String,
+    suggestedName: String,
+) {
+    val host = context.findDocumentCreatorHost()
+    if (host == null) {
+        scope.launch {
+            snackbarHostState.showSnackbar(context.getString(R.string.result_save_failed_note))
+        }
+        return
+    }
+    host.startDocumentCreator("application/octet-stream", suggestedName) { uri ->
+        if (uri == null) return@startDocumentCreator
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(armored.toByteArray(Charsets.UTF_8))
+                        out.flush()
+                    } != null
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            snackbarHostState.showSnackbar(
+                context.getString(
+                    if (ok) R.string.result_save_saved_note
+                    else R.string.result_save_failed_note
+                )
+            )
+        }
+    }
+}
+
 @Suppress("unused")
 private fun doSharePublicKey(viewModel: KeyDetailViewModel, context: android.content.Context) {
     val armored = viewModel.armoredPublicKeyForShare() ?: return

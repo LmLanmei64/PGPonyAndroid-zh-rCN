@@ -52,6 +52,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ButtonDefaults
@@ -82,6 +83,7 @@ fun ExportPrivateKeyResultSheet(
     armoredLength: Int,
     onCopy: () -> Unit,
     onSaveFile: () -> Unit,
+    onShare: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -223,8 +225,28 @@ fun ExportPrivateKeyResultSheet(
                 Text(stringResource(R.string.result_sheet_copy_button))
             }
 
+            // RC3 §J: real ACTION_CREATE_DOCUMENT save; share chooser
+            // moved to its own button (see ExportPublicKeyResultSheet).
+            // Both keep the error-red tint — this is secret material
+            // whichever way it leaves the app.
             OutlinedButton(
                 onClick = onSaveFile,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SaveAlt,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.result_sheet_save_button))
+            }
+
+            OutlinedButton(
+                onClick = onShare,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.error
@@ -236,7 +258,7 @@ fun ExportPrivateKeyResultSheet(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.result_sheet_save_button))
+                Text(stringResource(R.string.result_sheet_share_button))
             }
 
             OutlinedButton(

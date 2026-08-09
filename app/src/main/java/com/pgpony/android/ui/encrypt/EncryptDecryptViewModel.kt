@@ -83,6 +83,10 @@ enum class EncryptMode(val displayName: String) {
     TEXT("Text"),
     SIGN("Sign"),
     FILE("File"),
+    // RC3 §J (#16): file-only signing, promoted from a File-mode sheet
+    // (SignFileSheet) to a first-class top-level mode, for parity with
+    // Decrypt's Verify tab — same promotion, same reasoning.
+    SIGN_FILE("Sign File"),
     // Phase A1: symmetric / passphrase-only encryption (`gpg -c`). No
     // recipient keypair — the message is sealed to a passphrase via
     // PGPCryptoService.encryptSymmetric.
@@ -115,7 +119,11 @@ enum class FileEncryptMethod {
  */
 enum class DecryptMode(val displayName: String) {
     TEXT("Text"),
-    FILE("File")
+    FILE("File"),
+    // RC3 §J (#16): "Verify a file" promoted from a mode-agnostic sheet
+    // button to its own top-level tab, for parity with Encrypt's Sign /
+    // Sign File modes.
+    VERIFY("Verify")
 }
 
 data class EncryptUiState(
@@ -234,9 +242,8 @@ data class EncryptUiState(
     // (.asc or .sig) to share alongside the original. Lives on the Encrypt
     // tab's FILE mode, next to the existing sign-a-message flow. Card-backed
     // signing is deferred to the card phase.
-    val showSignFileSheet: Boolean = false,
     val signFileName: String? = null,
-    val signFileBytes: ByteArray? = null,
+    val signFileUri: android.net.Uri? = null,
     val signFileSelectedKey: PGPKeyEntity? = null,
     val showSignFileKeyPicker: Boolean = false,
     val signFilePassphrase: String = "",
@@ -377,9 +384,8 @@ data class DecryptUiState(
     // Reuses the shared signer-lookup fields (showSignerLookup /
     // pendingUnknownClaimedFingerprint) since decrypt and verify-file are
     // never active at the same time.
-    val showVerifyFileSheet: Boolean = false,
     val verifyFileSignedName: String? = null,
-    val verifyFileSignedBytes: ByteArray? = null,
+    val verifyFileSignedUri: android.net.Uri? = null,
     val verifyFileSigName: String? = null,
     val verifyFileSigBytes: ByteArray? = null,
     val verifyFileResult: VerificationResult? = null,
@@ -428,6 +434,23 @@ internal const val INLINE_FILE_LIMIT: Long = 4L * 1024 * 1024
  * further wants the streaming decrypt, not a bigger number.
  */
 internal const val CARD_BUFFER_LIMIT: Long = 32L * 1024 * 1024
+
+/**
+ * RC3 §J (#16), matching the iOS 8.1.0 §3a resolution: Sign File and
+ * Verify no longer buffer the picked FILE at all — the pickers store its
+ * Uri and the run-time paths hash it from disk in 64 KiB chunks via
+ * signDetachedStream / verifyDetachedStream (both sitting in the crypto
+ * layer since 4.0.0 P2d, previously only used by the OpenPGP API
+ * provider). No ceiling on the signed content, same as iOS's
+ * signDetachedFile path.
+ *
+ * The detached SIGNATURE file is the one thing still read into memory,
+ * because parseFirstSignatureBytes needs the whole packet — and a real
+ * signature is a few hundred bytes. This cap exists purely so picking
+ * the wrong file (a video, an ISO) as the "signature" fails fast at
+ * read time instead of buffering it all and then failing to parse.
+ */
+internal const val SIGNATURE_FILE_BUFFER_LIMIT: Long = 1L * 1024 * 1024
 
 /**
  * 4.1.0 Phase 16. What a large card decrypt left on disk: either the
@@ -706,7 +729,22 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         _encryptState.value = _encryptState.value.copy(
             mode = mode,
             outputText = "",
-            errorMessage = null
+            errorMessage = null,
+            // RC3 §J (#16): Sign File promoted from a sheet (opened fresh
+            // each time via openSignFileSheet) to a tab — reset the same
+            // fields on every mode switch instead, and preselect the
+            // current signing key the same way the sheet used to on open.
+            signFileName = null,
+            signFileUri = null,
+            signFileSelectedKey = if (mode == EncryptMode.SIGN_FILE)
+                _encryptState.value.signingKey
+            else
+                _encryptState.value.signFileSelectedKey,
+            showSignFileKeyPicker = false,
+            signFilePassphrase = "",
+            signFileResultBytes = null,
+            signFileResultName = null,
+            signFileProcessing = false
         )
     }
 
@@ -750,6 +788,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             // there, and Screens.kt hides the button for that mode.
             // PASSWORD never involves a signing key.
             EncryptMode.SIGN, EncryptMode.PASSWORD -> Unit
+            // RC3 §J (#16): SIGN_FILE has no encrypt leg either (it's a
+            // standalone detached-signature flow) and Screens.kt hides
+            // this escape hatch for that mode too.
+            EncryptMode.SIGN_FILE -> Unit
             EncryptMode.TEXT -> encrypt(passphrase = null)
         }
     }
@@ -2760,7 +2802,16 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             decryptedFileBytes = null,
             decryptedFile = null,
             mimeFileAttachments = emptyList(),
-            showFileDecryptResultSheet = false
+            showFileDecryptResultSheet = false,
+            // RC3 §J (#16): Verify promoted from a sheet (reset fresh via
+            // openVerifyFileSheet each open) to a tab — reset the same
+            // fields on every mode switch instead.
+            verifyFileSignedName = null,
+            verifyFileSignedUri = null,
+            verifyFileSigName = null,
+            verifyFileSigBytes = null,
+            verifyFileResult = null,
+            verifyFileProcessing = false
         )
         // 4.0.4 — a mode switch abandons any streamed plaintext.
         ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
@@ -2827,7 +2878,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * picker's reported size, and avoids allocating a 13 MB array to
      * discover the file is 13 MB.
      */
-    private fun readAtMost(uri: android.net.Uri, limit: Long): ByteArray? {
+    fun readAtMost(uri: android.net.Uri, limit: Long): ByteArray? {
         return try {
             PGPonyApp.instance.contentResolver.openInputStream(uri)?.use { input ->
                 val buffer = java.io.ByteArrayOutputStream()
@@ -3751,9 +3802,9 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
     fun openVerifyFileSheet() {
         _decryptState.value = _decryptState.value.copy(
-            showVerifyFileSheet = true,
+            mode = DecryptMode.VERIFY,
             verifyFileSignedName = null,
-            verifyFileSignedBytes = null,
+            verifyFileSignedUri = null,
             verifyFileSigName = null,
             verifyFileSigBytes = null,
             verifyFileResult = null,
@@ -3764,9 +3815,9 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
     fun dismissVerifyFileSheet() {
         _decryptState.value = _decryptState.value.copy(
-            showVerifyFileSheet = false,
+            mode = DecryptMode.TEXT,
             verifyFileSignedName = null,
-            verifyFileSignedBytes = null,
+            verifyFileSignedUri = null,
             verifyFileSigName = null,
             verifyFileSigBytes = null,
             verifyFileResult = null,
@@ -3774,11 +3825,24 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         )
     }
 
-    /** The original (signed) file the user picked. */
-    fun setVerifyFileSigned(name: String, bytes: ByteArray) {
+    /**
+     * RC3 §J (#16): reports a SIGNATURE file over
+     * [SIGNATURE_FILE_BUFFER_LIMIT] — which, at 1 MiB, means the user
+     * picked something that isn't a detached signature. The signed
+     * CONTENT file has no limit; it streams (see runVerifyFile).
+     */
+    fun reportVerifyFileTooLarge() {
+        _decryptState.value = _decryptState.value.copy(
+            errorMessage = PGPonyApp.instance.getString(R.string.verify_file_error_sig_not_signature)
+        )
+    }
+
+    /** The original (signed) file the user picked — held as a Uri and
+     *  streamed at verify time; never buffered (RC3 §J #16). */
+    fun setVerifyFileSigned(name: String, uri: android.net.Uri) {
         _decryptState.value = _decryptState.value.copy(
             verifyFileSignedName = name,
-            verifyFileSignedBytes = bytes,
+            verifyFileSignedUri = uri,
             verifyFileResult = null,
             errorMessage = null,
         )
@@ -3803,9 +3867,9 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      */
     fun runVerifyFile() {
         val s = _decryptState.value
-        val signed = s.verifyFileSignedBytes
+        val signedUri = s.verifyFileSignedUri
         val sig = s.verifyFileSigBytes
-        if (signed == null || sig == null) {
+        if (signedUri == null || sig == null) {
             _decryptState.value = s.copy(
                 errorMessage = PGPonyApp.instance.getString(R.string.verify_file_error_pick_both)
             )
@@ -3816,8 +3880,17 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             val rings = withContext(Dispatchers.IO) {
                 repo.getAllKeys().mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
             }
-            val result = withContext(Dispatchers.Default) {
-                verify.verifyDetached(sig, signed, rings)
+            // RC3 §J (#16): the signed content streams from its Uri in
+            // 64 KiB chunks — no whole-file buffer, no size ceiling.
+            // Dispatchers.IO because the verify is now disk-bound.
+            val result = withContext(Dispatchers.IO) {
+                PGPonyApp.instance.contentResolver.openInputStream(signedUri)?.use { input ->
+                    verify.verifyDetachedStream(sig, input, rings)
+                } ?: VerificationResult.Invalid(
+                    reason = PGPonyApp.instance.getString(R.string.sign_verify_error_file_unreadable),
+                    signerKeyID = null,
+                    signedContent = null
+                )
             }
             val claimedFp = (result as? VerificationResult.UnknownSigner)?.claimedFingerprint
             _decryptState.value = _decryptState.value.copy(
@@ -3836,9 +3909,9 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             it.isKeyPair && !it.isCardBacked
         }
         _encryptState.value = _encryptState.value.copy(
-            showSignFileSheet = true,
+            mode = EncryptMode.SIGN_FILE,
             signFileName = null,
-            signFileBytes = null,
+            signFileUri = null,
             // Default to the already-selected signing key if it's software,
             // else the first software key pair.
             signFileSelectedKey = _encryptState.value.signingKey
@@ -3856,9 +3929,9 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
 
     fun dismissSignFileSheet() {
         _encryptState.value = _encryptState.value.copy(
-            showSignFileSheet = false,
+            mode = EncryptMode.TEXT,
             signFileName = null,
-            signFileBytes = null,
+            signFileUri = null,
             showSignFileKeyPicker = false,
             signFilePassphrase = "",
             signFileResultBytes = null,
@@ -3873,10 +3946,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             it.isKeyPair && !it.isCardBacked
         }
 
-    fun setSignFile(name: String, bytes: ByteArray) {
+    fun setSignFile(name: String, uri: android.net.Uri) {
         _encryptState.value = _encryptState.value.copy(
             signFileName = name,
-            signFileBytes = bytes,
+            signFileUri = uri,
             signFileResultBytes = null,
             signFileResultName = null,
             errorMessage = null,
@@ -3921,9 +3994,9 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      */
     fun runSignFile() {
         val s = _encryptState.value
-        val bytes = s.signFileBytes
+        val uri = s.signFileUri
         val key = s.signFileSelectedKey
-        if (bytes == null) {
+        if (uri == null) {
             _encryptState.value = s.copy(
                 errorMessage = PGPonyApp.instance.getString(R.string.sign_file_error_pick_file)
             )
@@ -3941,12 +4014,21 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 val secRing = withContext(Dispatchers.IO) {
                     repo.loadSecretKeyRing(key.fingerprint)
                 } ?: throw SigningError.NoSigningKey()
-                val sig = withContext(Dispatchers.Default) {
-                    signing.signDetached(
-                        data = bytes,
-                        secretKeyRing = secRing,
-                        passphrase = s.signFilePassphrase.ifEmpty { null },
-                        armor = s.signFileArmor,
+                // RC3 §J (#16): stream from the picked Uri — hashes in
+                // 64 KiB chunks, no whole-file buffer, no size ceiling
+                // (iOS 8.1.0 §3a parity; see SIGNATURE_FILE_BUFFER_LIMIT's
+                // doc for the history). Dispatchers.IO because this is
+                // now disk-bound, not CPU-bound.
+                val sig = withContext(Dispatchers.IO) {
+                    PGPonyApp.instance.contentResolver.openInputStream(uri)?.use { input ->
+                        signing.signDetachedStream(
+                            input = input,
+                            secretKeyRing = secRing,
+                            passphrase = s.signFilePassphrase.ifEmpty { null },
+                            armor = s.signFileArmor,
+                        )
+                    } ?: throw SigningError.SigningFailed(
+                        PGPonyApp.instance.getString(R.string.sign_verify_error_file_unreadable)
                     )
                 }
                 val ext = if (s.signFileArmor) ".asc" else ".sig"

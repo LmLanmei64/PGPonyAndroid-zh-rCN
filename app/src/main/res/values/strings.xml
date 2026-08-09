@@ -263,6 +263,12 @@
     <string name="encrypt_mode_text">Text</string>
     <string name="encrypt_mode_file">File</string>
     <string name="encrypt_mode_sign">Sign</string>
+    <!-- RC3 §J (#16): file-only signing, promoted from a File-mode sheet to its own tab. -->
+    <string name="encrypt_mode_sign_file">Sign File</string>
+    <!-- RC3 §J (#16): Sign File / Verify stream the picked file from disk; these cover the two remaining failure shapes. -->
+    <string name="sign_verify_error_file_unreadable">Couldn\'t read the picked file. Pick it again.</string>
+    <string name="verify_file_error_sig_not_signature">That file is too large to be a detached signature. Pick the .asc or .sig file, not the signed content.</string>
+    <string name="sign_file_save_button">Save to Files</string>
     <string name="encrypt_mode_password">Password</string>
 
     <!-- ── Phase A1: symmetric / passphrase-only (Password) mode ──────── -->
@@ -1211,6 +1217,8 @@
     <string name="result_sheet_revocation_block_format">Revocation certificate, %1$d characters</string>
     <string name="result_sheet_copy_button">Copy to clipboard</string>
     <string name="result_sheet_save_button">Save as .asc file</string>
+    <!-- RC3 §J: the key-export sheets' Save button is a real ACTION_CREATE_DOCUMENT save now; the system-share chooser moved to its own button. -->
+    <string name="result_sheet_share_button">Share…</string>
     <string name="result_sheet_clipboard_warning">Clipboard contents are visible to all installed apps until cleared.</string>
 
     <!-- ── ExportPrivateKeyResultSheet ───────────────────────────────── -->
