@@ -22,8 +22,12 @@ import com.pgpony.android.PGPonyApp
 import com.pgpony.android.R
 import com.pgpony.android.contacts.ContactsService
 import com.pgpony.android.contacts.DeviceContact
+import com.pgpony.android.crypto.KeyAlgorithm
+import com.pgpony.android.crypto.ClassicalSubkeyGen
 import com.pgpony.android.crypto.KeyExpirationService
+import com.pgpony.android.crypto.PGPCryptoService
 import com.pgpony.android.crypto.RevocationError
+import com.pgpony.android.crypto.SubkeyCapability
 import com.pgpony.android.data.KeyRefreshResult
 import com.pgpony.android.data.KeyRefreshService
 import com.pgpony.android.data.PGPKeyEntity
@@ -32,6 +36,7 @@ import com.pgpony.android.data.RevocationReason
 import com.pgpony.android.data.TrustLevel
 import com.pgpony.android.data.repository.KeyRepository
 import com.pgpony.android.network.KeyServerRepository
+import org.bouncycastle.openpgp.PGPPublicKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -53,6 +58,38 @@ data class KeyUserIdInfo(
     val name: String,
     val email: String,
     val isPrimary: Boolean
+)
+
+/**
+ * 4.2.0 RC3 workstream G (§11.2) — one non-primary key in the ring, for
+ * the read-only Subkey section. Parsed at load time from the same
+ * `repo.loadPublicKeyRing` call [deriveUserIds] already makes, so the
+ * ring bytes stay the single source of truth rather than a second,
+ * possibly-stale copy. [isCardBacked] is inherited from the parent
+ * entity rather than tracked per subkey: PGPony's card model keeps the
+ * primary in a vault and puts only the subkeys' private material on
+ * the card (see KeyRepository's card-linking comment), so every
+ * subkey of a card-backed key is itself card-backed.
+ */
+data class SubkeyDisplayInfo(
+    val fingerprint: String,
+    val keyId: String,
+    /**
+     * Display label for THIS subkey specifically, not the KeyAlgorithm
+     * family label. KeyAlgorithm.ED25519_CV25519 covers both halves of
+     * an Ed25519+Cv25519 pair under one shortName ("Ed25519") because
+     * it names the ring as a whole; reusing that per-subkey here would
+     * show "Ed25519" on an X25519 encryption subkey, which is what
+     * happened before this field existed (RC3 §17.2 H bug, fixed 9
+     * August: an Add Subkey X25519 test showed as "Ed25519 Encrypt").
+     * See [KeyDetailViewModel.subkeyAlgorithmLabel].
+     */
+    val algorithmLabel: String,
+    val capabilities: Int,
+    val createdAt: Long,
+    val expiresAt: Long?,
+    val isRevoked: Boolean,
+    val isCardBacked: Boolean
 )
 
 data class KeyDetailUiState(
@@ -89,6 +126,10 @@ data class KeyDetailUiState(
     val showExpirySheet: Boolean = false,
     val expiryInFlight: Boolean = false,
     val expiryError: String? = null,
+    // RC3 §17.2 H — add subkey, drives AddSubkeySheet.
+    val showAddSubkeySheet: Boolean = false,
+    val addSubkeyInFlight: Boolean = false,
+    val addSubkeyError: String? = null,
     /** Generic error surface (key-load failure, QR encoding failure). */
     val errorMessage: String? = null,
     /** Phase A4b — modal sheet visibility flags. Each gates its own
@@ -129,6 +170,10 @@ data class KeyDetailUiState(
      *  change). Never empty once [key] is loaded: falls back to the
      *  single stored ID when the ring can't be read. */
     val userIds: List<KeyUserIdInfo> = emptyList(),
+    /** 4.2.0 RC3 (§11.2) — every non-primary key in the ring, parsed at
+     *  load time alongside [userIds]. Empty for a key with no subkeys
+     *  or before the ring can be read. */
+    val subkeys: List<SubkeyDisplayInfo> = emptyList(),
     /** 4.0.0 Phase 2 (F5) — true while "Refresh from key server" is in
      *  flight; drives that row's inline spinner. */
     val isRefreshingFromKeyServer: Boolean = false,
@@ -239,7 +284,9 @@ class KeyDetailViewModel(
                 notFound = loaded == null,
                 // 4.0.0 Phase 2 (F4) — parse the User ID list off the key
                 // bytes alongside the entity load.
-                userIds = loaded?.let { deriveUserIds(it) } ?: emptyList()
+                userIds = loaded?.let { deriveUserIds(it) } ?: emptyList(),
+                // 4.2.0 RC3 (§11.2) — same treatment for subkeys.
+                subkeys = loaded?.let { deriveSubkeys(it) } ?: emptyList()
             )
         }
     }
@@ -648,6 +695,65 @@ class KeyDetailViewModel(
         }
     }
 
+    /**
+     * 4.2.0 RC3 workstream G. Every key in the ring after the primary
+     * (BC always returns the primary first), skipping any entry that
+     * fails to parse rather than aborting the whole section, the same
+     * failure handling SubkeyMigrationService used for the Room-backed
+     * version of this that never got wired up.
+     */
+    private suspend fun deriveSubkeys(entity: PGPKeyEntity): List<SubkeyDisplayInfo> {
+        val ring = withContext(Dispatchers.IO) { repo.loadPublicKeyRing(entity.fingerprint) }
+            ?: return emptyList()
+        val keys = ring.publicKeys.asSequence().toList()
+        if (keys.size <= 1) return emptyList()
+        val crypto = PGPCryptoService.shared
+        return keys.drop(1).mapNotNull { pubKey ->
+            try {
+                val algorithm = crypto.detectAlgorithm(pubKey)
+                val capabilities = SubkeyCapability.fromPgpPublicKey(
+                    pubKey = pubKey,
+                    algorithm = algorithm,
+                    isPrimary = false
+                )
+                val expiresAtMs = pubKey.validSeconds.takeIf { it > 0L }?.let { secs ->
+                    pubKey.creationTime.time + secs * 1000L
+                }
+                SubkeyDisplayInfo(
+                    fingerprint = pubKey.fingerprint.joinToString("") { String.format("%02X", it) },
+                    keyId = String.format("%016X", pubKey.keyID),
+                    algorithmLabel = subkeyAlgorithmLabel(pubKey, algorithm),
+                    capabilities = capabilities,
+                    createdAt = pubKey.creationTime.time,
+                    expiresAt = expiresAtMs,
+                    isRevoked = pubKey.hasRevocation(),
+                    isCardBacked = entity.isCardBacked
+                )
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    /**
+     * Per-subkey display label. detectAlgorithm's algo-18/algo-22
+     * collapse onto KeyAlgorithm.ED25519_CV25519 ("Ed25519") is correct
+     * when labeling a whole Ed25519+Cv25519 ring, wrong when labeling
+     * one packet in isolation — an ECDH(18) subkey generated as an
+     * X25519 encryption key (workstream H's AddSubkeySheet, or the
+     * classic Ed25519+Cv25519 pair's own encrypt half) needs to read
+     * "X25519", not "Ed25519", or the two are indistinguishable in the
+     * Subkeys list. Composite/RSA/v6 algorithms aren't ambiguous this
+     * way, so they still use [algorithm]'s own shortName.
+     */
+    private fun subkeyAlgorithmLabel(pubKey: PGPPublicKey, algorithm: KeyAlgorithm): String {
+        return when (pubKey.algorithm) {
+            org.bouncycastle.bcpg.PublicKeyAlgorithmTags.ECDH -> "X25519"
+            org.bouncycastle.bcpg.PublicKeyAlgorithmTags.EDDSA_LEGACY -> "Ed25519"
+            else -> algorithm.shortName
+        }
+    }
+
     // ── 4.0.0 Phase 2 (F5): keyserver refresh-and-merge ────────────────
 
     /**
@@ -979,6 +1085,54 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
                 _state.value = _state.value.copy(
                     expiryInFlight = false,
                     expiryError = e.message ?: PGPonyApp.instance.getString(R.string.key_detail_expiry_failed)
+                )
+            }
+        }
+    }
+
+    // ── Add Subkey (RC3 §17.2 H) ─────────────────────────────────────────
+
+    fun showAddSubkeySheet() {
+        _state.value = _state.value.copy(showAddSubkeySheet = true, addSubkeyError = null)
+    }
+
+    fun dismissAddSubkeySheet() {
+        if (_state.value.addSubkeyInFlight) return
+        _state.value = _state.value.copy(showAddSubkeySheet = false, addSubkeyError = null)
+    }
+
+    /**
+     * Generate and bind [type] as a new subkey, then persist and reload
+     * both the entity and the subkeys list so the new row appears in
+     * SubkeysSection immediately. Mirrors applyExpirationSoftware's
+     * error handling shape.
+     */
+    fun addSubkey(
+        type: ClassicalSubkeyGen.ClassicalSubkeyType,
+        expirationSeconds: Long?,
+        passphrase: String?
+    ) {
+        val key = _state.value.key ?: return
+        _state.value = _state.value.copy(addSubkeyInFlight = true, addSubkeyError = null)
+        viewModelScope.launch {
+            try {
+                repo.addSubkey(key.fingerprint, type, expirationSeconds, passphrase)
+                val reloaded = repo.getByFingerprint(key.fingerprint)
+                _state.value = _state.value.copy(
+                    key = reloaded ?: key,
+                    subkeys = reloaded?.let { deriveSubkeys(it) } ?: _state.value.subkeys,
+                    addSubkeyInFlight = false,
+                    showAddSubkeySheet = false
+                )
+            } catch (e: ClassicalSubkeyGen.SubkeyAddError) {
+                _state.value = _state.value.copy(
+                    addSubkeyInFlight = false,
+                    addSubkeyError = e.message ?: PGPonyApp.instance.getString(R.string.key_detail_add_subkey_failed)
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    addSubkeyInFlight = false,
+                    addSubkeyError = e.message ?: PGPonyApp.instance.getString(R.string.key_detail_add_subkey_failed)
                 )
             }
         }

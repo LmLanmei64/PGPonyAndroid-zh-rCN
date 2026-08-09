@@ -64,6 +64,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +77,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pgpony.android.R
+import com.pgpony.android.crypto.SubkeyCapability
 import com.pgpony.android.data.PGPKeyEntity
 import com.pgpony.android.data.TrustLevel
 import com.pgpony.android.ui.components.TrustBadge
@@ -779,6 +781,99 @@ fun UserIdsSection(userIds: List<KeyUserIdInfo>) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 4.2.0 RC3 workstream G (§11.2) — read-only list of every subkey under
+ * this primary. Same per-row shape as [UserIdsSection]: a title line
+ * (algorithm + capabilities), then key ID and created/expires detail,
+ * then badges for card-backed and revoked when applicable. Rendered
+ * only when non-empty, same convention KeyDetailScreen already uses
+ * for [UserIdsSection].
+ */
+@Composable
+fun SubkeysSection(
+    subkeys: List<SubkeyDisplayInfo>,
+    canAddSubkey: Boolean = false,
+    onAddSubkey: (() -> Unit)? = null
+) {
+    SectionGroup(title = stringResource(R.string.key_detail_subkeys_title)) {
+        subkeys.forEachIndexed { index, sub ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = sub.algorithmLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = SubkeyCapability.displayString(sub.capabilities),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.key_detail_subkeys_key_id_format, sub.keyId),
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+                val expiryText = sub.expiresAt?.let {
+                    stringResource(R.string.key_detail_subkeys_created_expires_format, formatDate(sub.createdAt), formatDate(it))
+                } ?: stringResource(R.string.key_detail_subkeys_created_no_expiry_format, formatDate(sub.createdAt))
+                Text(
+                    text = expiryText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (sub.isCardBacked || sub.isRevoked) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row {
+                        if (sub.isCardBacked) {
+                            Text(
+                                text = stringResource(R.string.key_detail_subkeys_card_backed_badge).uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier
+                                    .background(Color(0xFF6366F1), RoundedCornerShape(999.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                            if (sub.isRevoked) Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        if (sub.isRevoked) {
+                            Text(
+                                text = stringResource(R.string.key_card_revoked_badge).uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onError,
+                                modifier = Modifier
+                                    .background(MaterialTheme.colorScheme.error, RoundedCornerShape(999.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+                if (index != subkeys.lastIndex) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
+        }
+        if (canAddSubkey && onAddSubkey != null) {
+            TextButton(
+                onClick = onAddSubkey,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(stringResource(R.string.key_detail_subkeys_add_action))
             }
         }
     }

@@ -13,6 +13,7 @@ import android.content.SharedPreferences
 import com.pgpony.android.crypto.KeyAlgorithm
 import com.pgpony.android.crypto.KeyExpirationService
 import com.pgpony.android.crypto.PGPCryptoService
+import com.pgpony.android.crypto.ClassicalSubkeyGen
 import com.pgpony.android.crypto.RevocationError
 import com.pgpony.android.crypto.RevocationService
 import com.pgpony.android.crypto.card.CardInfo
@@ -950,6 +951,65 @@ class KeyRepository(
      */
     suspend fun exportRevocationCertificate(fingerprint: String): String? {
         return dao.getByFingerprint(fingerprint)?.revocationCertificate
+    }
+
+    // ── Add Subkey (RC3 §17.2 H) ─────────────────────────────────────────
+
+    /**
+     * Add a classical subkey (RSA / Ed25519 / X25519) to an existing
+     * software key pair. Mirrors setKeyExpirationSoftware's shape: load
+     * both rings, hand them to the crypto layer (ClassicalSubkeyGen),
+     * then persist the result through the same store-both-derive-public-
+     * armor-update-entity sequence persistExpiration uses.
+     *
+     * Composite (post-quantum) subkey types are added through
+     * CompositeKeyGen.addCompositeSubkey directly rather than this
+     * method; the Add Subkey UI offers both families from one sheet but
+     * routes to whichever generator matches the chosen type.
+     *
+     * Throws KeyRepoError.NotFound if the key doesn't exist,
+     * ClassicalSubkeyGen.SubkeyAddError if the key can't take a
+     * software subkey (public-only, card-backed) or the crypto layer
+     * fails (wrong passphrase, binding failure).
+     */
+    suspend fun addSubkey(
+        fingerprint: String,
+        type: ClassicalSubkeyGen.ClassicalSubkeyType,
+        expirationSeconds: Long?,
+        passphrase: String?
+    ) {
+        val entity = dao.getByFingerprint(fingerprint)
+            ?: throw KeyRepoError.NotFound(fingerprint)
+        if (!entity.isKeyPair) {
+            throw ClassicalSubkeyGen.SubkeyAddError(
+                "Cannot add a subkey to a public-only key — the private key is required to sign the binding"
+            )
+        }
+        if (entity.isCardBacked) {
+            throw ClassicalSubkeyGen.SubkeyAddError(
+                "This key lives on a hardware key — subkeys can't be added to a card-backed key from here"
+            )
+        }
+        val secRing = loadSecretKeyRing(fingerprint)
+            ?: throw ClassicalSubkeyGen.SubkeyAddError(
+                "Secret key ring could not be loaded for $fingerprint"
+            )
+
+        val updatedSecretRing = ClassicalSubkeyGen.addSubkey(
+            secretRing = secRing,
+            type = type,
+            passphrase = passphrase,
+            expirationSeconds = expirationSeconds
+        )
+        val updatedPublicRing = PGPPublicKeyRing(updatedSecretRing.publicKeys.asSequence().toList())
+
+        store.storePublicKey(fingerprint, updatedPublicRing.encoded)
+        store.storePrivateKey(fingerprint, updatedSecretRing.encoded)
+        dao.update(
+            entity.copy(
+                armoredPublicKey = crypto.exportArmoredPublicKey(updatedPublicRing)
+            )
+        )
     }
 
     // ── 4.0.0 Phase 2: keyserver refresh support (iOS v7.1.1 F5) ────────

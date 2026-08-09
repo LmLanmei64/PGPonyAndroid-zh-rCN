@@ -283,7 +283,8 @@ fun KeyDetailScreen(
                 onShowQR = { viewModel.showQR() },
                 // Phase A4b — dispatcher replaces the bare onComingSoon
                 onComingSoon = dispatchAction,
-                onEditExpiry = { viewModel.showExpirySheet() }
+                onEditExpiry = { viewModel.showExpirySheet() },
+                onAddSubkey = { viewModel.showAddSubkeySheet() }
             )
         }
     }
@@ -482,6 +483,23 @@ fun KeyDetailScreen(
                 if (started != true) viewModel.onCardExpiryFailure(cardNfcUnavail)
             },
             onDismiss = { viewModel.dismissExpirySheet() }
+        )
+    }
+
+    // ── RC3 §17.2 H: Add Subkey sheet ──────────────────────────────────
+    val keyForAddSubkey = state.key
+    if (state.showAddSubkeySheet && keyForAddSubkey != null) {
+        val addSubkeyOwnerLabel = keyForAddSubkey.userName.ifBlank {
+            keyForAddSubkey.userEmail.ifBlank { keyForAddSubkey.shortFingerprint }
+        }
+        AddSubkeySheet(
+            keyOwnerLabel = addSubkeyOwnerLabel,
+            isProcessing = state.addSubkeyInFlight,
+            errorMessage = state.addSubkeyError,
+            onApply = { type, expiresAt, passphrase ->
+                viewModel.addSubkey(type, expiresAt, passphrase)
+            },
+            onDismiss = { viewModel.dismissAddSubkeySheet() }
         )
     }
 
@@ -869,7 +887,8 @@ private fun LoadedBody(
     onCopyFingerprint: () -> Unit,
     onShowQR: () -> Unit,
     onComingSoon: (String) -> Unit,
-    onEditExpiry: () -> Unit
+    onEditExpiry: () -> Unit,
+    onAddSubkey: () -> Unit
 ) {
     val key = state.key ?: return  // Defensive — caller already filtered
     LazyColumn(
@@ -904,6 +923,22 @@ private fun LoadedBody(
                 onTrustTap = { onComingSoon(KeyDetailActionIds.CHANGE_TRUST) },
                 onEditExpiry = if (key.isKeyPair || key.isCardBacked) onEditExpiry else null
             )
+        }
+        // 4.2.0 RC3 workstream G (§11.2) — read-only subkey list.
+        // Rendered when the ring has subkeys, or when the key can add
+        // one (RC3 §17.2 H) — software key pairs only, matching the
+        // Edit Expiry row's own gating (card-backed keys use the NFC
+        // flow, public-only keys have no private material to sign
+        // the binding with).
+        val canAddSubkey = key.isKeyPair && !key.isCardBacked
+        if (state.subkeys.isNotEmpty() || canAddSubkey) {
+            item {
+                SubkeysSection(
+                    subkeys = state.subkeys,
+                    canAddSubkey = canAddSubkey,
+                    onAddSubkey = onAddSubkey
+                )
+            }
         }
         item {
             ContactSection(
