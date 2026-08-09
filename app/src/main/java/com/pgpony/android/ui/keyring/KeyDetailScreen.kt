@@ -284,7 +284,10 @@ fun KeyDetailScreen(
                 // Phase A4b — dispatcher replaces the bare onComingSoon
                 onComingSoon = dispatchAction,
                 onEditExpiry = { viewModel.showExpirySheet() },
-                onAddSubkey = { viewModel.showAddSubkeySheet() }
+                onAddSubkey = { viewModel.showAddSubkeySheet() },
+                onAddUserId = { viewModel.showAddUserIdSheet() },
+                onMakePrimaryUserId = { uid -> viewModel.requestUserIdAction(uid, UserIdActionRequest.Kind.MAKE_PRIMARY) },
+                onRevokeUserId = { uid -> viewModel.requestUserIdAction(uid, UserIdActionRequest.Kind.REVOKE) }
             )
         }
     }
@@ -500,6 +503,38 @@ fun KeyDetailScreen(
                 viewModel.addSubkey(type, expiresAt, passphrase)
             },
             onDismiss = { viewModel.dismissAddSubkeySheet() }
+        )
+    }
+
+    // ── RC3 §17.2 I (#29): Add User ID sheet ────────────────────────────
+    val keyForAddUserId = state.key
+    if (state.showAddUserIdSheet && keyForAddUserId != null) {
+        val addUserIdOwnerLabel = keyForAddUserId.userName.ifBlank {
+            keyForAddUserId.userEmail.ifBlank { keyForAddUserId.shortFingerprint }
+        }
+        AddUserIdSheet(
+            keyOwnerLabel = addUserIdOwnerLabel,
+            isProcessing = state.addUserIdInFlight,
+            errorMessage = state.addUserIdError,
+            onApply = { userId, makePrimary, passphrase ->
+                viewModel.addUserId(userId, makePrimary, passphrase)
+            },
+            onDismiss = { viewModel.dismissAddUserIdSheet() }
+        )
+    }
+
+    // ── RC3 §17.2 I (#29): revoke / make-primary User ID sheet ──────────
+    val pendingUserIdAction = state.userIdAction
+    if (pendingUserIdAction != null) {
+        val parsedUserId = com.pgpony.android.data.PGPKeyEntity.parseUserID(pendingUserIdAction.userId)
+        val userIdDisplayName = parsedUserId.first.ifBlank { parsedUserId.second.ifBlank { pendingUserIdAction.userId } }
+        UserIdActionSheet(
+            request = pendingUserIdAction,
+            displayName = userIdDisplayName,
+            isProcessing = state.userIdActionInFlight,
+            errorMessage = state.userIdActionError,
+            onApply = { passphrase -> viewModel.confirmUserIdAction(passphrase) },
+            onDismiss = { viewModel.dismissUserIdAction() }
         )
     }
 
@@ -888,7 +923,10 @@ private fun LoadedBody(
     onShowQR: () -> Unit,
     onComingSoon: (String) -> Unit,
     onEditExpiry: () -> Unit,
-    onAddSubkey: () -> Unit
+    onAddSubkey: () -> Unit,
+    onAddUserId: () -> Unit,
+    onMakePrimaryUserId: (String) -> Unit,
+    onRevokeUserId: (String) -> Unit
 ) {
     val key = state.key ?: return  // Defensive — caller already filtered
     LazyColumn(
@@ -912,10 +950,20 @@ private fun LoadedBody(
             )
         }
         // 4.0.0 Phase 2 (iOS v7.1.1 F4) — every User ID on the key.
-        // Rendered only when there's more than one; a single ID is
-        // already the header above.
-        if (state.userIds.size > 1) {
-            item { UserIdsSection(userIds = state.userIds) }
+        // Rendered when there's more than one, or when the key can add
+        // one (RC3 §17.2 I / #29) — software key pairs only, same
+        // gating as the Subkeys section's Add button.
+        val canEditUserIds = key.isKeyPair && !key.isCardBacked
+        if (state.userIds.size > 1 || canEditUserIds) {
+            item {
+                UserIdsSection(
+                    userIds = state.userIds,
+                    canEdit = canEditUserIds,
+                    onMakePrimary = onMakePrimaryUserId,
+                    onRevoke = onRevokeUserId,
+                    onAddUserId = onAddUserId
+                )
+            }
         }
         item {
             DetailsSection(

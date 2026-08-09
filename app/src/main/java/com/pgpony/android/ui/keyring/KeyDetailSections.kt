@@ -747,7 +747,13 @@ fun ActionsSection(
  * the header above. Read-only, matching iOS 7.1.1.
  */
 @Composable
-fun UserIdsSection(userIds: List<KeyUserIdInfo>) {
+fun UserIdsSection(
+    userIds: List<KeyUserIdInfo>,
+    canEdit: Boolean = false,
+    onMakePrimary: ((String) -> Unit)? = null,
+    onRevoke: ((String) -> Unit)? = null,
+    onAddUserId: (() -> Unit)? = null
+) {
     SectionGroup(title = stringResource(R.string.key_detail_userids_title)) {
         userIds.forEach { uid ->
             Column(
@@ -773,6 +779,18 @@ fun UserIdsSection(userIds: List<KeyUserIdInfo>) {
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
+                    if (uid.isRevoked) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = stringResource(R.string.key_card_revoked_badge).uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onError,
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.error, RoundedCornerShape(999.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
                 if (uid.email.isNotEmpty() && uid.name.isNotEmpty()) {
                     Text(
@@ -781,6 +799,34 @@ fun UserIdsSection(userIds: List<KeyUserIdInfo>) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                if (canEdit && !uid.isRevoked) {
+                    Row(modifier = Modifier.padding(top = 4.dp)) {
+                        if (!uid.isPrimary && onMakePrimary != null) {
+                            TextButton(onClick = { onMakePrimary(uid.raw) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                Text(stringResource(R.string.key_detail_userids_make_primary), style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        if (onRevoke != null) {
+                            TextButton(onClick = { onRevoke(uid.raw) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                Text(
+                                    stringResource(R.string.key_detail_userids_revoke),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (canEdit && onAddUserId != null) {
+            TextButton(
+                onClick = onAddUserId,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(stringResource(R.string.key_detail_userids_add_action))
             }
         }
     }

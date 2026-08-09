@@ -28,6 +28,7 @@ import com.pgpony.android.crypto.KeyExpirationService
 import com.pgpony.android.crypto.PGPCryptoService
 import com.pgpony.android.crypto.RevocationError
 import com.pgpony.android.crypto.SubkeyCapability
+import com.pgpony.android.crypto.UserIdService
 import com.pgpony.android.data.KeyRefreshResult
 import com.pgpony.android.data.KeyRefreshService
 import com.pgpony.android.data.PGPKeyEntity
@@ -57,8 +58,22 @@ data class KeyUserIdInfo(
     val raw: String,
     val name: String,
     val email: String,
-    val isPrimary: Boolean
+    val isPrimary: Boolean,
+    val isRevoked: Boolean = false
 )
+
+/**
+ * RC3 §17.2 I — which UID a pending UserIdActionSheet confirmation is
+ * for, and which of the two lightweight (passphrase-only) actions:
+ * revoke or make-primary. Add User ID has its own richer sheet
+ * (AddUserIdSheet) since it needs a text field, not just a confirm.
+ */
+data class UserIdActionRequest(
+    val userId: String,
+    val kind: Kind
+) {
+    enum class Kind { REVOKE, MAKE_PRIMARY }
+}
 
 /**
  * 4.2.0 RC3 workstream G (§11.2) — one non-primary key in the ring, for
@@ -130,6 +145,15 @@ data class KeyDetailUiState(
     val showAddSubkeySheet: Boolean = false,
     val addSubkeyInFlight: Boolean = false,
     val addSubkeyError: String? = null,
+    // RC3 §17.2 I (#29) — add/revoke/promote User IDs.
+    val showAddUserIdSheet: Boolean = false,
+    val addUserIdInFlight: Boolean = false,
+    val addUserIdError: String? = null,
+    /** Non-null while UserIdActionSheet (revoke or make-primary) is open,
+     *  identifying which UID and which action it's confirming. */
+    val userIdAction: UserIdActionRequest? = null,
+    val userIdActionInFlight: Boolean = false,
+    val userIdActionError: String? = null,
     /** Generic error surface (key-load failure, QR encoding failure). */
     val errorMessage: String? = null,
     /** Phase A4b — modal sheet visibility flags. Each gates its own
@@ -661,8 +685,8 @@ class KeyDetailViewModel(
     // this was jank rather than an ANR — but it is the same mistake.
     private suspend fun deriveUserIds(entity: PGPKeyEntity): List<KeyUserIdInfo> {
         val fromRing = mutableListOf<KeyUserIdInfo>()
-        withContext(Dispatchers.IO) { repo.loadPublicKeyRing(entity.fingerprint) }
-            ?.publicKey?.userIDs?.let { ids ->
+        val primaryPub = withContext(Dispatchers.IO) { repo.loadPublicKeyRing(entity.fingerprint) }?.publicKey
+        primaryPub?.userIDs?.let { ids ->
             while (ids.hasNext()) {
                 val raw = ids.next() as? String ?: continue
                 if (raw.isEmpty()) continue
@@ -672,7 +696,8 @@ class KeyDetailViewModel(
                         raw = raw,
                         name = parsed.first,
                         email = parsed.second,
-                        isPrimary = false
+                        isPrimary = false,
+                        isRevoked = primaryPub?.let { UserIdService.shared.isRevoked(it, raw) } ?: false
                     )
                 )
             }
@@ -688,7 +713,13 @@ class KeyDetailViewModel(
                 )
             )
         }
-        val primaryIndex = fromRing.indexOfFirst { it.raw == entity.userID }
+        // RC3 §17.2 I fix: read the ring's actual IsPrimaryUserId
+        // subpacket via UserIdService rather than string-matching the
+        // entity's cached userID column, which could disagree with the
+        // real primary flag (e.g. right after an import, or once
+        // workstream I's add/promote/revoke actions start mutating it).
+        val primaryUid = primaryPub?.let { UserIdService.shared.currentPrimaryUserId(it) }
+        val primaryIndex = fromRing.indexOfFirst { it.raw == primaryUid }
             .let { if (it >= 0) it else 0 }
         return fromRing.mapIndexed { index, uid ->
             if (index == primaryIndex) uid.copy(isPrimary = true) else uid
@@ -1133,6 +1164,96 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
                 _state.value = _state.value.copy(
                     addSubkeyInFlight = false,
                     addSubkeyError = e.message ?: PGPonyApp.instance.getString(R.string.key_detail_add_subkey_failed)
+                )
+            }
+        }
+    }
+
+    // ── User ID editing (RC3 §17.2 I / #29) ──────────────────────────────
+
+    fun showAddUserIdSheet() {
+        _state.value = _state.value.copy(showAddUserIdSheet = true, addUserIdError = null)
+    }
+
+    fun dismissAddUserIdSheet() {
+        if (_state.value.addUserIdInFlight) return
+        _state.value = _state.value.copy(showAddUserIdSheet = false, addUserIdError = null)
+    }
+
+    /** Add a new User ID, then reload both the entity and the UID list so
+     *  the new row (and any primary-badge change) appears immediately. */
+    fun addUserId(userId: String, makePrimary: Boolean, passphrase: String?) {
+        val key = _state.value.key ?: return
+        _state.value = _state.value.copy(addUserIdInFlight = true, addUserIdError = null)
+        viewModelScope.launch {
+            try {
+                repo.addUserId(key.fingerprint, userId, makePrimary, passphrase)
+                val reloaded = repo.getByFingerprint(key.fingerprint)
+                _state.value = _state.value.copy(
+                    key = reloaded ?: key,
+                    userIds = reloaded?.let { deriveUserIds(it) } ?: _state.value.userIds,
+                    addUserIdInFlight = false,
+                    showAddUserIdSheet = false
+                )
+            } catch (e: UserIdService.UserIdError) {
+                _state.value = _state.value.copy(
+                    addUserIdInFlight = false,
+                    addUserIdError = e.message ?: PGPonyApp.instance.getString(R.string.key_detail_add_userid_failed)
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    addUserIdInFlight = false,
+                    addUserIdError = e.message ?: PGPonyApp.instance.getString(R.string.key_detail_add_userid_failed)
+                )
+            }
+        }
+    }
+
+    fun requestUserIdAction(userId: String, kind: UserIdActionRequest.Kind) {
+        _state.value = _state.value.copy(
+            userIdAction = UserIdActionRequest(userId, kind),
+            userIdActionError = null
+        )
+    }
+
+    fun dismissUserIdAction() {
+        if (_state.value.userIdActionInFlight) return
+        _state.value = _state.value.copy(userIdAction = null, userIdActionError = null)
+    }
+
+    /** Runs whichever action [UserIdActionRequest.kind] the pending
+     *  confirmation is for — revoke or make-primary — sharing the same
+     *  passphrase-only sheet and reload shape as addUserId above. */
+    fun confirmUserIdAction(passphrase: String?) {
+        val key = _state.value.key ?: return
+        val request = _state.value.userIdAction ?: return
+        _state.value = _state.value.copy(userIdActionInFlight = true, userIdActionError = null)
+        viewModelScope.launch {
+            try {
+                when (request.kind) {
+                    UserIdActionRequest.Kind.REVOKE -> repo.revokeUserId(
+                        key.fingerprint, request.userId, RevocationReason.USER_ID_INVALID, null, passphrase
+                    )
+                    UserIdActionRequest.Kind.MAKE_PRIMARY -> repo.setPrimaryUserId(
+                        key.fingerprint, request.userId, passphrase
+                    )
+                }
+                val reloaded = repo.getByFingerprint(key.fingerprint)
+                _state.value = _state.value.copy(
+                    key = reloaded ?: key,
+                    userIds = reloaded?.let { deriveUserIds(it) } ?: _state.value.userIds,
+                    userIdActionInFlight = false,
+                    userIdAction = null
+                )
+            } catch (e: UserIdService.UserIdError) {
+                _state.value = _state.value.copy(
+                    userIdActionInFlight = false,
+                    userIdActionError = e.message ?: PGPonyApp.instance.getString(R.string.key_detail_userid_action_failed)
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    userIdActionInFlight = false,
+                    userIdActionError = e.message ?: PGPonyApp.instance.getString(R.string.key_detail_userid_action_failed)
                 )
             }
         }

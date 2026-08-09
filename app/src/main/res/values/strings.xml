@@ -695,6 +695,27 @@
     <string name="key_detail_userids_title">User IDs</string>
     <string name="key_detail_userids_primary">Primary</string>
 
+    <!-- ── 4.2.0 RC3 workstream I (#29): add/revoke/promote User IDs ── -->
+    <string name="key_detail_userids_make_primary">Make Primary</string>
+    <string name="key_detail_userids_revoke">Revoke</string>
+    <string name="key_detail_userids_add_action">Add User ID…</string>
+    <string name="key_detail_add_userid_sheet_title">Add User ID</string>
+    <string name="key_detail_add_userid_sheet_subtitle">New identity for %1$s</string>
+    <string name="key_detail_add_userid_name_label">Name</string>
+    <string name="key_detail_add_userid_email_label">Email</string>
+    <string name="key_detail_add_userid_make_primary_label">Make this the primary User ID</string>
+    <string name="key_detail_add_userid_passphrase_label">Passphrase</string>
+    <string name="key_detail_add_userid_apply">Add User ID</string>
+    <string name="key_detail_add_userid_failed">Could not add the User ID. Please try again.</string>
+    <string name="key_detail_userid_action_sheet_title_revoke">Revoke User ID</string>
+    <string name="key_detail_userid_action_sheet_title_make_primary">Make Primary User ID</string>
+    <string name="key_detail_userid_action_sheet_subtitle_revoke">%1$s will be marked revoked. This cannot be undone.</string>
+    <string name="key_detail_userid_action_sheet_subtitle_make_primary">%1$s will become the primary identity on this key.</string>
+    <string name="key_detail_userid_action_passphrase_label">Passphrase</string>
+    <string name="key_detail_userid_action_apply_revoke">Revoke</string>
+    <string name="key_detail_userid_action_apply_make_primary">Make Primary</string>
+    <string name="key_detail_userid_action_failed">Could not complete this action. Please try again.</string>
+
     <!-- ── 4.2.0 RC3 workstream G (§11.2): Subkeys section ──────────── -->
     <string name="key_detail_subkeys_title">Subkeys</string>
     <string name="key_detail_subkeys_key_id_format">Key ID: %1$s</string>

@@ -16,6 +16,7 @@ import com.pgpony.android.crypto.PGPCryptoService
 import com.pgpony.android.crypto.ClassicalSubkeyGen
 import com.pgpony.android.crypto.RevocationError
 import com.pgpony.android.crypto.RevocationService
+import com.pgpony.android.crypto.UserIdService
 import com.pgpony.android.crypto.card.CardInfo
 import com.pgpony.android.data.*
 import org.bouncycastle.openpgp.PGPPublicKeyRing
@@ -113,7 +114,10 @@ class KeyRepository(
     // since RevocationService is stateless; the parameter is here so
     // tests can inject a stub.
     private val revocation: RevocationService = RevocationService.shared,
-    private val keyExpiration: KeyExpirationService = KeyExpirationService.shared
+    private val keyExpiration: KeyExpirationService = KeyExpirationService.shared,
+    // RC3 workstream I (#29): same stateless-service DI convention as
+    // revocation/keyExpiration above.
+    private val userIdService: UserIdService = UserIdService.shared
 ) {
 
     // 4.0.0 Phase 1 (iOS v7.1.1 F3) — fingerprint-identity guard for
@@ -1008,6 +1012,118 @@ class KeyRepository(
         dao.update(
             entity.copy(
                 armoredPublicKey = crypto.exportArmoredPublicKey(updatedPublicRing)
+            )
+        )
+    }
+
+    // ── User ID editing (RC3 §17.2 I / #29) ──────────────────────────────
+
+    /**
+     * Add [userId] to a software key pair. When [makePrimary] is true and
+     * the new UID becomes primary, entity.userID/userName/userEmail are
+     * updated to match so KeyCard/getByEmail/contact matching pick up the
+     * new primary immediately rather than waiting on a re-derive; when
+     * false, the entity's cached fields are left alone (still describe
+     * whichever UID is actually primary).
+     */
+    suspend fun addUserId(
+        fingerprint: String,
+        userId: String,
+        makePrimary: Boolean,
+        passphrase: String?
+    ) {
+        val entity = dao.getByFingerprint(fingerprint)
+            ?: throw KeyRepoError.NotFound(fingerprint)
+        if (!entity.isKeyPair) {
+            throw UserIdService.UserIdError.UnsupportedKey(
+                "Cannot add a User ID to a public-only key — the private key is required to sign it"
+            )
+        }
+        if (entity.isCardBacked) {
+            throw UserIdService.UserIdError.UnsupportedKey(
+                "This key lives on a hardware key — User IDs can't be edited on a card-backed key from here"
+            )
+        }
+        val secRing = loadSecretKeyRing(fingerprint)
+            ?: throw UserIdService.UserIdError.UnsupportedKey("Secret key ring could not be loaded for $fingerprint")
+        val pubRing = loadPublicKeyRing(fingerprint)
+            ?: throw UserIdService.UserIdError.UnsupportedKey("Public key ring could not be loaded for $fingerprint")
+
+        val updated = userIdService.addUserId(secRing, pubRing, userId, makePrimary, passphrase)
+        persistUserIdChange(entity, updated, newPrimaryUserId = if (makePrimary) userId else null)
+    }
+
+    /** Revoke [userId] on a software key pair. See UserIdService.revokeUserId
+     *  for the "can't revoke the last UID" guard. */
+    suspend fun revokeUserId(
+        fingerprint: String,
+        userId: String,
+        reason: RevocationReason,
+        comment: String?,
+        passphrase: String?
+    ) {
+        val entity = dao.getByFingerprint(fingerprint)
+            ?: throw KeyRepoError.NotFound(fingerprint)
+        if (!entity.isKeyPair) {
+            throw UserIdService.UserIdError.UnsupportedKey(
+                "Cannot revoke a User ID on a public-only key — the private key is required to sign the revocation"
+            )
+        }
+        if (entity.isCardBacked) {
+            throw UserIdService.UserIdError.UnsupportedKey(
+                "This key lives on a hardware key — User IDs can't be edited on a card-backed key from here"
+            )
+        }
+        val secRing = loadSecretKeyRing(fingerprint)
+            ?: throw UserIdService.UserIdError.UnsupportedKey("Secret key ring could not be loaded for $fingerprint")
+        val pubRing = loadPublicKeyRing(fingerprint)
+            ?: throw UserIdService.UserIdError.UnsupportedKey("Public key ring could not be loaded for $fingerprint")
+
+        val updated = userIdService.revokeUserId(secRing, pubRing, userId, reason, comment, passphrase)
+        persistUserIdChange(entity, updated, newPrimaryUserId = null)
+    }
+
+    /** Make [userId] the primary identity on a software key pair. */
+    suspend fun setPrimaryUserId(
+        fingerprint: String,
+        userId: String,
+        passphrase: String?
+    ) {
+        val entity = dao.getByFingerprint(fingerprint)
+            ?: throw KeyRepoError.NotFound(fingerprint)
+        if (!entity.isKeyPair) {
+            throw UserIdService.UserIdError.UnsupportedKey(
+                "Cannot change the primary User ID on a public-only key — the private key is required to sign it"
+            )
+        }
+        if (entity.isCardBacked) {
+            throw UserIdService.UserIdError.UnsupportedKey(
+                "This key lives on a hardware key — User IDs can't be edited on a card-backed key from here"
+            )
+        }
+        val secRing = loadSecretKeyRing(fingerprint)
+            ?: throw UserIdService.UserIdError.UnsupportedKey("Secret key ring could not be loaded for $fingerprint")
+        val pubRing = loadPublicKeyRing(fingerprint)
+            ?: throw UserIdService.UserIdError.UnsupportedKey("Public key ring could not be loaded for $fingerprint")
+
+        val updated = userIdService.setPrimaryUserId(secRing, pubRing, userId, passphrase)
+        persistUserIdChange(entity, updated, newPrimaryUserId = userId)
+    }
+
+    private suspend fun persistUserIdChange(
+        entity: PGPKeyEntity,
+        updated: UserIdService.UpdatedRings,
+        newPrimaryUserId: String?
+    ) {
+        store.storePublicKey(entity.fingerprint, updated.publicRing.encoded)
+        store.storePrivateKey(entity.fingerprint, updated.secretRing.encoded)
+        val parsed = newPrimaryUserId?.let { PGPKeyEntity.parseUserID(it) }
+        dao.update(
+            entity.copy(
+                armoredPublicKey = crypto.exportArmoredPublicKey(updated.publicRing),
+                userID = newPrimaryUserId ?: entity.userID,
+                userName = parsed?.first ?: entity.userName,
+                userEmail = parsed?.second ?: entity.userEmail
             )
         )
     }
