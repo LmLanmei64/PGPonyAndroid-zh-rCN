@@ -47,7 +47,6 @@ data class SettingsUiState(
     val defaultKeyName: String? = null,
     val defaultKeyFingerprint: String? = null,
     // Pro
-    val isPro: Boolean = false,
     // Data
     val showClearConfirm: Boolean = false,
     val showClearStep2: Boolean = false,
@@ -189,7 +188,6 @@ class SettingsViewModel(
             // 4.0.0 Phase 9b — auto-wipe toggle; default ON preserves the
             // 3.1.0 always-on behavior.
             clearInputsAfterEncrypt = prefs.getBoolean("clear_inputs_after_encrypt", true),
-            isPro = prefs.getBoolean("pgpony_is_pro", false),
             // ── Phase A12: theme + reminders persisted prefs ────
             selectedTheme = AppTheme.fromStorage(prefs.getString("selected_theme", null)),
             keyExpirationRemindersEnabled = prefs.getBoolean("key_expiration_reminders", false),

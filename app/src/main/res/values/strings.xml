@@ -131,7 +131,6 @@
     <string name="settings_title">Settings</string>
 
     <!-- ── Section headers ───────────────────────────────────────────── -->
-    <string name="settings_section_pgpony_pro">PGPony</string>
     <string name="settings_section_security">Security</string>
     <string name="settings_section_clipboard">Clipboard</string>
     <string name="settings_section_appearance">Appearance</string>
@@ -156,13 +155,6 @@
     <string name="settings_section_about">About</string>
 
     <!-- ── Pro section ──────────────────────────────────────────────── -->
-    <string name="settings_pro_active_label">Free forever</string>
-    <string name="settings_pro_active_subtitle">Every feature included — no purchases, no subscriptions, ever</string>
-    <string name="settings_pro_upgrade_label">Upgrade to Pro</string>
-    <string name="settings_pro_upgrade_subtitle">Unlock the full keyring + cloud sync</string>
-    <string name="settings_pro_unlock_price_format">Unlock all features — %1$s</string>
-    <string name="settings_pro_unlock_button">Unlock Pro</string>
-    <string name="settings_pro_restore_button">Restore</string>
 
     <!-- ── Security section ─────────────────────────────────────────── -->
     <string name="settings_biometric_lock_title">Biometric Lock</string>
@@ -1117,40 +1109,6 @@
     <string name="exchange_vm_status_uploaded">Key uploaded to keys.openpgp.org</string>
     <string name="exchange_vm_error_upload_failed_format">Upload failed: %1$s</string>
 
-    <!-- ════════════════════════════════════════════════════════════════
-         ProGateSheet
-         ════════════════════════════════════════════════════════════════ -->
-    <string name="pro_feature_unlimited_keys_title">Unlimited Key Pairs</string>
-    <string name="pro_feature_unlimited_keys_body">Create unlimited key pairs for different identities — work, personal, projects. Free includes 1 key pair.</string>
-    <string name="pro_feature_modern_algos_title">Ed25519 + Cv25519 Keys</string>
-    <string name="pro_feature_modern_algos_body">Generate modern Ed25519 signing keys with Cv25519 encryption subkeys. Compact, fast, and recommended by security experts.</string>
-    <string name="pro_feature_keyserver_title">Key Server Upload</string>
-    <string name="pro_feature_keyserver_body">Publish your public key to keys.openpgp.org so anyone can find and encrypt messages to you.</string>
-    <string name="pro_feature_multi_recipients_title">Multiple Recipients</string>
-    <string name="pro_feature_multi_recipients_body">Encrypt messages for multiple recipients at once. Free allows one recipient per message.</string>
-    <string name="pro_feature_file_encryption_title">File Encryption</string>
-    <string name="pro_feature_file_encryption_body">Encrypt and decrypt any file type — documents, photos, archives. Share encrypted files securely.</string>
-
-    <string name="pro_gate_sheet_title">Unlock PGPony Pro</string>
-    <string name="pro_gate_everything_in_pro">Everything in Pro</string>
-    <string name="pro_gate_you_tapped_this">You tapped this feature</string>
-    <string name="pro_gate_purchasing">Purchasing…</string>
-    <string name="pro_gate_one_time_purchase">One-time purchase. No subscription.</string>
-    <string name="pro_gate_welcome_dialog_title">Welcome to Pro!</string>
-    <string name="pro_gate_welcome_dialog_body">You\'ve unlocked all Pro features. Thank you for supporting PGPony!</string>
-    <string name="pro_gate_welcome_dialog_confirm">Let\'s Go</string>
-
-    <!-- ════════════════════════════════════════════════════════════════
-         SecretUnlockScreen — promo code entry
-         ════════════════════════════════════════════════════════════════ -->
-    <string name="promo_code_title">Enter Promo Code</string>
-    <string name="promo_code_subtitle">Enter a code to unlock PGPony Pro for free.</string>
-    <string name="promo_code_placeholder">PONY-XXXX-XXXX</string>
-    <string name="promo_code_redemption_failed_default">Redemption failed</string>
-    <string name="promo_code_redeem_in_progress">Redeeming…</string>
-    <string name="promo_code_already_pro">PGPony Pro is already active</string>
-    <string name="promo_code_dialog_success">Success!</string>
-    <string name="promo_code_dialog_error">Error</string>
 
     <!-- ════════════════════════════════════════════════════════════════
          SignerLookupSheet (decrypt-side signer lookup on unknown signer)

@@ -179,13 +179,11 @@ data class KeyringUiState(
     /**
      * Key PAIRS the user has generated or imported with private material.
      *
-     * Deliberately NOT myKeys.size. ProGuard.canGenerateKey takes a
-     * `currentKeyPairCount`, and myKeys was only ever a correct proxy for
-     * it while myKeys meant exactly isKeyPair. Now that a card-backed row
-     * counts as one of the user's own keys for display, using myKeys.size
-     * for the free-tier gate would cost a free user a key slot for
-     * plugging in a YubiKey. The gate gets its own name so it cannot
-     * drift with the grouping again.
+     * Deliberately NOT myKeys.size: a card-backed row counts as one of
+     * the user's own keys for display but is not a key pair, so the two
+     * counts drift. (This originally existed for the free-tier key-pair
+     * gate; RC3 §J removed billing entirely, but the distinct count is
+     * still the correct semantic and Settings shows it.)
      */
     val keyPairCount: Int get() = allKeys.count { it.isKeyPair }
 

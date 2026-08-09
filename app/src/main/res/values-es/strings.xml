@@ -128,7 +128,6 @@
     <string name="settings_title">Ajustes</string>
 
     <!-- ── Section headers ───────────────────────────────────────────── -->
-    <string name="settings_section_pgpony_pro">PGPony Pro</string>
     <string name="settings_section_security">Seguridad</string>
     <string name="settings_section_clipboard">Portapapeles</string>
     <string name="settings_section_appearance">Apariencia</string>
@@ -152,13 +151,6 @@
     <string name="settings_section_about">Acerca de</string>
 
     <!-- ── Pro section ──────────────────────────────────────────────── -->
-    <string name="settings_pro_active_label">PGPony Pro</string>
-    <string name="settings_pro_active_subtitle">Todas las funciones desbloqueadas</string>
-    <string name="settings_pro_upgrade_label">Pasarse a Pro</string>
-    <string name="settings_pro_upgrade_subtitle">Desbloquea el llavero completo + sincronización en la nube</string>
-    <string name="settings_pro_unlock_price_format">Desbloquear todas las funciones — %1$s</string>
-    <string name="settings_pro_unlock_button">Desbloquear Pro</string>
-    <string name="settings_pro_restore_button">Restaurar</string>
 
     <!-- ── Security section ─────────────────────────────────────────── -->
     <string name="settings_biometric_lock_title">Bloqueo biométrico</string>
@@ -1010,40 +1002,6 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
     <string name="exchange_vm_status_uploaded">Clave subida a keys.openpgp.org</string>
     <string name="exchange_vm_error_upload_failed_format">Error al subir: %1$s</string>
 
-    <!-- ════════════════════════════════════════════════════════════════
-         ProGateSheet
-         ════════════════════════════════════════════════════════════════ -->
-    <string name="pro_feature_unlimited_keys_title">Pares de claves ilimitados</string>
-    <string name="pro_feature_unlimited_keys_body">Crea pares de claves ilimitados para distintas identidades: trabajo, personal, proyectos. La versión gratis incluye 1 par de claves.</string>
-    <string name="pro_feature_modern_algos_title">Claves Ed25519 + Cv25519</string>
-    <string name="pro_feature_modern_algos_body">Genera claves de firma modernas Ed25519 con subclaves de cifrado Cv25519. Compactas, rápidas y recomendadas por expertos en seguridad.</string>
-    <string name="pro_feature_keyserver_title">Subir al servidor de claves</string>
-    <string name="pro_feature_keyserver_body">Publica tu clave pública en keys.openpgp.org para que cualquiera pueda encontrarte y cifrar mensajes a tu nombre.</string>
-    <string name="pro_feature_multi_recipients_title">Varios destinatarios</string>
-    <string name="pro_feature_multi_recipients_body">Cifra mensajes para varios destinatarios a la vez. La versión gratuita permite un destinatario por mensaje.</string>
-    <string name="pro_feature_file_encryption_title">Cifrado de archivos</string>
-    <string name="pro_feature_file_encryption_body">Cifra y descifra cualquier tipo de archivo: documentos, fotos, archivos comprimidos. Comparte archivos cifrados de forma segura.</string>
-
-    <string name="pro_gate_sheet_title">Desbloquear PGPony Pro</string>
-    <string name="pro_gate_everything_in_pro">Todo lo que incluye Pro</string>
-    <string name="pro_gate_you_tapped_this">Has tocado esta función</string>
-    <string name="pro_gate_purchasing">Comprando…</string>
-    <string name="pro_gate_one_time_purchase">Compra única. Sin suscripción.</string>
-    <string name="pro_gate_welcome_dialog_title">¡Bienvenido a Pro!</string>
-    <string name="pro_gate_welcome_dialog_body">Has desbloqueado todas las funciones Pro. ¡Gracias por apoyar PGPony!</string>
-    <string name="pro_gate_welcome_dialog_confirm">¡Vamos!</string>
-
-    <!-- ════════════════════════════════════════════════════════════════
-         SecretUnlockScreen — promo code entry
-         ════════════════════════════════════════════════════════════════ -->
-    <string name="promo_code_title">Introducir código promocional</string>
-    <string name="promo_code_subtitle">Introduce un código para desbloquear PGPony Pro gratis.</string>
-    <string name="promo_code_placeholder">PONY-XXXX-XXXX</string>
-    <string name="promo_code_redemption_failed_default">Error al canjear</string>
-    <string name="promo_code_redeem_in_progress">Canjeando…</string>
-    <string name="promo_code_already_pro">PGPony Pro ya está activo</string>
-    <string name="promo_code_dialog_success">¡Listo!</string>
-    <string name="promo_code_dialog_error">Error</string>
 
     <!-- ════════════════════════════════════════════════════════════════
          SignerLookupSheet (decrypt-side signer lookup on unknown signer)

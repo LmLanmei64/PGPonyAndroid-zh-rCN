@@ -40,15 +40,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import com.pgpony.android.R
-import com.pgpony.android.LocalBillingService
-import com.pgpony.android.billing.ProGuard
 import com.pgpony.android.crypto.KeyAlgorithm
 import com.pgpony.android.data.PGPKeyEntity
 import androidx.compose.ui.unit.Dp
 import com.pgpony.android.ui.components.KeyCard
 import com.pgpony.android.ui.components.ScreenTooltip
-import com.pgpony.android.ui.pro.ProFeature
-import com.pgpony.android.ui.pro.ProGateSheet
 
 // Auto-hiding keyring FAB: idle timeout before the "+" fades out, and the
 // fade duration. Single tunable constants per the spec.
@@ -69,9 +65,6 @@ fun KeyringScreen(
     onScanCard: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
-    val billingService = LocalBillingService.current
-    val billingState by billingService.state.collectAsState()
-    var proGateFeature by remember { mutableStateOf<ProFeature?>(null) }
 
     // Snackbar for success/error
     val snackbarHostState = remember { SnackbarHostState() }
@@ -168,11 +161,7 @@ fun KeyringScreen(
                             onClick = {
                                 fabExpanded = false
                                 bumpFab()
-                                if (ProGuard.canGenerateKey(state.keyPairCount, billingState.isPro)) {
-                                    viewModel.showGenerate()
-                                } else {
-                                    proGateFeature = ProFeature.UNLIMITED_KEYS
-                                }
+                                viewModel.showGenerate()
                             },
                             containerColor = MaterialTheme.colorScheme.secondaryContainer
                         ) { Icon(Icons.Filled.Add, "Generate Key") }
@@ -397,15 +386,6 @@ fun KeyringScreen(
             dismissButton = {
                 TextButton(onClick = { viewModel.cancelDelete() }) { Text(stringResource(R.string.common_button_cancel)) }
             }
-        )
-    }
-
-    // ── Pro Gate Sheet ──────────────────────────────────────────────────
-    proGateFeature?.let { feature ->
-        ProGateSheet(
-            feature = feature,
-            billingService = billingService,
-            onDismiss = { proGateFeature = null }
         )
     }
 

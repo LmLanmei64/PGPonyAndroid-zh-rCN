@@ -103,7 +103,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.pgpony.android.billing.BillingService
 import com.pgpony.android.crypto.card.CardInfo
 import com.pgpony.android.intent.IntentAction
 import com.pgpony.android.intent.IntentHandler
@@ -147,11 +146,6 @@ import com.pgpony.android.ui.theme.AppTheme
 import com.pgpony.android.ui.theme.ThemeState
 import com.pgpony.android.ui.theme.resolveColorScheme
 
-// ── CompositionLocal for BillingService ────────────────────────────────
-
-val LocalBillingService = staticCompositionLocalOf<BillingService> {
-    error("BillingService not provided")
-}
 
 // ── Navigation ─────────────────────────────────────────────────────────
 
@@ -190,7 +184,6 @@ class MainActivity :
     // 4.0.0 Phase 3 — bytes of a .pgpony backup opened via VIEW intent,
     // consumed by the "backup" restore route.
     private var pendingRestoreBytes = mutableStateOf<ByteArray?>(null)
-    private lateinit var billingService: BillingService
 
     // ── Phase A9 Fix1: Runtime permission helper ──────────────────────
     //
@@ -686,26 +679,20 @@ class MainActivity :
             setRecentsScreenshotEnabled(false)
         }
 
-        val prefs = getSharedPreferences("pgpony_prefs", MODE_PRIVATE)
-        billingService = BillingService(this, prefs)
-        billingService.connect()
-
         pendingAction.value = IntentHandler.process(intent, contentResolver)
 
         setContent {
             PGPonyTheme {
-                CompositionLocalProvider(LocalBillingService provides billingService) {
-                    // 4.0.0 Phase 9 (G8) — the privacy cover draws OVER
-                    // everything (tabs, sheets, even the lock screen), so
-                    // it sits last in a Box at the content root.
-                    Box {
-                        PGPonyMainScreen(
-                            pendingAction,
-                            pendingRestoreBytes,
-                            isAutoLockSuppressed = { suppressAutoLock }
-                        )
-                        PrivacyCover(isSuppressed = { suppressAutoLock })
-                    }
+                // 4.0.0 Phase 9 (G8) — the privacy cover draws OVER
+                // everything (tabs, sheets, even the lock screen), so
+                // it sits last in a Box at the content root.
+                Box {
+                    PGPonyMainScreen(
+                        pendingAction,
+                        pendingRestoreBytes,
+                        isAutoLockSuppressed = { suppressAutoLock }
+                    )
+                    PrivacyCover(isSuppressed = { suppressAutoLock })
                 }
             }
         }
@@ -718,7 +705,6 @@ class MainActivity :
 
     override fun onDestroy() {
         usbCards.unregister()
-        billingService.disconnect()
         super.onDestroy()
     }
 }

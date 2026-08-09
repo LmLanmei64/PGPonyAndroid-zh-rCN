@@ -49,16 +49,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.browser.customtabs.CustomTabsIntent
 
-import com.pgpony.android.LocalBillingService
 import com.pgpony.android.R
 import com.pgpony.android.data.ArmorCommentDefaults
 import com.pgpony.android.BuildConfig
 import com.pgpony.android.data.ArmorCommentValidator
 import com.pgpony.android.ui.components.rememberTooltipState
 import com.pgpony.android.ui.help.HelpScreen
-import com.pgpony.android.ui.pro.ProBadge
-import com.pgpony.android.ui.pro.ProFeature
-import com.pgpony.android.ui.pro.ProGateSheet
 import com.pgpony.android.ui.theme.AppTheme
 
 // Version display reads BuildConfig.VERSION_NAME, generated from versionName in
@@ -73,9 +69,6 @@ fun SettingsScreen(
     onKeysChanged: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
-    val billingService = LocalBillingService.current
-    val billingState by billingService.state.collectAsState()
-    var proGateFeature by remember { mutableStateOf<ProFeature?>(null) }
     var showSecurityInfo by remember { mutableStateOf(false) }
     // A14 Picker — Settings → Language sub-screen overlay flag. Mirrors the
     // showSecurityInfo pattern used for the security-info modal.
@@ -134,56 +127,6 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
-            // ── PGPony Pro Section ─────────────────────────────────────
-            SectionHeader(stringResource(R.string.settings_section_pgpony_pro))
-            if (billingState.isPro) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Filled.Star, null, tint = Color(0xFF8B5CF6), modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.settings_pro_active_label), style = MaterialTheme.typography.bodyLarge)
-                        Text(stringResource(R.string.settings_pro_active_subtitle), style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Icon(Icons.Filled.CheckCircle, null, tint = Color(0xFF22C55E), modifier = Modifier.size(20.dp))
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Filled.Star, null, tint = Color(0xFF8B5CF6), modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(R.string.settings_pro_upgrade_label), style = MaterialTheme.typography.bodyLarge)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            ProBadge()
-                        }
-                        Text(stringResource(R.string.settings_pro_unlock_price_format, billingState.proPrice),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { proGateFeature = ProFeature.UNLIMITED_KEYS },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6))
-                    ) {
-                        Icon(Icons.Filled.Star, null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.settings_pro_unlock_button))
-                    }
-                    OutlinedButton(onClick = { billingService.restorePurchases() }) {
-                        Text(stringResource(R.string.settings_pro_restore_button))
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-
             // ── Security Section ───────────────────────────────────────
             SectionHeader(stringResource(R.string.settings_section_security))
             SettingsToggle(
@@ -911,15 +854,6 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { viewModel.dismissClear() }) { Text(stringResource(R.string.common_button_cancel)) }
             }
-        )
-    }
-
-    // ── Pro Gate Sheet ──────────────────────────────────────────────────
-    proGateFeature?.let { feature ->
-        ProGateSheet(
-            feature = feature,
-            billingService = billingService,
-            onDismiss = { proGateFeature = null }
         )
     }
 

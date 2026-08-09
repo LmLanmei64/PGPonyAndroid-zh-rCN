@@ -128,7 +128,6 @@
     <string name="settings_title">設定</string>
 
     <!-- ── Section headers ───────────────────────────────────────────── -->
-    <string name="settings_section_pgpony_pro">PGPony Pro</string>
     <string name="settings_section_security">セキュリティ</string>
     <string name="settings_section_clipboard">クリップボード</string>
     <string name="settings_section_appearance">外観</string>
@@ -152,13 +151,6 @@
     <string name="settings_section_about">情報</string>
 
     <!-- ── Pro section ──────────────────────────────────────────────── -->
-    <string name="settings_pro_active_label">PGPony Pro</string>
-    <string name="settings_pro_active_subtitle">すべての機能がアンロックされています</string>
-    <string name="settings_pro_upgrade_label">Pro にアップグレード</string>
-    <string name="settings_pro_upgrade_subtitle">完全な鍵束とクラウド同期を解除</string>
-    <string name="settings_pro_unlock_price_format">すべての機能を解除 — %1$s</string>
-    <string name="settings_pro_unlock_button">Pro を解除</string>
-    <string name="settings_pro_restore_button">復元</string>
 
     <!-- ── Security section ─────────────────────────────────────────── -->
     <string name="settings_biometric_lock_title">生体認証ロック</string>
@@ -1010,40 +1002,6 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="exchange_vm_status_uploaded">鍵を keys.openpgp.org にアップロードしました</string>
     <string name="exchange_vm_error_upload_failed_format">アップロードに失敗しました: %1$s</string>
 
-    <!-- ════════════════════════════════════════════════════════════════
-         ProGateSheet
-         ════════════════════════════════════════════════════════════════ -->
-    <string name="pro_feature_unlimited_keys_title">鍵ペア数無制限</string>
-    <string name="pro_feature_unlimited_keys_body">仕事、プライベート、プロジェクト用など、用途別に鍵ペアを無制限に作成できます。無料版では 1 ペアまで利用できます。</string>
-    <string name="pro_feature_modern_algos_title">Ed25519 + Cv25519 鍵</string>
-    <string name="pro_feature_modern_algos_body">コンパクトで高速、セキュリティ専門家にも推奨される最新の Ed25519 署名鍵と Cv25519 暗号化サブ鍵を作成できます。</string>
-    <string name="pro_feature_keyserver_title">鍵サーバーへのアップロード</string>
-    <string name="pro_feature_keyserver_body">公開鍵を keys.openpgp.org に公開すれば、誰でもあなたを見つけてメッセージを暗号化して送れます。</string>
-    <string name="pro_feature_multi_recipients_title">複数の受信者</string>
-    <string name="pro_feature_multi_recipients_body">一度に複数の受信者向けにメッセージを暗号化できます。無料版は 1 メッセージあたり 1 名の受信者まで。</string>
-    <string name="pro_feature_file_encryption_title">ファイル暗号化</string>
-    <string name="pro_feature_file_encryption_body">ドキュメント、写真、アーカイブなど、あらゆる形式のファイルを暗号化・復号できます。暗号化ファイルを安全に共有しましょう。</string>
-
-    <string name="pro_gate_sheet_title">PGPony Pro をアンロック</string>
-    <string name="pro_gate_everything_in_pro">Pro に含まれるすべて</string>
-    <string name="pro_gate_you_tapped_this">この機能をタップしました</string>
-    <string name="pro_gate_purchasing">購入中…</string>
-    <string name="pro_gate_one_time_purchase">買い切り。サブスクリプションではありません。</string>
-    <string name="pro_gate_welcome_dialog_title">Pro へようこそ！</string>
-    <string name="pro_gate_welcome_dialog_body">すべての Pro 機能をアンロックしました。PGPony をご支援いただきありがとうございます！</string>
-    <string name="pro_gate_welcome_dialog_confirm">始めましょう</string>
-
-    <!-- ════════════════════════════════════════════════════════════════
-         SecretUnlockScreen — promo code entry
-         ════════════════════════════════════════════════════════════════ -->
-    <string name="promo_code_title">プロモーションコードを入力</string>
-    <string name="promo_code_subtitle">コードを入力して PGPony Pro を無料でアンロックしてください。</string>
-    <string name="promo_code_placeholder">PONY-XXXX-XXXX</string>
-    <string name="promo_code_redemption_failed_default">引き換えに失敗しました</string>
-    <string name="promo_code_redeem_in_progress">引き換え中…</string>
-    <string name="promo_code_already_pro">PGPony Pro はすでに有効です</string>
-    <string name="promo_code_dialog_success">成功しました！</string>
-    <string name="promo_code_dialog_error">エラー</string>
 
     <!-- ════════════════════════════════════════════════════════════════
          SignerLookupSheet (decrypt-side signer lookup on unknown signer)
