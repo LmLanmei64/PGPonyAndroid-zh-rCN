@@ -155,10 +155,14 @@ class ProviderHandshakeTest {
         @Suppress("DEPRECATION")
         val error = result.getParcelableExtra<OpenPgpError>(OpenPgpApi.RESULT_ERROR)
         assertNotNull(error)
+        // RC3 §K sweep: this assertion predated P2b, when DECRYPT_VERIFY
+        // was a stub and the message really did say "not implemented
+        // yet". The action has been fully implemented since; what an
+        // inputless call must do NOW is fail loudly with a real error,
+        // never succeed or hang.
         assertTrue(
-            "stub message should say the action is not implemented yet",
-            error!!.message.contains("not implement", ignoreCase = true) ||
-                error.message.contains("yet", ignoreCase = true)
+            "an inputless DECRYPT_VERIFY must return a non-blank error message",
+            !error!!.message.isNullOrBlank()
         )
     }
 

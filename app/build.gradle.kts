@@ -440,6 +440,9 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    // RC3 §K: registers ComponentActivity in the debug manifest so
+    // createAndroidComposeRule<ComponentActivity> can launch it.
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
 // Forward selected -D properties to the forked unit-test JVM. Gradle does NOT
