@@ -129,6 +129,19 @@
          Settings — top-level navigation
          ════════════════════════════════════════════════════════════════ -->
     <string name="settings_title">Settings</string>
+    <!-- RC3 §J (#20): top-level Settings category rows. -->
+    <string name="settings_category_security_title">Security &amp; Privacy</string>
+    <string name="settings_category_security_subtitle">Biometrics, card PIN, clipboard, password store</string>
+    <string name="settings_category_encryption_title">Encryption</string>
+    <string name="settings_category_encryption_subtitle">Email format, armor comment, default recipient</string>
+    <string name="settings_category_keys_title">Keys &amp; Servers</string>
+    <string name="settings_category_keys_subtitle">Reminders, key servers, refresh, proxy, connected apps</string>
+    <string name="settings_category_appearance_title">Appearance &amp; Language</string>
+    <string name="settings_category_appearance_subtitle">Theme and language</string>
+    <string name="settings_category_backup_title">Backup &amp; Data</string>
+    <string name="settings_category_backup_subtitle">Back up your keys, clear app data</string>
+    <string name="settings_category_help_title">Help &amp; About</string>
+    <string name="settings_category_help_subtitle">Support, feedback, more from NorseHorse</string>
 
     <!-- ── Section headers ───────────────────────────────────────────── -->
     <string name="settings_section_security">Security</string>
@@ -148,6 +161,22 @@
     <string name="settings_section_more">More from NorseHorse</string>
     <string name="settings_more_agepony_title">AgePony</string>
     <string name="settings_more_agepony_subtitle">File encryption with the age format</string>
+    <!-- RC3 §J: sibling-app site links. Brand names are locale-invariant; the
+         subtitles are the taglines from pony.norsehor.se and translate normally. -->
+    <string name="settings_more_ponyfamily_title">All Pony apps</string>
+    <string name="settings_more_ponyfamily_subtitle">The whole family at pony.norsehor.se</string>
+    <string name="settings_more_quorumpony_title" translatable="false">QuorumPony</string>
+    <string name="settings_more_quorumpony_subtitle">Split a secret into cards. Any few rebuild it.</string>
+    <string name="settings_more_carrierpony_title" translatable="false">CarrierPony</string>
+    <string name="settings_more_carrierpony_subtitle">Private messaging and file transfer, sealed end to end</string>
+    <string name="settings_more_burnpony_title" translatable="false">BurnPony</string>
+    <string name="settings_more_burnpony_subtitle">Send a secret. Encrypted on your phone, burned after reading</string>
+    <string name="settings_more_vaultpony_title" translatable="false">VaultPony</string>
+    <string name="settings_more_vaultpony_subtitle">VeraCrypt-compatible encrypted vaults, entirely on your device</string>
+    <string name="settings_more_passpony_title" translatable="false">PassPony</string>
+    <string name="settings_more_passpony_subtitle">Your pass and passage store, in your pocket</string>
+    <string name="settings_more_relaypony_title" translatable="false">RelayPony</string>
+    <string name="settings_more_relaypony_subtitle">Encrypted file transfer, phone to phone</string>
     <string name="settings_more_source_title">Open-source engine</string>
     <string name="settings_more_source_subtitle">PGPonyCore on GitHub, the audited crypto core</string>
     <string name="settings_more_appsource_title">Source code</string>

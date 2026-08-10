@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.*
@@ -60,6 +61,15 @@ import com.pgpony.android.ui.theme.AppTheme
 // Version display reads BuildConfig.VERSION_NAME, generated from versionName in
 // app/build.gradle.kts, so it can never drift out of sync again.
 
+/**
+ * RC3 §J (#20): the six top-level Settings categories. Each value maps to
+ * one when-branch of the sub-page renderer in SettingsScreen; the sections
+ * inside each branch are the pre-#20 sections, moved verbatim.
+ */
+private enum class SettingsCategory {
+    SECURITY, ENCRYPTION, KEYS, APPEARANCE, BACKUP_DATA, HELP_ABOUT
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -69,6 +79,10 @@ fun SettingsScreen(
     onKeysChanged: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
+    // RC3 §J (#20): which category sub-page is open; null = the top-level
+    // category list. Plain remember to match the sibling overlay flags —
+    // a rotation pops back to the list, same as every overlay here.
+    var openCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var showSecurityInfo by remember { mutableStateOf(false) }
     // A14 Picker — Settings → Language sub-screen overlay flag. Mirrors the
     // showSecurityInfo pattern used for the security-info modal.
@@ -99,6 +113,12 @@ fun SettingsScreen(
     // Refresh stats when screen appears
     LaunchedEffect(Unit) { viewModel.loadKeyStats() }
 
+    // RC3 §J (#20): system back pops a category sub-page back to the
+    // category list instead of leaving Settings.
+    androidx.activity.compose.BackHandler(enabled = openCategory != null) {
+        openCategory = null
+    }
+
     // ── Phase A12: probe notification permission on appear ───────────
     //
     // On API 33+ POST_NOTIFICATIONS is a runtime grant the user can
@@ -118,7 +138,33 @@ fun SettingsScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = { TopAppBar(title = { Text(stringResource(R.string.settings_title)) }) }
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        when (openCategory) {
+                            null -> stringResource(R.string.settings_title)
+                            SettingsCategory.SECURITY -> stringResource(R.string.settings_category_security_title)
+                            SettingsCategory.ENCRYPTION -> stringResource(R.string.settings_category_encryption_title)
+                            SettingsCategory.KEYS -> stringResource(R.string.settings_category_keys_title)
+                            SettingsCategory.APPEARANCE -> stringResource(R.string.settings_category_appearance_title)
+                            SettingsCategory.BACKUP_DATA -> stringResource(R.string.settings_category_backup_title)
+                            SettingsCategory.HELP_ABOUT -> stringResource(R.string.settings_category_help_title)
+                        }
+                    )
+                },
+                navigationIcon = {
+                    if (openCategory != null) {
+                        IconButton(onClick = { openCategory = null }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.common_button_back)
+                            )
+                        }
+                    }
+                }
+            )
+        }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -127,6 +173,70 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
+            when (openCategory) {
+                null -> {
+            // ── RC3 §J (#20): category list ────────────────────────────
+            //
+            // The single 19-section scroll is now six category rows, each
+            // opening a sub-page rendered by the when-branches below —
+            // same Composable scope, so every section keeps direct access
+            // to state / viewModel / the overlay flags with zero
+            // parameter threading. Android-Settings-style sub-screens per
+            // the 4.2.0 plan (#20); iOS keeps its one Form because that
+            // is the iOS convention — this is the Android one.
+            SettingsAction(
+                title = stringResource(R.string.settings_category_security_title),
+                subtitle = stringResource(R.string.settings_category_security_subtitle),
+                icon = Icons.Filled.Shield,
+                iconTint = Color(0xFF8B5CF6),
+                onClick = { openCategory = SettingsCategory.SECURITY }
+            )
+            SettingsAction(
+                title = stringResource(R.string.settings_category_encryption_title),
+                subtitle = stringResource(R.string.settings_category_encryption_subtitle),
+                icon = Icons.Filled.Lock,
+                iconTint = Color(0xFF10B981),
+                onClick = { openCategory = SettingsCategory.ENCRYPTION }
+            )
+            SettingsAction(
+                title = stringResource(R.string.settings_category_keys_title),
+                subtitle = stringResource(R.string.settings_category_keys_subtitle),
+                icon = Icons.Filled.VpnKey,
+                iconTint = Color(0xFFF59E0B),
+                onClick = { openCategory = SettingsCategory.KEYS }
+            )
+            SettingsAction(
+                title = stringResource(R.string.settings_category_appearance_title),
+                subtitle = stringResource(R.string.settings_category_appearance_subtitle),
+                icon = Icons.Filled.Palette,
+                iconTint = Color(0xFF3B82F6),
+                onClick = { openCategory = SettingsCategory.APPEARANCE }
+            )
+            SettingsAction(
+                title = stringResource(R.string.settings_category_backup_title),
+                subtitle = stringResource(R.string.settings_category_backup_subtitle),
+                icon = Icons.Filled.Backup,
+                iconTint = Color(0xFF8B5CF6),
+                onClick = { openCategory = SettingsCategory.BACKUP_DATA }
+            )
+            SettingsAction(
+                title = stringResource(R.string.settings_category_help_title),
+                subtitle = stringResource(R.string.settings_category_help_subtitle),
+                icon = Icons.AutoMirrored.Filled.HelpOutline,
+                iconTint = Color(0xFF6366F1),
+                onClick = { openCategory = SettingsCategory.HELP_ABOUT }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Footer
+            Text(
+                stringResource(R.string.settings_about_footer),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
+            )
+                }
+                SettingsCategory.SECURITY -> {
             // ── Security Section ───────────────────────────────────────
             SectionHeader(stringResource(R.string.settings_section_security))
             SettingsToggle(
@@ -174,11 +284,6 @@ fun SettingsScreen(
                 checked = state.clearInputsAfterEncrypt,
                 onCheckedChange = { viewModel.setClearInputsAfterEncrypt(it) }
             )
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // ── 3.1.0 Phase 8 (E4 F-item): email send format ────────────
-            SectionHeader(stringResource(R.string.settings_section_email))
-            EmailFormatSection()
             Spacer(modifier = Modifier.height(16.dp))
             SectionHeader(stringResource(R.string.settings_section_pass_store))
             SettingsToggle(
@@ -245,6 +350,12 @@ fun SettingsScreen(
             }
             Spacer(modifier = Modifier.height(16.dp))
 
+                }
+                SettingsCategory.ENCRYPTION -> {
+            // ── 3.1.0 Phase 8 (E4 F-item): email send format ────────────
+            SectionHeader(stringResource(R.string.settings_section_email))
+            EmailFormatSection()
+            Spacer(modifier = Modifier.height(16.dp))
             // ── PGP Output Section: customizable armor comment ─────────
             //
             // One setting with two parts:
@@ -326,50 +437,6 @@ fun SettingsScreen(
                 onCheckedChange = { viewModel.setArmorCommentPubkeyInclude(it) }
             )
             Spacer(modifier = Modifier.height(16.dp))
-
-            // ── Appearance Section (Phase A12) ─────────────────────────
-            //
-            // Three FilterChips mirroring iOS's Picker(selection:
-            // $appState.selectedTheme). System follows the device-level
-            // dark/light toggle; Light/Dark force the respective mode
-            // regardless of system. Selection persists via
-            // SettingsViewModel.setTheme which writes the storageKey
-            // ("system"/"light"/"dark") to SharedPreferences key
-            // "selected_theme". MainActivity.PGPonyTheme reads the same
-            // pref reactively, so picking a different chip recomposes
-            // the entire UI with the new color scheme without an app
-            // relaunch.
-            //
-            // Phase A13: theme.displayName is still the English string
-            // baked into the AppTheme enum. For localization we resolve
-            // it through a `themeLabel(theme)` helper that maps the enum
-            // to its R.string entry — defined locally below since this
-            // is the only place a theme picker UI exists.
-            SectionHeader(stringResource(R.string.settings_section_appearance))
-            Text(
-                stringResource(R.string.settings_appearance_theme_label),
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-            )
-            Row(
-                modifier = Modifier.padding(start = 16.dp, top = 8.dp, end = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                AppTheme.entries.forEach { theme ->
-                    val themeLabel = when (theme) {
-                        AppTheme.System -> stringResource(R.string.settings_appearance_theme_system)
-                        AppTheme.Light -> stringResource(R.string.settings_appearance_theme_light)
-                        AppTheme.Dark -> stringResource(R.string.settings_appearance_theme_dark)
-                    }
-                    FilterChip(
-                        selected = state.selectedTheme == theme,
-                        onClick = { viewModel.setTheme(theme) },
-                        label = { Text(themeLabel) }
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-
             // ── Default recipient (Phase A4) ───────────────────────────
             //
             // Pre-select the encrypt recipient so it isn't re-picked every
@@ -437,31 +504,8 @@ fun SettingsScreen(
             }
             Spacer(modifier = Modifier.height(16.dp))
 
-            // A14 Picker — Language row.
-            //
-            // Tapping opens LanguagePickerScreen as a full-screen overlay
-            // (same pattern as SecurityInfoScreen below). The current
-            // language's nativeName is shown as the row subtitle so the
-            // user can tell which one is active at a glance — no need
-            // to drill in just to check.
-            //
-            // Why we read LanguageManager.current() rather than the
-            // observable LanguageState.current directly: the row is
-            // only rendered once per Settings appearance, and the
-            // Activity recreation triggered by the picker will rebuild
-            // the entire SettingsScreen anyway. Subscribing to a
-            // MutableState here would just trigger a recompose twice
-            // in quick succession for the same change.
-            SettingsAction(
-                title = stringResource(R.string.settings_language_row_title),
-                subtitle = com.pgpony.android.i18n.LanguageManager.current().nativeName,
-                icon = androidx.compose.material.icons.Icons.Filled.Language,
-                iconTint = Color(0xFF3B82F6),
-                onClick = { showLanguagePicker = true },
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
+                }
+                SettingsCategory.KEYS -> {
             // ── Reminders Section (Phase A12) ──────────────────────────
             //
             // Toggle for key-expiration reminders. When enabled,
@@ -540,7 +584,6 @@ fun SettingsScreen(
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
-
             // ── Key Management Section ─────────────────────────────────
             SectionHeader(stringResource(R.string.settings_section_key_management))
             state.defaultKeyName?.let { name ->
@@ -564,7 +607,6 @@ fun SettingsScreen(
                 iconTint = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(16.dp))
-
             // ── OpenPGP Provider Section (4.0.0 Succession Phase 1) ────
             //
             // Management surface for the OpenPGP API provider: which
@@ -580,7 +622,6 @@ fun SettingsScreen(
                 onClick = { showApiClients = true }
             )
             Spacer(modifier = Modifier.height(16.dp))
-
             // ── Key Servers Section (4.0.0 Phase 5a) ───────────────────
             SectionHeader(stringResource(R.string.settings_section_keyservers))
             SettingsAction(
@@ -591,17 +632,86 @@ fun SettingsScreen(
                 onClick = { showKeyservers = true }
             )
             Spacer(modifier = Modifier.height(16.dp))
-
             // ── Key Refresh Section (4.0.0 Phase 5) ────────────────────
             SectionHeader(stringResource(R.string.settings_section_key_refresh))
             BackgroundRefreshSection()
             Spacer(modifier = Modifier.height(16.dp))
-
             // ── Proxy / Tor Section (4.0.0 Phase 6) ────────────────────
             SectionHeader(stringResource(R.string.settings_section_proxy))
             ProxySection()
             Spacer(modifier = Modifier.height(16.dp))
 
+                }
+                SettingsCategory.APPEARANCE -> {
+            // ── Appearance Section (Phase A12) ─────────────────────────
+            //
+            // Three FilterChips mirroring iOS's Picker(selection:
+            // $appState.selectedTheme). System follows the device-level
+            // dark/light toggle; Light/Dark force the respective mode
+            // regardless of system. Selection persists via
+            // SettingsViewModel.setTheme which writes the storageKey
+            // ("system"/"light"/"dark") to SharedPreferences key
+            // "selected_theme". MainActivity.PGPonyTheme reads the same
+            // pref reactively, so picking a different chip recomposes
+            // the entire UI with the new color scheme without an app
+            // relaunch.
+            //
+            // Phase A13: theme.displayName is still the English string
+            // baked into the AppTheme enum. For localization we resolve
+            // it through a `themeLabel(theme)` helper that maps the enum
+            // to its R.string entry — defined locally below since this
+            // is the only place a theme picker UI exists.
+            SectionHeader(stringResource(R.string.settings_section_appearance))
+            Text(
+                stringResource(R.string.settings_appearance_theme_label),
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+            )
+            Row(
+                modifier = Modifier.padding(start = 16.dp, top = 8.dp, end = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AppTheme.entries.forEach { theme ->
+                    val themeLabel = when (theme) {
+                        AppTheme.System -> stringResource(R.string.settings_appearance_theme_system)
+                        AppTheme.Light -> stringResource(R.string.settings_appearance_theme_light)
+                        AppTheme.Dark -> stringResource(R.string.settings_appearance_theme_dark)
+                    }
+                    FilterChip(
+                        selected = state.selectedTheme == theme,
+                        onClick = { viewModel.setTheme(theme) },
+                        label = { Text(themeLabel) }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            // A14 Picker — Language row.
+            //
+            // Tapping opens LanguagePickerScreen as a full-screen overlay
+            // (same pattern as SecurityInfoScreen below). The current
+            // language's nativeName is shown as the row subtitle so the
+            // user can tell which one is active at a glance — no need
+            // to drill in just to check.
+            //
+            // Why we read LanguageManager.current() rather than the
+            // observable LanguageState.current directly: the row is
+            // only rendered once per Settings appearance, and the
+            // Activity recreation triggered by the picker will rebuild
+            // the entire SettingsScreen anyway. Subscribing to a
+            // MutableState here would just trigger a recompose twice
+            // in quick succession for the same change.
+            SettingsAction(
+                title = stringResource(R.string.settings_language_row_title),
+                subtitle = com.pgpony.android.i18n.LanguageManager.current().nativeName,
+                icon = androidx.compose.material.icons.Icons.Filled.Language,
+                iconTint = Color(0xFF3B82F6),
+                onClick = { showLanguagePicker = true },
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+                }
+                SettingsCategory.BACKUP_DATA -> {
             // ── Backup Section (4.0.0 Phase 3) ─────────────────────────
             SectionHeader(stringResource(R.string.settings_section_backup))
             SettingsAction(
@@ -612,7 +722,6 @@ fun SettingsScreen(
                 onClick = { showBackup = true }
             )
             Spacer(modifier = Modifier.height(16.dp))
-
             // ── Data Section ───────────────────────────────────────────
             SectionHeader(stringResource(R.string.settings_section_data))
             TextButton(
@@ -625,6 +734,8 @@ fun SettingsScreen(
             }
             Spacer(modifier = Modifier.height(16.dp))
 
+                }
+                SettingsCategory.HELP_ABOUT -> {
             // ── Support Section (Phase 1, Help & FAQ added Phase 2) ────
             SectionHeader(stringResource(R.string.settings_section_support))
             SettingsAction(
@@ -688,30 +799,48 @@ fun SettingsScreen(
                 onClick = { showSecurityInfo = true }
             )
             Spacer(modifier = Modifier.height(16.dp))
-
             // ── More from NorseHorse ───────────────────────────────────
-            // AgePony: play flavor opens the Play listing, foss opens
-            // agepony.com, routed through the MoreLinks helper. The full app
-            // source and the open-source crypto engine (PGPonyCore-Kotlin)
-            // both open on GitHub in a Custom Tab.
+            // Every sibling app links to its product site (see the list
+            // below). The full app source and the open-source crypto
+            // engine (PGPonyCore-Kotlin) both open on GitHub in a
+            // Custom Tab.
             SectionHeader(stringResource(R.string.settings_section_more))
-            SettingsAction(
-                title = stringResource(R.string.settings_more_agepony_title),
-                subtitle = stringResource(R.string.settings_more_agepony_subtitle),
-                icon = Icons.Filled.Lock,
-                iconTint = Color(0xFF22C55E),
-                trailingIcon = Icons.AutoMirrored.Filled.OpenInNew,
-                onClick = {
-                    // FD2: routed through the flavor-specific MoreLinks helper.
-                    // play opens the Play listing; foss opens agepony.com, so
-                    // the FOSS APK carries no market:// or play.google.com link.
-                    MoreLinks.openAgePony(context) {
-                        viewModel.showError(
-                            context.getString(R.string.settings_support_browser_error)
-                        )
+            // RC3 §J, per NorseHorse: the sibling apps all link straight
+            // to their product sites now, in BOTH flavors — the old row
+            // routed AgePony through the flavor-split MoreLinks helper
+            // (Play listing on play, website on foss). With no store
+            // links left at all, FD2's link-hygiene concern is moot and
+            // the MoreLinks flavor pair is retired.
+            listOf(
+                Triple(R.string.settings_more_ponyfamily_title, R.string.settings_more_ponyfamily_subtitle, "https://pony.norsehor.se"),
+                Triple(R.string.settings_more_agepony_title, R.string.settings_more_agepony_subtitle, "https://agepony.com"),
+                Triple(R.string.settings_more_quorumpony_title, R.string.settings_more_quorumpony_subtitle, "https://quorumpony.com"),
+                Triple(R.string.settings_more_carrierpony_title, R.string.settings_more_carrierpony_subtitle, "https://carrierpony.com"),
+                Triple(R.string.settings_more_burnpony_title, R.string.settings_more_burnpony_subtitle, "https://burnpony.app"),
+                Triple(R.string.settings_more_vaultpony_title, R.string.settings_more_vaultpony_subtitle, "https://vaultpony.app"),
+                Triple(R.string.settings_more_passpony_title, R.string.settings_more_passpony_subtitle, "https://passpony.app"),
+                Triple(R.string.settings_more_relaypony_title, R.string.settings_more_relaypony_subtitle, "https://relaypony.app"),
+            ).forEach { (titleRes, subtitleRes, url) ->
+                SettingsAction(
+                    title = stringResource(titleRes),
+                    subtitle = stringResource(subtitleRes),
+                    icon = Icons.Filled.Lock,
+                    iconTint = Color(0xFF22C55E),
+                    trailingIcon = Icons.AutoMirrored.Filled.OpenInNew,
+                    onClick = {
+                        try {
+                            CustomTabsIntent.Builder().build().launchUrl(
+                                context,
+                                android.net.Uri.parse(url)
+                            )
+                        } catch (e: Exception) {
+                            viewModel.showError(
+                                context.getString(R.string.settings_support_browser_error)
+                            )
+                        }
                     }
-                }
-            )
+                )
+            }
             SettingsAction(
                 title = stringResource(R.string.settings_more_appsource_title),
                 subtitle = stringResource(R.string.settings_more_appsource_subtitle),
@@ -757,7 +886,6 @@ fun SettingsScreen(
                 }
             )
             Spacer(modifier = Modifier.height(16.dp))
-
             // ── About Section ──────────────────────────────────────────
             SectionHeader(stringResource(R.string.settings_section_about))
             SettingsRow(
@@ -812,13 +940,8 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Footer
-            Text(
-                stringResource(R.string.settings_about_footer),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
-            )
+                }
+            }
         }
     }
 
