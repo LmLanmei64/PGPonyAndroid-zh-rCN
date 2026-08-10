@@ -1195,4 +1195,21 @@ class KeyRepository(
     suspend fun runDedupeSweepIfNeeded(prefs: SharedPreferences) {
         dedup.runSweepIfNeeded(prefs)
     }
+
+    /**
+     * RC3 §J (#15): the passphrase-change cache-invalidation hook.
+     * Resolves every key id on the ring (primary + subkeys) and drops
+     * any provider-cached passphrase for them, so a passphrase that
+     * just changed can never be replayed from cache. Nothing calls
+     * this yet — 4.3.0 §1.1 (change key passphrase) consumes it, and
+     * landing the hook with #15 was an explicit plan item so that
+     * feature can't ship without it.
+     */
+    fun invalidateCachedPassphrases(fingerprint: String) {
+        val ring = loadPublicKeyRing(fingerprint) ?: return
+        val ids = mutableListOf<Long>()
+        val it = ring.publicKeys
+        while (it.hasNext()) ids.add(it.next().keyID)
+        com.pgpony.android.provider.ProviderPassphraseCache.clearKeys(ids)
+    }
 }

@@ -271,6 +271,8 @@ fun SettingsScreen(
             SignByDefaultToggle()
             // ── 3.1.0 Phase 7 (B1/B2/B3): Remember Card PIN ─────────────
             CardPinCacheSection()
+            // ── RC3 §J (#15): passphrase-cache duration picker ──────────
+            PassphraseCacheSection()
             // ── 4.0.0 Phase 9b (iOS v7.1.1 parity): auto-wipe toggle ────
             //
             // The wipe behavior itself shipped in 3.1.0 Phase 5
@@ -1318,6 +1320,144 @@ private fun ProxySection() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 36.dp, top = 4.dp)
         )
+    }
+}
+
+/**
+ * RC3 §J (#15) — duration picker for the provider passphrase cache,
+ * ported from CardPinCacheSection below (same chips, same countdown,
+ * same clear-now, same recompute-on-read semantics — see
+ * ProviderPassphraseCache's header). Differences from the card
+ * section, both deliberate:
+ *   • No enable toggle. The cache has been unconditionally on at a
+ *     fixed 5 minutes since 4.0.0 P2a-2; #15 only makes the duration
+ *     a choice, and a default-off toggle would regress users relying
+ *     on it (explicit plan constraint).
+ *   • Clear now clears ALL held entries — the cache is per-key, and
+ *     "clear" from Settings should mean everything, not the newest.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PassphraseCacheSection() {
+    var durationSec by remember {
+        mutableStateOf(com.pgpony.android.provider.ProviderPassphraseCache.durationSec())
+    }
+    var remainingMs by remember {
+        mutableStateOf(com.pgpony.android.provider.ProviderPassphraseCache.remainingMs())
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            remainingMs = com.pgpony.android.provider.ProviderPassphraseCache.remainingMs()
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.Password,
+            contentDescription = null,
+            tint = Color(0xFF0EA5E9),
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                stringResource(R.string.settings_passphrase_cache_title),
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                stringResource(R.string.settings_passphrase_cache_subtitle),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Text(
+            stringResource(R.string.settings_card_pin_cache_duration_label),
+            style = MaterialTheme.typography.labelLarge
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        val choices = listOf(
+            60 to stringResource(R.string.settings_card_pin_cache_1min),
+            300 to stringResource(R.string.settings_card_pin_cache_5min),
+            900 to stringResource(R.string.settings_card_pin_cache_15min),
+            3600 to stringResource(R.string.settings_card_pin_cache_1hr),
+            com.pgpony.android.provider.ProviderPassphraseCache.DURATION_UNTIL_CLEARED to
+                stringResource(R.string.settings_card_pin_cache_until_cleared)
+        )
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            choices.forEach { (secs, label) ->
+                FilterChip(
+                    selected = durationSec == secs,
+                    onClick = {
+                        durationSec = secs
+                        com.pgpony.android.provider.ProviderPassphraseCache.setDurationSec(secs)
+                        remainingMs = com.pgpony.android.provider.ProviderPassphraseCache.remainingMs()
+                    },
+                    label = { Text(label, maxLines = 1) }
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        if (remainingMs > 0) {
+            if (com.pgpony.android.provider.ProviderPassphraseCache.isUntilCleared()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(R.string.settings_passphrase_cache_held_until_cleared),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        com.pgpony.android.provider.ProviderPassphraseCache.clearAll()
+                        remainingMs = 0
+                    }) {
+                        Text(stringResource(R.string.settings_card_pin_cache_clear))
+                    }
+                }
+            } else {
+                val totalSec = remainingMs / 1000
+                val mm = totalSec / 60
+                val ss = totalSec % 60
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(
+                            R.string.settings_passphrase_cache_countdown_format,
+                            String.format("%d:%02d", mm, ss)
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        com.pgpony.android.provider.ProviderPassphraseCache.clearAll()
+                        remainingMs = 0
+                    }) {
+                        Text(stringResource(R.string.settings_card_pin_cache_clear))
+                    }
+                }
+            }
+        } else {
+            Text(
+                stringResource(R.string.settings_passphrase_cache_none_held),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
     }
 }
 
