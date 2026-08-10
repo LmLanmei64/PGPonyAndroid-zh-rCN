@@ -290,7 +290,11 @@ fun KeyDetailScreen(
                 onAddSubkey = { viewModel.showAddSubkeySheet() },
                 onAddUserId = { viewModel.showAddUserIdSheet() },
                 onMakePrimaryUserId = { uid -> viewModel.requestUserIdAction(uid, UserIdActionRequest.Kind.MAKE_PRIMARY) },
-                onRevokeUserId = { uid -> viewModel.requestUserIdAction(uid, UserIdActionRequest.Kind.REVOKE) }
+                onRevokeUserId = { uid -> viewModel.requestUserIdAction(uid, UserIdActionRequest.Kind.REVOKE) },
+                // RC3 §N (#34)
+                onToggleFallback = { fp -> viewModel.toggleFallback(fp) },
+                onMoveFallback = { fp, delta -> viewModel.moveFallback(fp, delta) },
+                onPickSigningDefault = { slot, fp -> viewModel.setSigningDefault(slot, fp) }
             )
         }
     }
@@ -1090,7 +1094,11 @@ private fun LoadedBody(
     onAddSubkey: () -> Unit,
     onAddUserId: () -> Unit,
     onMakePrimaryUserId: (String) -> Unit,
-    onRevokeUserId: (String) -> Unit
+    onRevokeUserId: (String) -> Unit,
+    // RC3 §N (#34)
+    onToggleFallback: (String) -> Unit,
+    onMoveFallback: (String, Int) -> Unit,
+    onPickSigningDefault: (Int, String?) -> Unit
 ) {
     val key = state.key ?: return  // Defensive — caller already filtered
     LazyColumn(
@@ -1149,6 +1157,27 @@ private fun LoadedBody(
                     subkeys = state.subkeys,
                     canAddSubkey = canAddSubkey,
                     onAddSubkey = onAddSubkey
+                )
+            }
+        }
+        // ── RC3 §N (#34): fallbacks + signing defaults ─────────────
+        // Software key pairs only — same gating rationale as Add Subkey
+        // (card-backed keys can't trial-decrypt in software; public-only
+        // keys decrypt nothing).
+        if (key.isKeyPair && !key.isCardBacked) {
+            item {
+                FallbackKeysSection(
+                    rows = state.fallbackKeys,
+                    onToggle = onToggleFallback,
+                    onMove = onMoveFallback
+                )
+            }
+            item {
+                SigningDefaultsSection(
+                    openKey = key,
+                    defaults = state.signingDefaults,
+                    choices = state.signerChoices,
+                    onPick = onPickSigningDefault
                 )
             }
         }

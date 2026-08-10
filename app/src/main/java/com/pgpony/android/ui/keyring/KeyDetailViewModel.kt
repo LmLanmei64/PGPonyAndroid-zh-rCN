@@ -107,9 +107,26 @@ data class SubkeyDisplayInfo(
     val isCardBacked: Boolean
 )
 
+/**
+ * RC3 §N (#34): one row of the Key Detail fallback list — another
+ * private key of the user's, with whether it is enabled as a decryption
+ * fallback for THIS key. Enabled rows come first, in the user's saved
+ * trial order; disabled rows follow.
+ */
+data class FallbackKeyChoice(
+    val key: PGPKeyEntity,
+    val enabled: Boolean
+)
+
 data class KeyDetailUiState(
     /** The loaded key. Null while loading or if not found. */
     val key: PGPKeyEntity? = null,
+    // RC3 §N (#34): decryption fallbacks + backwards-compatible signing
+    // defaults, both key-pair-only surfaces. signerChoices is the picker
+    // pool (software key pairs, this key included).
+    val fallbackKeys: List<FallbackKeyChoice> = emptyList(),
+    val signingDefaults: com.pgpony.android.data.SigningDefaultsEntity? = null,
+    val signerChoices: List<PGPKeyEntity> = emptyList(),
     /** True while the initial load() coroutine is in flight. */
     val isLoading: Boolean = true,
     /** Set if the fingerprint passed in didn't resolve to anything. The
@@ -310,8 +327,97 @@ class KeyDetailViewModel(
                 // bytes alongside the entity load.
                 userIds = loaded?.let { deriveUserIds(it) } ?: emptyList(),
                 // 4.2.0 RC3 (§11.2) — same treatment for subkeys.
-                subkeys = loaded?.let { deriveSubkeys(it) } ?: emptyList()
+                subkeys = loaded?.let { deriveSubkeys(it) } ?: emptyList(),
+                // RC3 §N (#34)
+                fallbackKeys = loaded?.let { deriveFallbacks(it) } ?: emptyList(),
+                signingDefaults = loaded?.takeIf { it.isKeyPair }
+                    ?.let { repo.signingDefaultsFor(it.fingerprint) },
+                signerChoices = loaded?.takeIf { it.isKeyPair }
+                    ?.let { signerChoicePool() } ?: emptyList()
             )
+        }
+    }
+
+    // ── RC3 §N (#34): fallbacks + signing defaults ─────────────────────
+
+    /** Software key pairs eligible as fallbacks / signing defaults. */
+    private suspend fun signerChoicePool(): List<PGPKeyEntity> =
+        repo.getAllKeys().filter { it.isKeyPair && !it.isCardBacked && !it.isRevoked }
+
+    /**
+     * Enabled fallbacks first in saved order, then the remaining
+     * eligible keys (everything except this key itself) disabled.
+     */
+    private suspend fun deriveFallbacks(entity: PGPKeyEntity): List<FallbackKeyChoice> {
+        if (!entity.isKeyPair) return emptyList()
+        val pool = signerChoicePool().filter { it.fingerprint != entity.fingerprint }
+        val byFp = pool.associateBy { it.fingerprint }
+        val enabledOrder = repo.fallbacksFor(entity.fingerprint)
+        val rows = mutableListOf<FallbackKeyChoice>()
+        enabledOrder.forEach { fp -> byFp[fp]?.let { rows.add(FallbackKeyChoice(it, enabled = true)) } }
+        pool.forEach { k ->
+            if (rows.none { it.key.fingerprint == k.fingerprint }) {
+                rows.add(FallbackKeyChoice(k, enabled = false))
+            }
+        }
+        return rows
+    }
+
+    private fun persistAndShowFallbacks(primary: String, rows: List<FallbackKeyChoice>) {
+        viewModelScope.launch {
+            repo.setFallbacks(primary, rows.filter { it.enabled }.map { it.key.fingerprint })
+            _state.value = _state.value.copy(fallbackKeys = rows)
+        }
+    }
+
+    fun toggleFallback(fingerprint: String) {
+        val key = _state.value.key ?: return
+        val rows = _state.value.fallbackKeys.toMutableList()
+        val idx = rows.indexOfFirst { it.key.fingerprint == fingerprint }
+        if (idx < 0) return
+        val row = rows.removeAt(idx)
+        if (row.enabled) {
+            // Turning off: drop to the head of the disabled block.
+            val insertAt = rows.indexOfFirst { !it.enabled }.let { if (it >= 0) it else rows.size }
+            rows.add(insertAt, row.copy(enabled = false))
+        } else {
+            // Turning on: append to the end of the enabled block.
+            val insertAt = rows.indexOfFirst { !it.enabled }.let { if (it >= 0) it else rows.size }
+            rows.add(insertAt, row.copy(enabled = true))
+        }
+        persistAndShowFallbacks(key.fingerprint, rows)
+    }
+
+    /** Move an ENABLED fallback one slot up (-1) or down (+1) within the
+     *  enabled block. Same captured-indices care as
+     *  KeyringViewModel.moveManual. */
+    fun moveFallback(fingerprint: String, delta: Int) {
+        val key = _state.value.key ?: return
+        val rows = _state.value.fallbackKeys.toMutableList()
+        val from = rows.indexOfFirst { it.key.fingerprint == fingerprint }
+        if (from < 0 || !rows[from].enabled) return
+        val to = from + delta
+        if (to < 0 || to >= rows.size || !rows[to].enabled) return
+        val row = rows.removeAt(from)
+        rows.add(to, row)
+        persistAndShowFallbacks(key.fingerprint, rows)
+    }
+
+    /** slot: 0 = PQC recipients, 1 = classical recipients, 2 = sign-only.
+     *  null fingerprint = back to "this key" (clears the column). */
+    fun setSigningDefault(slot: Int, fingerprint: String?) {
+        val key = _state.value.key ?: return
+        viewModelScope.launch {
+            val current = repo.signingDefaultsFor(key.fingerprint)
+                ?: com.pgpony.android.data.SigningDefaultsEntity(key.fingerprint)
+            val cleaned = fingerprint?.takeIf { it != key.fingerprint }
+            val updated = when (slot) {
+                0 -> current.copy(pqcSignerFingerprint = cleaned)
+                1 -> current.copy(classicalSignerFingerprint = cleaned)
+                else -> current.copy(signOnlySignerFingerprint = cleaned)
+            }
+            repo.setSigningDefaults(updated)
+            _state.value = _state.value.copy(signingDefaults = updated)
         }
     }
 

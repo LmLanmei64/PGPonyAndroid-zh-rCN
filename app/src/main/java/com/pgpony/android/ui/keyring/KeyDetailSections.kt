@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
@@ -49,6 +50,8 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Password
@@ -60,12 +63,21 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -1050,4 +1062,148 @@ fun RevokedBanner(key: PGPKeyEntity) {
 private fun formatDate(epochMillis: Long): String {
     val fmt = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
     return fmt.format(Date(epochMillis))
+}
+
+// ── RC3 §N (#34): decryption fallbacks ─────────────────────────────────
+//
+// Reorderable, off-by-default toggle list of the user's OTHER private
+// keys. Enabled rows show up/down arrows for trial order (arrow-based
+// reorder rather than drag: same outcome as KeyringViewModel.moveManual
+// with far less gesture plumbing inside a LazyColumn item). All state
+// changes go through the ViewModel, which persists to the fallback_keys
+// table on every change.
+@Composable
+fun FallbackKeysSection(
+    rows: List<FallbackKeyChoice>,
+    onToggle: (String) -> Unit,
+    onMove: (String, Int) -> Unit
+) {
+    SectionGroup(title = stringResource(R.string.key_detail_section_fallbacks)) {
+        Text(
+            text = stringResource(R.string.key_detail_fallbacks_explainer),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        if (rows.isEmpty()) {
+            Text(
+                text = stringResource(R.string.key_detail_fallbacks_none),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        val enabledCount = rows.count { it.enabled }
+        rows.forEachIndexed { index, row ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Switch(
+                    checked = row.enabled,
+                    onCheckedChange = { onToggle(row.key.fingerprint) }
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        row.key.userName.ifBlank { row.key.userEmail.ifBlank { row.key.shortFingerprint } },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        row.key.shortFingerprint,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (row.enabled) {
+                    IconButton(
+                        onClick = { onMove(row.key.fingerprint, -1) },
+                        enabled = index > 0
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowUp,
+                            contentDescription = stringResource(R.string.key_detail_fallbacks_move_up)
+                        )
+                    }
+                    IconButton(
+                        onClick = { onMove(row.key.fingerprint, 1) },
+                        enabled = index < enabledCount - 1
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.key_detail_fallbacks_move_down)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── RC3 §N (#34): backwards-compatible signing defaults ────────────────
+//
+// Three per-key pickers, each defaulting to the open key ("Sign as this
+// key"). The row consulted at sign time belongs to the key that would
+// otherwise sign — see EncryptDecryptViewModel.resolveEffectiveSigner.
+@Composable
+fun SigningDefaultsSection(
+    openKey: PGPKeyEntity,
+    defaults: com.pgpony.android.data.SigningDefaultsEntity?,
+    choices: List<PGPKeyEntity>,
+    onPick: (slot: Int, fingerprint: String?) -> Unit
+) {
+    SectionGroup(title = stringResource(R.string.key_detail_section_signing_defaults)) {
+        Text(
+            text = stringResource(R.string.key_detail_signing_defaults_explainer),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        val slots = listOf(
+            Triple(0, stringResource(R.string.key_detail_signing_default_pqc), defaults?.pqcSignerFingerprint),
+            Triple(1, stringResource(R.string.key_detail_signing_default_classical), defaults?.classicalSignerFingerprint),
+            Triple(2, stringResource(R.string.key_detail_signing_default_sign_only), defaults?.signOnlySignerFingerprint)
+        )
+        slots.forEach { (slot, label, currentFp) ->
+            var menuOpen by remember { mutableStateOf(false) }
+            val current = currentFp?.let { fp -> choices.firstOrNull { it.fingerprint == fp } }
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Text(label, style = MaterialTheme.typography.labelLarge)
+                Box {
+                    OutlinedButton(
+                        onClick = { menuOpen = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = current?.let {
+                                it.userName.ifBlank { it.userEmail.ifBlank { it.shortFingerprint } }
+                            } ?: stringResource(R.string.key_detail_signing_default_self),
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+                    }
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.key_detail_signing_default_self)) },
+                            onClick = { onPick(slot, null); menuOpen = false }
+                        )
+                        choices.filter { it.fingerprint != openKey.fingerprint }.forEach { k ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(k.userName.ifBlank { k.userEmail.ifBlank { k.shortFingerprint } })
+                                },
+                                onClick = { onPick(slot, k.fingerprint); menuOpen = false }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -791,6 +791,18 @@
     <string name="key_delete_confirm_button">Delete key pair</string>
     <string name="key_delete_biometric_title">Confirm key deletion</string>
     <string name="key_delete_biometric_subtitle">Authenticate to delete this key pair</string>
+    <!-- RC3 §N (#34): decryption fallbacks + signing defaults. -->
+    <string name="key_detail_section_fallbacks">Decryption Fallbacks</string>
+    <string name="key_detail_fallbacks_explainer">If a message fails to decrypt with this key, try these keys next, in order. Off for all keys unless you enable them.</string>
+    <string name="key_detail_fallbacks_none">No other private keys to fall back to.</string>
+    <string name="key_detail_fallbacks_move_up">Move up</string>
+    <string name="key_detail_fallbacks_move_down">Move down</string>
+    <string name="key_detail_section_signing_defaults">Signing Defaults</string>
+    <string name="key_detail_signing_defaults_explainer">When this key would sign, use these keys instead in each situation. "This key" keeps the normal behavior.</string>
+    <string name="key_detail_signing_default_pqc">When encrypting to post-quantum recipients</string>
+    <string name="key_detail_signing_default_classical">When encrypting to classical recipients</string>
+    <string name="key_detail_signing_default_sign_only">When signing without encrypting</string>
+    <string name="key_detail_signing_default_self">This key</string>
 
     <!-- ── Export Private Key dialog ───────────────────────────────── -->
     <string name="key_detail_export_private_dialog_title">Export Private Key?</string>

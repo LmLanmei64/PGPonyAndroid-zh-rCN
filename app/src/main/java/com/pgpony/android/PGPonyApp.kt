@@ -12,6 +12,7 @@ import com.pgpony.android.data.MIGRATION_3_4
 import com.pgpony.android.data.MIGRATION_4_5
 import com.pgpony.android.data.MIGRATION_5_6
 import com.pgpony.android.data.MIGRATION_6_7
+import com.pgpony.android.data.MIGRATION_7_8
 import com.pgpony.android.autocrypt.AutocryptPeerStore
 import com.pgpony.android.data.PGPDatabase
 import com.pgpony.android.data.SecureKeyStore
@@ -66,7 +67,7 @@ class PGPonyApp : Application() {
             PGPDatabase::class.java,
             "pgpony.db"
         )
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
             .build()
 
         // Initialize secure key storage
@@ -75,7 +76,10 @@ class PGPonyApp : Application() {
         // Initialize repository (bridges crypto + storage + database)
         keyRepository = KeyRepository(
             dao = database.keyDao(),
-            store = secureKeyStore
+            store = secureKeyStore,
+            // RC3 §N (#34)
+            fallbackDao = database.fallbackKeyDao(),
+            signingDefaultsDao = database.signingDefaultsDao()
         )
 
         // 4.0.0 Phase 4 — Autocrypt peer-state store (OpenPGP API).

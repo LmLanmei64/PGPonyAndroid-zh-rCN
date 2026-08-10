@@ -109,6 +109,11 @@ data class ImportOutcome(
 class KeyRepository(
     private val dao: PGPKeyDao,
     private val store: SecureKeyStore,
+    // RC3 §N (#34): per-key fallback + signing-default tables. Nullable
+    // with null defaults so existing test constructions compile
+    // unchanged; production wiring in PGPonyApp passes both.
+    private val fallbackDao: com.pgpony.android.data.FallbackKeyDao? = null,
+    private val signingDefaultsDao: com.pgpony.android.data.SigningDefaultsDao? = null,
     private val crypto: PGPCryptoService = PGPCryptoService.shared,
     // Phase A6: revocation primitives. Default to the shared instance
     // since RevocationService is stateless; the parameter is here so
@@ -705,6 +710,12 @@ class KeyRepository(
     suspend fun deleteKey(entity: PGPKeyEntity) {
         store.deleteKeys(entity.fingerprint)
         dao.delete(entity)
+        // RC3 §N (#34): drop any fallback rows referencing this key on
+        // either side, and its signing-defaults row. A dangling signer
+        // fingerprint would be harmless (resolution falls back to self
+        // when the referenced key is gone) but clean is clean.
+        fallbackDao?.deleteAllReferencing(entity.fingerprint)
+        signingDefaultsDao?.deleteFor(entity.fingerprint)
     }
 
     suspend fun deleteByFingerprint(fingerprint: String) {
@@ -1194,6 +1205,30 @@ class KeyRepository(
      */
     suspend fun runDedupeSweepIfNeeded(prefs: SharedPreferences) {
         dedup.runSweepIfNeeded(prefs)
+    }
+
+    // ── RC3 §N (#34): decryption fallbacks + signing defaults ──────────
+
+    /** Enabled fallback fingerprints for [primary], in user order. */
+    suspend fun fallbacksFor(primary: String): List<String> =
+        fallbackDao?.fallbacksFor(primary)?.map { it.fallbackFingerprint } ?: emptyList()
+
+    /** Replace [primary]'s fallback list with [fingerprints] in order. */
+    suspend fun setFallbacks(primary: String, fingerprints: List<String>) {
+        val d = fallbackDao ?: return
+        d.clearFor(primary)
+        if (fingerprints.isNotEmpty()) {
+            d.insertAll(fingerprints.mapIndexed { index, fp ->
+                com.pgpony.android.data.FallbackKeyEntity(primary, fp, index)
+            })
+        }
+    }
+
+    suspend fun signingDefaultsFor(fp: String): com.pgpony.android.data.SigningDefaultsEntity? =
+        signingDefaultsDao?.forKey(fp)
+
+    suspend fun setSigningDefaults(row: com.pgpony.android.data.SigningDefaultsEntity) {
+        signingDefaultsDao?.upsert(row)
     }
 
     /**

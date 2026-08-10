@@ -320,9 +320,14 @@ interface PGPKeyDao {
 // table (ApiClientEntity in data/ApiClientEntity.kt) backing the OpenPGP
 // API provider's per-package, signature-pinned client allow-list.
 // MIGRATION_5_6 declared in data/RoomMigrations.kt with the others.
+// RC3 §N (#34) — schema v8 adds fallback_keys + signing_defaults
+// (FallbackKeyEntity.kt), MIGRATION_7_8 in data/RoomMigrations.kt.
 @Database(
-    entities = [PGPKeyEntity::class, ApiClientEntity::class, AutocryptPeerEntity::class],
-    version = 7,
+    entities = [
+        PGPKeyEntity::class, ApiClientEntity::class, AutocryptPeerEntity::class,
+        FallbackKeyEntity::class, SigningDefaultsEntity::class
+    ],
+    version = 8,
     exportSchema = false
 )
 @TypeConverters(
@@ -334,4 +339,6 @@ abstract class PGPDatabase : RoomDatabase() {
     abstract fun keyDao(): PGPKeyDao
     abstract fun apiClientDao(): ApiClientDao
     abstract fun autocryptPeerDao(): AutocryptPeerDao
+    abstract fun fallbackKeyDao(): FallbackKeyDao
+    abstract fun signingDefaultsDao(): SigningDefaultsDao
 }

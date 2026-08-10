@@ -962,6 +962,42 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         )
     }
 
+    /**
+     * RC3 §N (#34): backwards-compatible signing defaults. Consults the
+     * signing_defaults row of the key that would OTHERWISE sign ([base],
+     * the user's resolved signingKey) and substitutes per context:
+     * sign-only → the sign-without-encrypting picker; encrypting where
+     * EVERY recipient is PQC/composite → the PQC picker; ANY classical
+     * recipient → the classical picker (a classical recipient is the one
+     * who needs the backwards-compatible signature, so mixed recipient
+     * sets take the classical choice). Null / missing / non-software
+     * picks resolve to [base] — the issue's "defaults to the key whose
+     * Key Detail view is open", and no behavior change until configured.
+     * Card-backed substitutes are refused because the UI routed
+     * card-vs-software BEFORE this resolver runs.
+     */
+    private suspend fun resolveEffectiveSigner(
+        base: PGPKeyEntity,
+        recipients: List<PGPKeyEntity>,
+        signOnly: Boolean
+    ): PGPKeyEntity {
+        val row = withContext(Dispatchers.IO) { repo.signingDefaultsFor(base.fingerprint) }
+            ?: return base
+        val pickedFp = when {
+            signOnly -> row.signOnlySignerFingerprint
+            recipients.isNotEmpty() && recipients.all { it.algorithm.isComposite } ->
+                row.pqcSignerFingerprint
+            else -> row.classicalSignerFingerprint
+        } ?: return base
+        if (pickedFp == base.fingerprint) return base
+        val picked = withContext(Dispatchers.IO) { repo.getByFingerprint(pickedFp) }
+        return if (picked != null && picked.isKeyPair && !picked.isCardBacked && !picked.isRevoked) {
+            picked
+        } else {
+            base
+        }
+    }
+
     fun signOnly(passphrase: String? = null) {
         val s = _encryptState.value
         if (s.inputText.isBlank()) {
@@ -991,7 +1027,11 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 showSignPassphraseDialog = false,
             )
             try {
-                val secRing = repo.loadSecretKeyRing(signingKey.fingerprint)
+                // RC3 §N (#34): sign-without-encrypting default.
+                val effectiveSigner = resolveEffectiveSigner(
+                    base = signingKey, recipients = emptyList(), signOnly = true
+                )
+                val secRing = repo.loadSecretKeyRing(effectiveSigner.fingerprint)
                     ?: throw SigningError.NoSigningKey()
 
                 val signed = if (s.detachedSignature) {
@@ -1099,7 +1139,13 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 }
                 val signingRing = withContext(Dispatchers.IO) {
                     if (s.signMessage && s.signingKey != null) {
-                        repo.loadSecretKeyRing(s.signingKey.fingerprint)
+                        // RC3 §N (#34): PQC/classical-recipient default.
+                        val effective = resolveEffectiveSigner(
+                            base = s.signingKey,
+                            recipients = s.selectedRecipients,
+                            signOnly = false
+                        )
+                        repo.loadSecretKeyRing(effective.fingerprint)
                     } else null
                 }
 
@@ -1386,7 +1432,13 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 }
                 val signingRing = withContext(Dispatchers.IO) {
                     if (s.signMessage && s.signingKey != null) {
-                        repo.loadSecretKeyRing(s.signingKey.fingerprint)
+                        // RC3 §N (#34): PQC/classical-recipient default.
+                        val effective = resolveEffectiveSigner(
+                            base = s.signingKey,
+                            recipients = s.selectedRecipients,
+                            signOnly = false
+                        )
+                        repo.loadSecretKeyRing(effective.fingerprint)
                     } else null
                 }
 
@@ -1830,7 +1882,13 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     if (
                         s.signMessage && s.signingKey != null && s.signingKey.isCardBacked != true
                     ) {
-                        repo.loadSecretKeyRing(s.signingKey.fingerprint)
+                        // RC3 §N (#34): PQC/classical-recipient default.
+                        val effective = resolveEffectiveSigner(
+                            base = s.signingKey,
+                            recipients = s.selectedRecipients,
+                            signOnly = false
+                        )
+                        repo.loadSecretKeyRing(effective.fingerprint)
                     } else null
                 }
 
@@ -2528,19 +2586,69 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         }
     }
 
+    /**
+     * RC3 §N (#34): decryption trial order for the current primary key —
+     * the primary itself first, then its ENABLED fallbacks in the user's
+     * chosen order (fallback_keys table; absent = off, the issue's
+     * default), then every remaining available key. The tail preserves
+     * the pre-#34 "all keys go along" behavior exactly, so a key with no
+     * fallbacks configured decrypts everything it could before.
+     */
+    private suspend fun fallbackOrderedKeys(s: DecryptUiState): List<PGPKeyEntity> {
+        val byFingerprint = s.availableKeys.associateBy { it.fingerprint }
+        val ordered = mutableListOf<PGPKeyEntity>()
+        fun addUnique(k: PGPKeyEntity) {
+            if (ordered.none { it.fingerprint == k.fingerprint }) ordered.add(k)
+        }
+        val primary = s.selectedKeyFingerprint
+        if (primary != null) {
+            byFingerprint[primary]?.let { addUnique(it) }
+            repo.fallbacksFor(primary).forEach { fp ->
+                byFingerprint[fp]?.let { addUnique(it) }
+            }
+        }
+        s.availableKeys.forEach { addUnique(it) }
+        return ordered
+    }
+
+    /**
+     * RC3 §N (#34): the cascade rule decided 8 August — ANY exception on
+     * a ring moves to the next enabled fallback, no special-casing
+     * wrong-passphrase or corrupt input differently from a wrong-key
+     * failure. Each ring is tried ALONE in list order; the FINAL attempt
+     * is the full list (key-ID lookup + the existing wildcard trial,
+     * i.e. exactly the pre-#34 call), and only that attempt's exception
+     * propagates — so the error UX (passphrase dialog, hidden-recipient
+     * card offer, error strings) is byte-for-byte what it was. With a
+     * single ring the per-ring pass is skipped entirely.
+     */
+    private inline fun <T> decryptWithFallbackCascade(
+        rings: List<org.bouncycastle.openpgp.PGPSecretKeyRing>,
+        attempt: (List<org.bouncycastle.openpgp.PGPSecretKeyRing>) -> T
+    ): T {
+        if (rings.size > 1) {
+            for (ring in rings) {
+                try {
+                    return attempt(listOf(ring))
+                } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    // Decided rule: any exception → next fallback.
+                }
+            }
+        }
+        return attempt(rings)
+    }
+
     private fun decryptAndVerifyPath(s: DecryptUiState) {
         viewModelScope.launch {
             _decryptState.value = _decryptState.value.copy(isProcessing = true, errorMessage = null)
             try {
                 // Put selected key first, then include the rest as fallbacks
-                val selectedFirst = s.selectedKeyFingerprint
-                val orderedKeys = if (selectedFirst != null) {
-                    val selected = s.availableKeys.filter { it.fingerprint == selectedFirst }
-                    val rest = s.availableKeys.filter { it.fingerprint != selectedFirst }
-                    selected + rest
-                } else {
-                    s.availableKeys
-                }
+                // RC3 §N (#34): primary first, then its enabled fallbacks in
+                // the user's order, then everything else (pre-#34 behavior as
+                // the safety net) — see fallbackOrderedKeys.
+                val orderedKeys = fallbackOrderedKeys(s)
                 // 4.0.4 — off the main thread. See the note in
                 // verifyClearSignedPath: every ring load is a blocking
                 // EncryptedSharedPreferences read plus a BC parse, and the
@@ -2556,15 +2664,18 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 }
 
                 val result = withContext(Dispatchers.Default) {
-                    crypto.decryptArmored(
-                        // 3.1.0 Phase 4 (J2): unwrap an RFC 3156 envelope
-                        // (pasted .eml) before dearmor; plain input passes
-                        // through unchanged.
-                        armoredMessage = effectiveDecryptInput(s.inputText),
-                        secretKeyRings = secretRings,
-                        passphrase = s.passphrase.ifBlank { null },
-                        verificationKeys = verifyRings
-                    )
+                    // RC3 §N (#34): per-ring cascade, any exception → next.
+                    decryptWithFallbackCascade(secretRings) { rings ->
+                        crypto.decryptArmored(
+                            // 3.1.0 Phase 4 (J2): unwrap an RFC 3156 envelope
+                            // (pasted .eml) before dearmor; plain input passes
+                            // through unchanged.
+                            armoredMessage = effectiveDecryptInput(s.inputText),
+                            secretKeyRings = rings,
+                            passphrase = s.passphrase.ifBlank { null },
+                            verificationKeys = verifyRings
+                        )
+                    }
                 }
 
                 val verResult = buildVerificationResultForEncrypted(result)
@@ -3262,14 +3373,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             )
             var scratch: java.io.File? = null
             try {
-                val selectedFirst = s.selectedKeyFingerprint
-                val orderedKeys = if (selectedFirst != null) {
-                    val selected = s.availableKeys.filter { it.fingerprint == selectedFirst }
-                    val rest = s.availableKeys.filter { it.fingerprint != selectedFirst }
-                    selected + rest
-                } else {
-                    s.availableKeys
-                }
+                // RC3 §N (#34): primary first, then its enabled fallbacks in
+                // the user's order, then everything else (pre-#34 behavior as
+                // the safety net) — see fallbackOrderedKeys.
+                val orderedKeys = fallbackOrderedKeys(s)
                 val secretRings = withContext(Dispatchers.IO) {
                     orderedKeys.mapNotNull { repo.loadSecretKeyRing(it.fingerprint) }
                 }
@@ -3478,14 +3585,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         viewModelScope.launch {
             _decryptState.value = _decryptState.value.copy(isProcessing = true, errorMessage = null)
             try {
-                val selectedFirst = s.selectedKeyFingerprint
-                val orderedKeys = if (selectedFirst != null) {
-                    val selected = s.availableKeys.filter { it.fingerprint == selectedFirst }
-                    val rest = s.availableKeys.filter { it.fingerprint != selectedFirst }
-                    selected + rest
-                } else {
-                    s.availableKeys
-                }
+                // RC3 §N (#34): primary first, then its enabled fallbacks in
+                // the user's order, then everything else (pre-#34 behavior as
+                // the safety net) — see fallbackOrderedKeys.
+                val orderedKeys = fallbackOrderedKeys(s)
                 // 4.0.4 — off the main thread. This is the path in the
                 // Android 12 / MIUI freeze report: file decrypt loaded every
                 // secret ring, then every public ring in the keyring, then
@@ -3501,15 +3604,18 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 }
 
                 val result = withContext(Dispatchers.Default) {
-                    crypto.decrypt(
-                        // 3.1.0 Phase 4 (J2): an encrypted .eml opened as a
-                        // file carries the RFC 3156 envelope — unwrap to the
-                        // armored payload; binary/plain files pass through.
-                        encryptedData = effectiveDecryptFileBytes(bytes),
-                        secretKeyRings = secretRings,
-                        passphrase = s.passphrase.ifBlank { null },
-                        verificationKeys = verifyRings
-                    )
+                    // RC3 §N (#34): per-ring cascade, any exception → next.
+                    decryptWithFallbackCascade(secretRings) { rings ->
+                        crypto.decrypt(
+                            // 3.1.0 Phase 4 (J2): an encrypted .eml opened as a
+                            // file carries the RFC 3156 envelope — unwrap to the
+                            // armored payload; binary/plain files pass through.
+                            encryptedData = effectiveDecryptFileBytes(bytes),
+                            secretKeyRings = rings,
+                            passphrase = s.passphrase.ifBlank { null },
+                            verificationKeys = verifyRings
+                        )
+                    }
                 }
 
                 val verResult = buildVerificationResultForEncrypted(result)

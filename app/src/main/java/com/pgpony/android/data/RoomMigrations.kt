@@ -126,3 +126,32 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
         )
     }
 }
+
+// RC3 §N (#34) — per-key decryption fallbacks + backwards-compatible
+// signing defaults. Both tables mirror their entities exactly
+// (exportSchema=false → runtime schema verification, same as 6_7).
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `fallback_keys` (
+                `primaryFingerprint` TEXT NOT NULL,
+                `fallbackFingerprint` TEXT NOT NULL,
+                `position` INTEGER NOT NULL,
+                PRIMARY KEY(`primaryFingerprint`, `fallbackFingerprint`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `signing_defaults` (
+                `fingerprint` TEXT NOT NULL,
+                `pqcSignerFingerprint` TEXT,
+                `classicalSignerFingerprint` TEXT,
+                `signOnlySignerFingerprint` TEXT,
+                PRIMARY KEY(`fingerprint`)
+            )
+            """.trimIndent()
+        )
+    }
+}
