@@ -906,6 +906,14 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
 
     // ── Delete ─────────────────────────────────────────────────────────
 
+    /**
+     * RC3 §L (#21): armored private key for the delete sheet's backup
+     * offer. Null for public-only keys or when export fails (missing
+     * private material) — the caller snackbars the failure.
+     */
+    fun armoredPrivateFor(key: PGPKeyEntity): String? =
+        if (key.isKeyPair) repo.exportArmoredPrivateKey(key.fingerprint) else null
+
     fun confirmDelete(key: PGPKeyEntity) {
         _state.value = _state.value.copy(keyToDelete = key)
     }

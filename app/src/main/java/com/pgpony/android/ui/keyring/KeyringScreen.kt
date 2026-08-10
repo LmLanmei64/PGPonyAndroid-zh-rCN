@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.ReorderableLazyListState
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -370,23 +371,65 @@ fun KeyringScreen(
     }
 
     // ── Delete Confirm ─────────────────────────────────────────────────
+    //
+    // RC3 §L (#21): key pairs get the same DeleteKeySheet as Key Detail
+    // (backup offer + acknowledgement + optional biometric gate);
+    // public-only keys keep the lightweight dialog.
     state.keyToDelete?.let { key ->
-        AlertDialog(
-            onDismissRequest = { viewModel.cancelDelete() },
-            title = { Text(stringResource(R.string.keyring_delete_dialog_title)) },
-            text = {
-                Text(stringResource(R.string.keyring_delete_dialog_body_format, key.userName.ifBlank { key.userEmail }, key.shortFingerprint))
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { viewModel.deleteKey() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) { Text(stringResource(R.string.keyring_delete_dialog_confirm)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.cancelDelete() }) { Text(stringResource(R.string.common_button_cancel)) }
+        if (key.isKeyPair) {
+            val deleteOwnerLabel = key.userName.ifBlank {
+                key.userEmail.ifBlank { key.shortFingerprint }
             }
-        )
+            val deleteScope = rememberCoroutineScope()
+            val deleteContext = androidx.compose.ui.platform.LocalContext.current
+            DeleteKeySheet(
+                keyOwnerLabel = deleteOwnerLabel,
+                shortFingerprint = key.shortFingerprint,
+                onSaveBackup = {
+                    val armored = viewModel.armoredPrivateFor(key)
+                    if (armored == null) {
+                        deleteScope.launch {
+                            snackbarHostState.showSnackbar(
+                                deleteContext.getString(R.string.key_detail_status_priv_file_failed)
+                            )
+                        }
+                    } else {
+                        saveArmoredToFile(
+                            context = deleteContext,
+                            scope = deleteScope,
+                            snackbarHostState = snackbarHostState,
+                            armored = armored,
+                            suggestedName = KeyShareIntents.buildExportFilename(
+                                ownerLabel = deleteOwnerLabel,
+                                shortFingerprint = key.shortFingerprint,
+                                suffix = "_private"
+                            )
+                        )
+                    }
+                },
+                onDelete = {
+                    deleteWithOptionalBiometricGate(deleteContext) { viewModel.deleteKey() }
+                },
+                onDismiss = { viewModel.cancelDelete() }
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { viewModel.cancelDelete() },
+                title = { Text(stringResource(R.string.keyring_delete_dialog_title)) },
+                text = {
+                    Text(stringResource(R.string.keyring_delete_dialog_body_format, key.userName.ifBlank { key.userEmail }, key.shortFingerprint))
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { viewModel.deleteKey() },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) { Text(stringResource(R.string.keyring_delete_dialog_confirm)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.cancelDelete() }) { Text(stringResource(R.string.common_button_cancel)) }
+                }
+            )
+        }
     }
 
     // ── First-visit tooltip (Phase 4) ───────────────────────────────────

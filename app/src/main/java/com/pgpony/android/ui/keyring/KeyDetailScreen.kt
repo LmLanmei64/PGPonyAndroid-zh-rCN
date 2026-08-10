@@ -399,37 +399,74 @@ fun KeyDetailScreen(
     }
 
     // ── Phase A4b: Delete confirmation ────────────────────────────────
+    //
+    // RC3 §L (#21): a KEY PAIR now gets DeleteKeySheet — backup offer,
+    // required acknowledgement, and (only when the app's biometric lock
+    // is on) a biometric gate on the final Delete. Public-only keys are
+    // re-importable and keep the lightweight dialog.
     if (state.showDeleteConfirm) {
         val key = state.key
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissDeleteConfirm() },
-            title = { Text(stringResource(R.string.key_detail_delete_dialog_title)) },
-            text = {
-                Text(
-                    stringResource(R.string.key_detail_delete_dialog_intro) +
-                            if (key?.isKeyPair == true) {
-                                stringResource(R.string.key_detail_delete_dialog_body_key_pair)
-                            } else {
-                                stringResource(R.string.key_detail_delete_dialog_body_public_only)
-                            }
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { viewModel.deleteKey() },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text(stringResource(R.string.key_detail_delete_dialog_confirm))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.dismissDeleteConfirm() }) {
-                    Text(stringResource(R.string.common_button_cancel))
-                }
+        if (key?.isKeyPair == true) {
+            val deleteOwnerLabel = key.userName.ifBlank {
+                key.userEmail.ifBlank { key.shortFingerprint }
             }
-        )
+            DeleteKeySheet(
+                keyOwnerLabel = deleteOwnerLabel,
+                shortFingerprint = key.shortFingerprint,
+                onSaveBackup = {
+                    val armored = viewModel.armoredPrivateKeyForShare()
+                    if (armored == null) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                context.getString(R.string.key_detail_status_priv_file_failed)
+                            )
+                        }
+                    } else {
+                        saveArmoredToFile(
+                            context = context,
+                            scope = scope,
+                            snackbarHostState = snackbarHostState,
+                            armored = armored,
+                            suggestedName = KeyShareIntents.buildExportFilename(
+                                ownerLabel = deleteOwnerLabel,
+                                shortFingerprint = key.shortFingerprint,
+                                suffix = "_private"
+                            )
+                        )
+                    }
+                },
+                onDelete = {
+                    deleteWithOptionalBiometricGate(context) { viewModel.deleteKey() }
+                },
+                onDismiss = { viewModel.dismissDeleteConfirm() }
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissDeleteConfirm() },
+                title = { Text(stringResource(R.string.key_detail_delete_dialog_title)) },
+                text = {
+                    Text(
+                        stringResource(R.string.key_detail_delete_dialog_intro) +
+                                stringResource(R.string.key_detail_delete_dialog_body_public_only)
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { viewModel.deleteKey() },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text(stringResource(R.string.key_detail_delete_dialog_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissDeleteConfirm() }) {
+                        Text(stringResource(R.string.common_button_cancel))
+                    }
+                }
+            )
+        }
     }
 
     // ── Phase A6: Revoke Key sheet ────────────────────────────────────
@@ -863,7 +900,37 @@ private fun ensureContactsPermission(
  * expect (same reasoning as FileEncryptionResultScreen 3.1.0 Ph2 Fix1).
  * A cancelled picker is silent — the user chose that.
  */
-private fun saveArmoredToFile(
+/**
+ * RC3 §L (#21): run [onConfirmed] behind the biometric prompt ONLY when
+ * the app's biometric lock is enabled (the L plan's rule — deletion gets
+ * no extra gate for users who never asked for biometrics). Falls through
+ * to [onConfirmed] when the lock is off, biometrics are unavailable, or
+ * the activity cast fails — the acknowledgement checkbox is the primary
+ * safeguard; this is a second factor for users who opted into one.
+ */
+internal fun deleteWithOptionalBiometricGate(
+    context: android.content.Context,
+    onConfirmed: () -> Unit
+) {
+    val prefs = context.getSharedPreferences("pgpony_prefs", android.content.Context.MODE_PRIVATE)
+    val activity = context as? androidx.fragment.app.FragmentActivity
+    if (prefs.getBoolean("biometric_lock", false) &&
+        activity != null &&
+        BiometricGate.canAuthenticate(context) == BiometricAvailability.Available
+    ) {
+        BiometricGate.authenticate(
+            activity = activity,
+            title = context.getString(R.string.key_delete_biometric_title),
+            subtitle = context.getString(R.string.key_delete_biometric_subtitle),
+            onSuccess = onConfirmed,
+            onError = { _, _ -> /* cancelled — the sheet stays open */ }
+        )
+    } else {
+        onConfirmed()
+    }
+}
+
+internal fun saveArmoredToFile(
     context: android.content.Context,
     scope: kotlinx.coroutines.CoroutineScope,
     snackbarHostState: SnackbarHostState,

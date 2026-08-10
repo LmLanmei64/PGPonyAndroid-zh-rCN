@@ -783,6 +783,14 @@
     <string name="key_detail_delete_dialog_body_key_pair">Both your public and private key will be permanently deleted.</string>
     <string name="key_detail_delete_dialog_body_public_only">The public key will be removed from your keyring.</string>
     <string name="key_detail_delete_dialog_confirm">Delete</string>
+    <!-- RC3 §L (#21): key-pair delete safeguards sheet. -->
+    <string name="key_delete_sheet_title">Delete key pair?</string>
+    <string name="key_delete_sheet_body">Both your public and private key will be permanently deleted. Anything encrypted to this key can never be decrypted again, by you or anyone else.</string>
+    <string name="key_delete_backup_button">Save a backup first (.asc)</string>
+    <string name="key_delete_ack_label">I understand this cannot be undone</string>
+    <string name="key_delete_confirm_button">Delete key pair</string>
+    <string name="key_delete_biometric_title">Confirm key deletion</string>
+    <string name="key_delete_biometric_subtitle">Authenticate to delete this key pair</string>
 
     <!-- ── Export Private Key dialog ───────────────────────────────── -->
     <string name="key_detail_export_private_dialog_title">Export Private Key?</string>
