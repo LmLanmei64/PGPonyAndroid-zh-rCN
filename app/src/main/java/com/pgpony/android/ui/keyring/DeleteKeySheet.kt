@@ -39,12 +39,21 @@ import com.pgpony.android.R
 fun DeleteKeySheet(
     keyOwnerLabel: String,
     shortFingerprint: String,
-    onSaveBackup: () -> Unit,
+    onSaveBackup: (exportPassphrase: String?) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var acknowledged by remember { mutableStateOf(false) }
+    // RC4 O5 (#16): optional passphrase on the backup copy. Confirm field
+    // is non-negotiable here — a typo'd passphrase on the backup of a key
+    // that is about to be DELETED is unrecoverable twice over. Ignored
+    // when the key already carries its own passphrase (the repo exports
+    // such rings as-is; the field subtitle says so).
+    var backupPassphrase by remember { mutableStateOf("") }
+    var backupPassphraseConfirm by remember { mutableStateOf("") }
+    val backupMismatch =
+        backupPassphrase.isNotEmpty() && backupPassphrase != backupPassphraseConfirm
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -97,8 +106,38 @@ fun DeleteKeySheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            OutlinedTextField(
+                value = backupPassphrase,
+                onValueChange = { backupPassphrase = it },
+                label = { Text(stringResource(R.string.export_passphrase_backup_label)) },
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (backupPassphrase.isNotEmpty()) {
+                OutlinedTextField(
+                    value = backupPassphraseConfirm,
+                    onValueChange = { backupPassphraseConfirm = it },
+                    label = { Text(stringResource(R.string.export_passphrase_confirm_label)) },
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    singleLine = true,
+                    isError = backupMismatch,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (backupMismatch) {
+                    Text(
+                        text = stringResource(R.string.export_passphrase_mismatch),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
             OutlinedButton(
-                onClick = onSaveBackup,
+                onClick = {
+                    onSaveBackup(backupPassphrase.ifBlank { null })
+                },
+                enabled = !backupMismatch,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(

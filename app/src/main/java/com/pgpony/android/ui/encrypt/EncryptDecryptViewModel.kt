@@ -2606,6 +2606,11 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             repo.fallbacksFor(primary).forEach { fp ->
                 byFingerprint[fp]?.let { addUnique(it) }
             }
+            // RC4 O3 (#34): strict mode drops the remaining-keys net —
+            // only this key and its enabled fallbacks are tried.
+            if (com.pgpony.android.crypto.FallbackPrefs.isStrict(primary) && ordered.isNotEmpty()) {
+                return ordered
+            }
         }
         s.availableKeys.forEach { addUnique(it) }
         return ordered

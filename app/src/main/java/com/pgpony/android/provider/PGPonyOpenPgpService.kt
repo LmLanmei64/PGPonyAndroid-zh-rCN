@@ -502,7 +502,7 @@ class PGPonyOpenPgpService : Service() {
         var signKeyId = 0L
         var signKeyLabel = ""
         if (withSignature) {
-            when (val resolved = resolveSigningMaterial(data)) {
+            when (val resolved = resolveSigningMaterial(data, rings.values)) {
                 is SignResolve.Fail -> return resolved.response
                 is SignResolve.Card -> {
                     // P2c: the entire sign+encrypt runs during the NFC
@@ -1437,7 +1437,23 @@ class PGPonyOpenPgpService : Service() {
         class Fail(val response: Intent) : SignResolve()
     }
 
-    private fun resolveSigningMaterial(data: Intent): SignResolve {
+    /**
+     * RC4 O4 (#34): [recipientRings] carries the encrypt-side recipient
+     * context so the per-key signing defaults (signing_defaults table)
+     * apply on the provider path exactly as they do in-app: null =
+     * sign-only action (the sign-without-encrypting picker); all
+     * recipients composite = the PQC picker; any classical recipient =
+     * the classical picker. The substitution runs BEFORE ring load and
+     * REPLACES keyId/label, so the passphrase cache, the unlock prompt,
+     * and the retry round-trip all coherently target the key that will
+     * actually sign. Same guardrails as the in-app resolver: the
+     * substitute must be an unrevoked software key pair, else the
+     * client's chosen key stands.
+     */
+    private fun resolveSigningMaterial(
+        data: Intent,
+        recipientRings: Collection<org.bouncycastle.openpgp.PGPPublicKeyRing>? = null
+    ): SignResolve {
         val keyId = data.getLongExtra(OpenPgpApi.EXTRA_SIGN_KEY_ID, 0L)
         if (keyId == 0L) {
             return SignResolve.Fail(
@@ -1448,17 +1464,26 @@ class PGPonyOpenPgpService : Service() {
                 )
             )
         }
-        val entity = runBlocking { findEntityByKeyId(keyId) }
+        val clientEntity = runBlocking { findEntityByKeyId(keyId) }
             ?: return SignResolve.Fail(
                 errorResult(
                     OpenPgpError.GENERIC_ERROR,
                     "Signing key not found in the PGPony keyring"
                 )
             )
+        // RC4 O4 (#34): apply the per-key signing defaults.
+        val entity = resolveProviderSigner(clientEntity, recipientRings)
+        val effectiveKeyId = if (entity === clientEntity) keyId else {
+            try {
+                java.lang.Long.parseUnsignedLong(entity.longKeyId, 16)
+            } catch (e: Exception) {
+                keyId
+            }
+        }
         if (entity.isCardBacked) {
             // P2c: card-backed signing goes through the NFC interaction
             // flow — the caller branches on this variant.
-            return SignResolve.Card(entity, keyId)
+            return SignResolve.Card(entity, effectiveKeyId)
         }
         val ring = repo.loadSecretKeyRing(entity.fingerprint)
             ?: return SignResolve.Fail(
@@ -1471,8 +1496,42 @@ class PGPonyOpenPgpService : Service() {
         // whatever our own prompt cached; otherwise null (correct for
         // PGPony's default passphrase-less keys).
         val passphrase = data.getStringExtra(OpenPgpApi.EXTRA_PASSPHRASE)
-            ?: ProviderPassphraseCache.get(keyId)
-        return SignResolve.Ok(ring, passphrase, keyId, entity.userID)
+            ?: ProviderPassphraseCache.get(effectiveKeyId)
+        return SignResolve.Ok(ring, passphrase, effectiveKeyId, entity.userID)
+    }
+
+    /**
+     * RC4 O4 (#34): the provider-side twin of
+     * EncryptDecryptViewModel.resolveEffectiveSigner. Consults the
+     * signing_defaults row of the key the client chose and substitutes
+     * per context; falls back to the client's key when the row is
+     * absent, the slot is null, or the pick is not an unrevoked
+     * software key pair.
+     */
+    private fun resolveProviderSigner(
+        base: com.pgpony.android.data.PGPKeyEntity,
+        recipientRings: Collection<org.bouncycastle.openpgp.PGPPublicKeyRing>?
+    ): com.pgpony.android.data.PGPKeyEntity {
+        val row = runBlocking { repo.signingDefaultsFor(base.fingerprint) } ?: return base
+        val allRecipientsComposite = recipientRings != null && recipientRings.isNotEmpty() &&
+            recipientRings.all { ring ->
+                ring.publicKeys.asSequence().any { it.algorithm == 35 || it.algorithm == 36 } ||
+                    ring.publicKeys.asSequence().any {
+                        it.algorithm == com.pgpony.android.crypto.pqc.CompositeLibrePGPKeyMaterial.ALGORITHM_ID
+                    }
+            }
+        val pickedFp = when {
+            recipientRings == null -> row.signOnlySignerFingerprint
+            allRecipientsComposite -> row.pqcSignerFingerprint
+            else -> row.classicalSignerFingerprint
+        } ?: return base
+        if (pickedFp == base.fingerprint) return base
+        val picked = runBlocking { repo.getByFingerprint(pickedFp) }
+        return if (picked != null && picked.isKeyPair && !picked.isCardBacked && !picked.isRevoked) {
+            picked
+        } else {
+            base
+        }
     }
 
     private fun passphraseRequiredResult(

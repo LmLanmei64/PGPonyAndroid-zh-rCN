@@ -705,6 +705,36 @@ class PGPCryptoService private constructor() {
         return out.toString(Charsets.UTF_8.name())
     }
 
+    /**
+     * RC4 O5 (#16, CertainBot): true when the ring's secret material is
+     * already passphrase-protected (S2K usage != 0). Such a ring exports
+     * as-is — its own passphrase already guards the file, and we could
+     * not re-encrypt it without knowing that passphrase anyway.
+     */
+    fun isPassphraseProtected(secretKeyRing: PGPSecretKeyRing): Boolean =
+        secretKeyRing.secretKey.s2KUsage != 0
+
+    /**
+     * RC4 O5 (#16, CertainBot): export an UNPROTECTED secret ring
+     * re-encrypted under [exportPassphrase] (AES-256, S2K usage 254 —
+     * the same protection CompositeKeyGen applies at generation). The
+     * stored ring is untouched; only the export copy is protected.
+     * Throws PGPException if the ring is already protected — callers
+     * gate on [isPassphraseProtected] first.
+     */
+    fun exportArmoredPrivateKeyWithPassphrase(
+        secretKeyRing: PGPSecretKeyRing,
+        exportPassphrase: String
+    ): String {
+        val digest = org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider()
+            .get(org.bouncycastle.bcpg.HashAlgorithmTags.SHA1)
+        val encryptor = org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyEncryptorBuilder(
+            org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags.AES_256, digest
+        ).build(exportPassphrase.toCharArray())
+        val protectedRing = PGPSecretKeyRing.copyWithNewPassword(secretKeyRing, null, encryptor)
+        return exportArmoredPrivateKey(protectedRing)
+    }
+
     fun exportArmoredPrivateKey(secretKeyRing: PGPSecretKeyRing): String {
         // Translate a v5 LibrePGP composite (algo-8) subkey from BC's internal
         // framing to the on-the-wire LibrePGP layout GnuPG / sq / PGPony-iOS

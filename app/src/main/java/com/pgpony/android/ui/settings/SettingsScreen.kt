@@ -947,32 +947,47 @@ fun SettingsScreen(
         }
     }
 
-    // ── Clear Data Dialogs ─────────────────────────────────────────────
+    // ── Clear Data Dialog ──────────────────────────────────────────────
+    //
+    // RC4 O6 (#16, AraafRoyall): was two stacked AlertDialogs (Continue →
+    // "Are you absolutely sure?"). Now ONE dialog with the delete-sheet-
+    // style acknowledgement checkbox gating the destructive button —
+    // same safeguard strength, one less stacked prompt, and the checkbox
+    // is a stronger deliberate act than a second tap ever was. The
+    // showClearStep2 state stays in the ViewModel (additive rule) but is
+    // no longer rendered.
     if (state.showClearConfirm) {
+        var clearAcknowledged by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { viewModel.dismissClear() },
             title = { Text(stringResource(R.string.settings_data_clear_step1_title)) },
-            text = { Text(stringResource(R.string.settings_data_clear_step1_body)) },
-            confirmButton = {
-                TextButton(
-                    onClick = { viewModel.showClearStep2() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) { Text(stringResource(R.string.common_button_continue)) }
+            text = {
+                Column {
+                    Text(stringResource(R.string.settings_data_clear_step1_body))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(stringResource(R.string.settings_data_clear_step2_body))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { clearAcknowledged = !clearAcknowledged },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = clearAcknowledged,
+                            onCheckedChange = { clearAcknowledged = it }
+                        )
+                        Text(
+                            stringResource(R.string.key_delete_ack_label),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { viewModel.dismissClear() }) { Text(stringResource(R.string.common_button_cancel)) }
-            }
-        )
-    }
-
-    if (state.showClearStep2) {
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissClear() },
-            title = { Text(stringResource(R.string.settings_data_clear_step2_title)) },
-            text = { Text(stringResource(R.string.settings_data_clear_step2_body)) },
             confirmButton = {
                 TextButton(
                     onClick = { viewModel.clearAllData() },
+                    enabled = clearAcknowledged,
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) { Text(stringResource(R.string.settings_data_clear_step2_confirm)) }
             },

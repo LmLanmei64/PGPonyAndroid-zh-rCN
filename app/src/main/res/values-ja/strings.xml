@@ -1704,7 +1704,7 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="key_detail_add_userid_passphrase_label">パスフレーズ</string>
     <string name="key_detail_add_userid_sheet_subtitle">%1$s の新しいアイデンティティ</string>
     <string name="key_detail_add_userid_sheet_title">ユーザーIDを追加</string>
-    <string name="key_detail_fallbacks_explainer">この鍵でメッセージを復号できない場合、次にこれらの鍵を順番に試します。有効にしない限り、すべての鍵でオフです。</string>
+    <string name="key_detail_fallbacks_explainer">この鍵でメッセージを復号できない場合、次にこれらの鍵を順番に試します。それでも復号できない場合は残りの鍵も最後に試すため、これまで復号できていたものが復号できなくなることはありません。</string>
     <string name="key_detail_fallbacks_move_down">下へ移動</string>
     <string name="key_detail_fallbacks_move_up">上へ移動</string>
     <string name="key_detail_fallbacks_none">フォールバックに使える他の秘密鍵がありません。</string>
@@ -1765,4 +1765,13 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="sign_file_save_button">ファイルに保存</string>
     <string name="sign_verify_error_file_unreadable">選択したファイルを読み取れませんでした。もう一度選択してください。</string>
     <string name="verify_file_error_sig_not_signature">このファイルは分離署名にしては大きすぎます。署名対象ではなく .asc または .sig ファイルを選択してください。</string>
+
+    <!-- 4.2.0 RC4 workstream O8: strings added by O3/O5. -->
+    <string name="key_detail_fallbacks_strict_title">有効なフォールバックのみ使用</string>
+    <string name="key_detail_fallbacks_strict_subtitle">残りの鍵による保険を使わず、この鍵と上で有効にしたフォールバックのみを試します。</string>
+    <string name="export_passphrase_label">このエクスポートをパスフレーズで保護（任意）</string>
+    <string name="export_passphrase_backup_label">バックアップをパスフレーズで保護（任意。鍵に既にある場合は無視）</string>
+    <string name="export_passphrase_confirm_label">エクスポート用パスフレーズを確認</string>
+    <string name="export_passphrase_mismatch">パスフレーズが一致しません。</string>
+    <string name="export_passphrase_already_protected_note">この鍵には既に独自のパスフレーズがあり、エクスポートにも引き継がれます。</string>
 </resources>

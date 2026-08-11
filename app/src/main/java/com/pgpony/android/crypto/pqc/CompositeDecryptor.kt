@@ -112,18 +112,36 @@ object CompositeDecryptor {
     }
 
     /** The shared decapsulation core behind [tryDecrypt] and
-     *  [recoverSessionKey]: match the recipient key, extract its material,
+     *  [recoverSessionKey]: match the recipient key (or trial every held
+     *  composite key for an anonymous PKESK), extract its material,
      *  decapsulate with the PKESK's suite, unwrap the session key. */
     private fun recover(
         parsed: CompositePkesk.Parsed,
         secretKeyRings: List<PGPSecretKeyRing>,
         passphrase: String?
     ): ByteArray {
+        if (parsed.recipientFingerprint.isEmpty()) {
+            return recoverAnonymous(parsed, secretKeyRings, passphrase)
+        }
         val secKey = findSecretKey(parsed.recipientFingerprint, secretKeyRings)
             ?: throw NoMatchingKey(
                 "no held composite secret key for recipient " +
                     parsed.recipientFingerprint.toHex()
             )
+        return open(secKey, parsed, passphrase)
+    }
+
+    /** Decapsulate + unwrap [parsed] with [secKey]. Errors propagate to the
+     *  caller: [CompositeSecretKeyMaterial.extract] throws
+     *  [CompositeSecretKeyMaterial.ProtectedKeyException] for a locked key
+     *  with no passphrase, and that must surface as-is on the addressed
+     *  path below, not read as "no match". [recoverAnonymous] is the one
+     *  that catches everything from this function. */
+    private fun open(
+        secKey: org.bouncycastle.openpgp.PGPSecretKey,
+        parsed: CompositePkesk.Parsed,
+        passphrase: String?
+    ): ByteArray {
         val material = CompositeSecretKeyMaterial.extract(secKey, passphrase?.toCharArray())
             ?: throw NoMatchingKey("matched key is not a composite secret key")
         val suite = parsed.suite
@@ -139,6 +157,37 @@ object CompositeDecryptor {
             suite = suite
         )
         return CompositeKem.unwrapSessionKey(kek, parsed.wrappedSessionKey)
+    }
+
+    /**
+     * 4.2.0 RC2 workstream B (§3.4): an anonymous PKESK carries no
+     * recipient fingerprint (RFC 9580 §5.1's wildcard, `gpg -R`), so there
+     * is nothing to look up. Trial every held composite secret key instead,
+     * the same shape as the classical wildcard path
+     * (`PGPCryptoService.resolvePkesk`) for RSA/ECDH: a key that is locked
+     * with no passphrase, or simply the wrong key, is silently skipped
+     * rather than aborting the scan, since during a trial that is the
+     * expected outcome for every candidate but one. RFC-3394 unwrap's
+     * built-in integrity check is what makes skipping safe here, a wrong
+     * KEK fails the unwrap rather than yielding wrong plaintext bytes.
+     */
+    private fun recoverAnonymous(
+        parsed: CompositePkesk.Parsed,
+        secretKeyRings: List<PGPSecretKeyRing>,
+        passphrase: String?
+    ): ByteArray {
+        for (ring in secretKeyRings) {
+            for (candidate in ring.secretKeys) {
+                if (CompositeSuite.ietfFor(candidate.publicKey.algorithm) == null) continue
+                val result = try {
+                    open(candidate, parsed, passphrase)
+                } catch (e: Exception) {
+                    null
+                }
+                if (result != null) return result
+            }
+        }
+        throw NoMatchingKey("no held composite secret key opens this anonymous PKESK")
     }
 
     /** First parseable composite PKESK in a region of ESK packets, walking

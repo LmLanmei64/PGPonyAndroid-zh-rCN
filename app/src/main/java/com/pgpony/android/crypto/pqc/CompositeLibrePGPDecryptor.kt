@@ -97,14 +97,27 @@ object CompositeLibrePGPDecryptor {
         return PGPSessionKey(pkesk.symAlgo, recover(pkesk, secretKeyRings, passphrase))
     }
 
-    /** Shared decapsulation core behind [tryDecrypt] and [recoverSessionKey]. */
+    /** Shared decapsulation core behind [tryDecrypt] and [recoverSessionKey].
+     *  An all-zero key ID (GnuPG's wildcard, `gpg -R`) has nothing to look
+     *  up, so it trials every held v5 algo-8 secret key instead. */
     private fun recover(
         pkesk: Pkesk,
         secretKeyRings: List<PGPSecretKeyRing>,
         passphrase: String?
     ): ByteArray {
+        if (pkesk.keyId.all { it == 0.toByte() }) {
+            return recoverAnonymous(pkesk, secretKeyRings, passphrase)
+        }
         val secKey = findSecretKey(pkesk.keyId, secretKeyRings)
             ?: throw NoMatchingKey("no held LibrePGP composite secret key for ${pkesk.keyId.toHex()}")
+        return open(secKey, pkesk, passphrase)
+    }
+
+    /** Decapsulate + unwrap [pkesk] with [secKey]. Errors propagate to the
+     *  caller (a locked key with no passphrase surfaces as-is on the
+     *  addressed path); [recoverAnonymous] is the one that catches
+     *  everything from this function. */
+    private fun open(secKey: PGPSecretKey, pkesk: Pkesk, passphrase: String?): ByteArray {
         val packet = secKey.encoded
 
         val material = CompositeLibrePGPKeyMaterial.extractFromPacket(packet, passphrase?.toCharArray())
@@ -119,6 +132,36 @@ object CompositeLibrePGPDecryptor {
             pkesk.eccEphemeral, pkesk.kyberCiphertext, material.x25519Secret, recipientXPub, mlkemSec, fixedInfo, suite
         )
         return CompositeKemLibrePGP.unwrapSessionKey(kek, pkesk.wrappedSessionKey)
+    }
+
+    /**
+     * 4.2.0 RC2 workstream B (§3.4): same anonymous-PKESK trial as
+     * `CompositeDecryptor.recoverAnonymous`, for the v3/algo-8 LibrePGP
+     * PKESK. GnuPG's wildcard is an all-zero key ID rather than an absent
+     * field, but the trial is identical in shape: every held v5 algo-8
+     * secret key gets one attempt, locked-or-wrong candidates are silently
+     * skipped, and RFC-3394 unwrap's integrity check is what makes
+     * skipping safe.
+     */
+    private fun recoverAnonymous(
+        pkesk: Pkesk,
+        secretKeyRings: List<PGPSecretKeyRing>,
+        passphrase: String?
+    ): ByteArray {
+        for (ring in secretKeyRings) {
+            for (candidate in ring.secretKeys) {
+                if (candidate.publicKey.algorithm != CompositeLibrePGPKeyMaterial.ALGORITHM_ID ||
+                    candidate.publicKey.version != 5
+                ) continue
+                val result = try {
+                    open(candidate, pkesk, passphrase)
+                } catch (e: Exception) {
+                    null
+                }
+                if (result != null) return result
+            }
+        }
+        throw NoMatchingKey("no held LibrePGP composite secret key opens this anonymous PKESK")
     }
 
     /** First parseable v3 algo-8 PKESK in a region of ESK packets. */

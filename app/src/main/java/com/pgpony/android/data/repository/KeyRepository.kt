@@ -700,6 +700,30 @@ class KeyRepository(
         return crypto.exportArmoredPublicKeyForSharing(ring)
     }
 
+    /**
+     * RC4 O5 (#16): export with an optional passphrase on the export
+     * copy. Blank/null passphrase → plain export. A ring that already
+     * carries its own passphrase exports as-is regardless (that
+     * passphrase already guards the file; the UI says so).
+     */
+    fun exportArmoredPrivateKey(fingerprint: String, exportPassphrase: String?): String? {
+        val ring = loadSecretKeyRing(fingerprint) ?: return null
+        if (exportPassphrase.isNullOrBlank() || crypto.isPassphraseProtected(ring)) {
+            return crypto.exportArmoredPrivateKey(ring)
+        }
+        return try {
+            crypto.exportArmoredPrivateKeyWithPassphrase(ring, exportPassphrase)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** RC4 O5: whether the stored secret ring carries its own passphrase. */
+    fun isPrivateKeyPassphraseProtected(fingerprint: String): Boolean {
+        val ring = loadSecretKeyRing(fingerprint) ?: return false
+        return crypto.isPassphraseProtected(ring)
+    }
+
     fun exportArmoredPrivateKey(fingerprint: String): String? {
         val ring = loadSecretKeyRing(fingerprint) ?: return null
         return crypto.exportArmoredPrivateKey(ring)

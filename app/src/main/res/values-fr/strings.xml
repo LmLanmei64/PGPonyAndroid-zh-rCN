@@ -1705,7 +1705,7 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="key_detail_add_userid_passphrase_label">Phrase secrète</string>
     <string name="key_detail_add_userid_sheet_subtitle">Nouvelle identité pour %1$s</string>
     <string name="key_detail_add_userid_sheet_title">Ajouter un ID utilisateur</string>
-    <string name="key_detail_fallbacks_explainer">Si un message ne peut pas être déchiffré avec cette clé, ces clés seront essayées ensuite, dans l\'ordre. Désactivé pour toutes les clés tant que vous ne les activez pas.</string>
+    <string name="key_detail_fallbacks_explainer">Si un message ne peut pas être déchiffré avec cette clé, ces clés seront essayées ensuite, dans l\'ordre. Vos autres clés sont tout de même essayées en dernier, pour que rien de ce qui se déchiffrait avant ne cesse de se déchiffrer.</string>
     <string name="key_detail_fallbacks_move_down">Descendre</string>
     <string name="key_detail_fallbacks_move_up">Monter</string>
     <string name="key_detail_fallbacks_none">Aucune autre clé privée de repli.</string>
@@ -1766,4 +1766,13 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="sign_file_save_button">Enregistrer dans les fichiers</string>
     <string name="sign_verify_error_file_unreadable">Impossible de lire le fichier sélectionné. Sélectionnez-le à nouveau.</string>
     <string name="verify_file_error_sig_not_signature">Ce fichier est trop volumineux pour être une signature détachée. Choisissez le fichier .asc ou .sig, pas le contenu signé.</string>
+
+    <!-- 4.2.0 RC4 workstream O8: strings added by O3/O5. -->
+    <string name="key_detail_fallbacks_strict_title">N\'utiliser que les clés de repli activées</string>
+    <string name="key_detail_fallbacks_strict_subtitle">Ignore le filet des clés restantes : seules cette clé et les clés de repli activées ci-dessus sont essayées.</string>
+    <string name="export_passphrase_label">Protéger cet export par une phrase secrète (facultatif)</string>
+    <string name="export_passphrase_backup_label">Protéger la sauvegarde par une phrase secrète (facultatif ; ignoré si la clé en a déjà une)</string>
+    <string name="export_passphrase_confirm_label">Confirmer la phrase secrète d\'export</string>
+    <string name="export_passphrase_mismatch">Les phrases secrètes ne correspondent pas.</string>
+    <string name="export_passphrase_already_protected_note">Cette clé a déjà sa propre phrase secrète ; l\'export la conserve.</string>
 </resources>

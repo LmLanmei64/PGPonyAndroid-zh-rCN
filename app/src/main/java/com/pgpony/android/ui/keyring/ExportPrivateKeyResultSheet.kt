@@ -64,7 +64,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,12 +86,24 @@ fun ExportPrivateKeyResultSheet(
     keyEmail: String,
     shortFingerprint: String,
     armoredLength: Int,
-    onCopy: () -> Unit,
-    onSaveFile: () -> Unit,
-    onShare: () -> Unit,
+    // RC4 O5 (#16, CertainBot): the ring already has its own passphrase —
+    // hide the export-passphrase fields and say so instead.
+    alreadyProtected: Boolean = false,
+    onCopy: (exportPassphrase: String?) -> Unit,
+    onSaveFile: (exportPassphrase: String?) -> Unit,
+    onShare: (exportPassphrase: String?) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // RC4 O5: optional passphrase applied to the EXPORT COPY only. A
+    // mismatch disables every delivery button — a typo here on top of a
+    // deleted original would make the backup unreadable forever.
+    var exportPassphrase by remember { mutableStateOf("") }
+    var exportPassphraseConfirm by remember { mutableStateOf("") }
+    val passphraseMismatch =
+        exportPassphrase.isNotEmpty() && exportPassphrase != exportPassphraseConfirm
+    val effectivePassphrase: String? =
+        if (alreadyProtected || exportPassphrase.isBlank()) null else exportPassphrase
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
@@ -209,8 +226,44 @@ fun ExportPrivateKeyResultSheet(
             // Both use error-color tinting (red) — same visual weight
             // as the AlertDialog Continue button that brought us here.
             // Done is neutral outline.
+            if (alreadyProtected) {
+                Text(
+                    text = stringResource(R.string.export_passphrase_already_protected_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                OutlinedTextField(
+                    value = exportPassphrase,
+                    onValueChange = { exportPassphrase = it },
+                    label = { Text(stringResource(R.string.export_passphrase_label)) },
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (exportPassphrase.isNotEmpty()) {
+                    OutlinedTextField(
+                        value = exportPassphraseConfirm,
+                        onValueChange = { exportPassphraseConfirm = it },
+                        label = { Text(stringResource(R.string.export_passphrase_confirm_label)) },
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        singleLine = true,
+                        isError = passphraseMismatch,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (passphraseMismatch) {
+                        Text(
+                            text = stringResource(R.string.export_passphrase_mismatch),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+
             OutlinedButton(
-                onClick = onCopy,
+                enabled = !passphraseMismatch,
+                onClick = { onCopy(effectivePassphrase) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.error
@@ -230,7 +283,8 @@ fun ExportPrivateKeyResultSheet(
             // Both keep the error-red tint — this is secret material
             // whichever way it leaves the app.
             OutlinedButton(
-                onClick = onSaveFile,
+                enabled = !passphraseMismatch,
+                onClick = { onSaveFile(effectivePassphrase) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.error
@@ -246,7 +300,8 @@ fun ExportPrivateKeyResultSheet(
             }
 
             OutlinedButton(
-                onClick = onShare,
+                enabled = !passphraseMismatch,
+                onClick = { onShare(effectivePassphrase) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.error

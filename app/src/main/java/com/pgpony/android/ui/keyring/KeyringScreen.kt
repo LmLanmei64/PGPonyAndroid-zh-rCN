@@ -385,8 +385,8 @@ fun KeyringScreen(
             DeleteKeySheet(
                 keyOwnerLabel = deleteOwnerLabel,
                 shortFingerprint = key.shortFingerprint,
-                onSaveBackup = {
-                    val armored = viewModel.armoredPrivateFor(key)
+                onSaveBackup = { backupPass ->
+                    val armored = viewModel.armoredPrivateFor(key, backupPass)
                     if (armored == null) {
                         deleteScope.launch {
                             snackbarHostState.showSnackbar(

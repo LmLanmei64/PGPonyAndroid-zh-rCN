@@ -294,7 +294,8 @@ fun KeyDetailScreen(
                 // RC3 §N (#34)
                 onToggleFallback = { fp -> viewModel.toggleFallback(fp) },
                 onMoveFallback = { fp, delta -> viewModel.moveFallback(fp, delta) },
-                onPickSigningDefault = { slot, fp -> viewModel.setSigningDefault(slot, fp) }
+                onPickSigningDefault = { slot, fp -> viewModel.setSigningDefault(slot, fp) },
+                onStrictFallbacksChange = { enabled -> viewModel.setStrictFallbacks(enabled) }
             )
         }
     }
@@ -417,8 +418,8 @@ fun KeyDetailScreen(
             DeleteKeySheet(
                 keyOwnerLabel = deleteOwnerLabel,
                 shortFingerprint = key.shortFingerprint,
-                onSaveBackup = {
-                    val armored = viewModel.armoredPrivateKeyForShare()
+                onSaveBackup = { backupPass ->
+                    val armored = viewModel.armoredPrivateKeyForShare(backupPass)
                     if (armored == null) {
                         scope.launch {
                             snackbarHostState.showSnackbar(
@@ -733,10 +734,16 @@ fun KeyDetailScreen(
             keyEmail = keyForResultSheet.userEmail,
             shortFingerprint = keyForResultSheet.shortFingerprint,
             armoredLength = pendingPrivate.length,
-            onCopy = {
+            alreadyProtected = state.privateKeyIsProtected,
+            onCopy = { exportPass ->
+                // RC4 O5: re-export per action so the chosen passphrase
+                // lands on the delivered copy. Falls back to the cached
+                // plain armored on export failure (never silently drops
+                // the action).
+                val armoredForCopy = viewModel.armoredPrivateKeyForShare(exportPass) ?: pendingPrivate
                 val ok = KeyShareIntents.copyPrivateKeyToClipboard(
                     context = context,
-                    armoredPrivate = pendingPrivate
+                    armoredPrivate = armoredForCopy
                 )
                 scope.launch {
                     snackbarHostState.showSnackbar(
@@ -747,12 +754,12 @@ fun KeyDetailScreen(
                 // Deliberately NOT dismissing the sheet — user may
                 // also want to save the file.
             },
-            onSaveFile = {
+            onSaveFile = { exportPass ->
                 saveArmoredToFile(
                     context = context,
                     scope = scope,
                     snackbarHostState = snackbarHostState,
-                    armored = pendingPrivate,
+                    armored = viewModel.armoredPrivateKeyForShare(exportPass) ?: pendingPrivate,
                     suggestedName = KeyShareIntents.buildExportFilename(
                         ownerLabel = ownerLabel,
                         shortFingerprint = keyForResultSheet.shortFingerprint,
@@ -760,10 +767,10 @@ fun KeyDetailScreen(
                     )
                 )
             },
-            onShare = {
+            onShare = { exportPass ->
                 val launched = KeyShareIntents.shareArmoredPrivateKey(
                     context = context,
-                    armoredPrivate = pendingPrivate,
+                    armoredPrivate = viewModel.armoredPrivateKeyForShare(exportPass) ?: pendingPrivate,
                     keyOwnerLabel = ownerLabel,
                     shortFingerprint = keyForResultSheet.shortFingerprint
                 )
@@ -1098,7 +1105,8 @@ private fun LoadedBody(
     // RC3 §N (#34)
     onToggleFallback: (String) -> Unit,
     onMoveFallback: (String, Int) -> Unit,
-    onPickSigningDefault: (Int, String?) -> Unit
+    onPickSigningDefault: (Int, String?) -> Unit,
+    onStrictFallbacksChange: (Boolean) -> Unit
 ) {
     val key = state.key ?: return  // Defensive — caller already filtered
     LazyColumn(
@@ -1168,8 +1176,10 @@ private fun LoadedBody(
             item {
                 FallbackKeysSection(
                     rows = state.fallbackKeys,
+                    strictMode = state.strictFallbacks,
                     onToggle = onToggleFallback,
-                    onMove = onMoveFallback
+                    onMove = onMoveFallback,
+                    onStrictModeChange = onStrictFallbacksChange
                 )
             }
             item {

@@ -1075,8 +1075,10 @@ private fun formatDate(epochMillis: Long): String {
 @Composable
 fun FallbackKeysSection(
     rows: List<FallbackKeyChoice>,
+    strictMode: Boolean,
     onToggle: (String) -> Unit,
-    onMove: (String, Int) -> Unit
+    onMove: (String, Int) -> Unit,
+    onStrictModeChange: (Boolean) -> Unit
 ) {
     SectionGroup(title = stringResource(R.string.key_detail_section_fallbacks)) {
         Text(
@@ -1091,6 +1093,30 @@ fun FallbackKeysSection(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        } else {
+            // RC4 O3 (#34): strict mode — drop the remaining-keys net.
+            // Only offered when there ARE other keys; with no fallback
+            // candidates the switch would only be a foot-gun.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.key_detail_fallbacks_strict_title),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        stringResource(R.string.key_detail_fallbacks_strict_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = strictMode,
+                    onCheckedChange = onStrictModeChange
+                )
+            }
         }
         val enabledCount = rows.count { it.enabled }
         rows.forEachIndexed { index, row ->
@@ -1108,8 +1134,18 @@ fun FallbackKeysSection(
                         row.key.userName.ifBlank { row.key.userEmail.ifBlank { row.key.shortFingerprint } },
                         style = MaterialTheme.typography.bodyMedium
                     )
+                    // RC4 O2 (#34, EmanuelLoos): several keys often carry the
+                    // same name, so the second line carries email + short
+                    // fingerprint rather than the fingerprint alone.
+                    val fallbackDetailLine = if (
+                        row.key.userEmail.isNotBlank() && row.key.userEmail != row.key.userName
+                    ) {
+                        "${row.key.userEmail} · ${row.key.shortFingerprint}"
+                    } else {
+                        row.key.shortFingerprint
+                    }
                     Text(
-                        row.key.shortFingerprint,
+                        fallbackDetailLine,
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                         ),
@@ -1175,9 +1211,14 @@ fun SigningDefaultsSection(
                         onClick = { menuOpen = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
+                        // RC4 O2 (#34, EmanuelLoos): his menu read "Emanuel
+                        // Loos / Emanuel Loos" — the short fingerprint is the
+                        // only reliable discriminator between same-identity
+                        // keys, so it rides along everywhere a key is named.
                         Text(
                             text = current?.let {
-                                it.userName.ifBlank { it.userEmail.ifBlank { it.shortFingerprint } }
+                                val label = it.userName.ifBlank { it.userEmail.ifBlank { it.shortFingerprint } }
+                                "$label (${it.shortFingerprint})"
                             } ?: stringResource(R.string.key_detail_signing_default_self),
                             maxLines = 1,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -1196,7 +1237,8 @@ fun SigningDefaultsSection(
                         choices.filter { it.fingerprint != openKey.fingerprint }.forEach { k ->
                             DropdownMenuItem(
                                 text = {
-                                    Text(k.userName.ifBlank { k.userEmail.ifBlank { k.shortFingerprint } })
+                                    val entryLabel = k.userName.ifBlank { k.userEmail.ifBlank { k.shortFingerprint } }
+                                    Text("$entryLabel (${k.shortFingerprint})")
                                 },
                                 onClick = { onPick(slot, k.fingerprint); menuOpen = false }
                             )

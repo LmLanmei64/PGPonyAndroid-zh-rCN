@@ -791,9 +791,18 @@
     <string name="key_delete_confirm_button">Delete key pair</string>
     <string name="key_delete_biometric_title">Confirm key deletion</string>
     <string name="key_delete_biometric_subtitle">Authenticate to delete this key pair</string>
+    <!-- RC4 O5 (#16, CertainBot): optional passphrase on exported/backed-up private keys. -->
+    <string name="export_passphrase_label">Protect this export with a passphrase (optional)</string>
+    <string name="export_passphrase_backup_label">Protect the backup with a passphrase (optional; ignored if the key already has one)</string>
+    <string name="export_passphrase_confirm_label">Confirm export passphrase</string>
+    <string name="export_passphrase_mismatch">Passphrases don\'t match.</string>
+    <string name="export_passphrase_already_protected_note">This key already has its own passphrase; the export keeps it.</string>
     <!-- RC3 §N (#34): decryption fallbacks + signing defaults. -->
     <string name="key_detail_section_fallbacks">Decryption Fallbacks</string>
-    <string name="key_detail_fallbacks_explainer">If a message fails to decrypt with this key, try these keys next, in order. Off for all keys unless you enable them.</string>
+    <!-- RC4 O3 (#34): honest about the compatibility net, and the strict toggle that removes it. -->
+    <string name="key_detail_fallbacks_explainer">If a message fails to decrypt with this key, try these keys next, in order. Your remaining keys are still tried last so nothing that decrypted before stops decrypting.</string>
+    <string name="key_detail_fallbacks_strict_title">Only use enabled fallbacks</string>
+    <string name="key_detail_fallbacks_strict_subtitle">Skip the remaining-keys net: try this key and the enabled fallbacks above, nothing else.</string>
     <string name="key_detail_fallbacks_none">No other private keys to fall back to.</string>
     <string name="key_detail_fallbacks_move_up">Move up</string>
     <string name="key_detail_fallbacks_move_down">Move down</string>

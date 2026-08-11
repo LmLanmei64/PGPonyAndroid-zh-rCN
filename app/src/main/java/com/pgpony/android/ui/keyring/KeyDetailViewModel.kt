@@ -125,6 +125,11 @@ data class KeyDetailUiState(
     // defaults, both key-pair-only surfaces. signerChoices is the picker
     // pool (software key pairs, this key included).
     val fallbackKeys: List<FallbackKeyChoice> = emptyList(),
+    /** RC4 O3 (#34): strict mode — drop the all-keys compatibility tail. */
+    val strictFallbacks: Boolean = false,
+    /** RC4 O5 (#16): the stored ring already carries its own passphrase,
+     *  so the export-passphrase fields are pointless and hidden. */
+    val privateKeyIsProtected: Boolean = false,
     val signingDefaults: com.pgpony.android.data.SigningDefaultsEntity? = null,
     val signerChoices: List<PGPKeyEntity> = emptyList(),
     /** True while the initial load() coroutine is in flight. */
@@ -330,6 +335,12 @@ class KeyDetailViewModel(
                 subkeys = loaded?.let { deriveSubkeys(it) } ?: emptyList(),
                 // RC3 §N (#34)
                 fallbackKeys = loaded?.let { deriveFallbacks(it) } ?: emptyList(),
+                strictFallbacks = loaded?.let {
+                    com.pgpony.android.crypto.FallbackPrefs.isStrict(it.fingerprint)
+                } ?: false,
+                privateKeyIsProtected = loaded?.takeIf { it.isKeyPair }?.let {
+                    withContext(Dispatchers.IO) { repo.isPrivateKeyPassphraseProtected(it.fingerprint) }
+                } ?: false,
                 signingDefaults = loaded?.takeIf { it.isKeyPair }
                     ?.let { repo.signingDefaultsFor(it.fingerprint) },
                 signerChoices = loaded?.takeIf { it.isKeyPair }
@@ -368,6 +379,13 @@ class KeyDetailViewModel(
             repo.setFallbacks(primary, rows.filter { it.enabled }.map { it.key.fingerprint })
             _state.value = _state.value.copy(fallbackKeys = rows)
         }
+    }
+
+    /** RC4 O3 (#34): persist + reflect the per-key strict-mode switch. */
+    fun setStrictFallbacks(enabled: Boolean) {
+        val key = _state.value.key ?: return
+        com.pgpony.android.crypto.FallbackPrefs.setStrict(key.fingerprint, enabled)
+        _state.value = _state.value.copy(strictFallbacks = enabled)
     }
 
     fun toggleFallback(fingerprint: String) {
@@ -1410,10 +1428,11 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
      *     SecureKeyStore couldn't decrypt; both indicate something
      *     wrong with the key pair and the screen surfaces a snackbar)
      */
-    fun armoredPrivateKeyForShare(): String? {
+    fun armoredPrivateKeyForShare(exportPassphrase: String? = null): String? {
         val key = _state.value.key ?: return null
         if (!key.isKeyPair) return null
-        return repo.exportArmoredPrivateKey(key.fingerprint)
+        // RC4 O5 (#16): optional passphrase on the export copy.
+        return repo.exportArmoredPrivateKey(key.fingerprint, exportPassphrase)
     }
 
     // ── Phase A7 Fix4: Export private key result sheet ────────────────

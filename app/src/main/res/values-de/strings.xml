@@ -1705,7 +1705,7 @@ Optional kannst du die App hinter deinem Fingerabdruck oder Gesicht sperren, um 
     <string name="key_detail_add_userid_passphrase_label">Passphrase</string>
     <string name="key_detail_add_userid_sheet_subtitle">Neue Identität für %1$s</string>
     <string name="key_detail_add_userid_sheet_title">Benutzer-ID hinzufügen</string>
-    <string name="key_detail_fallbacks_explainer">Wenn sich eine Nachricht mit diesem Schlüssel nicht entschlüsseln lässt, werden diese Schlüssel der Reihe nach als Nächstes versucht. Für alle Schlüssel aus, bis du sie aktivierst.</string>
+    <string name="key_detail_fallbacks_explainer">Wenn sich eine Nachricht mit diesem Schlüssel nicht entschlüsseln lässt, werden diese Schlüssel der Reihe nach als Nächstes versucht. Deine übrigen Schlüssel werden zuletzt trotzdem versucht, damit nichts unentschlüsselbar wird, was vorher entschlüsselbar war.</string>
     <string name="key_detail_fallbacks_move_down">Nach unten</string>
     <string name="key_detail_fallbacks_move_up">Nach oben</string>
     <string name="key_detail_fallbacks_none">Keine anderen privaten Schlüssel als Ausweichmöglichkeit.</string>
@@ -1766,4 +1766,13 @@ Optional kannst du die App hinter deinem Fingerabdruck oder Gesicht sperren, um 
     <string name="sign_file_save_button">In Dateien speichern</string>
     <string name="sign_verify_error_file_unreadable">Die ausgewählte Datei konnte nicht gelesen werden. Wähle sie erneut aus.</string>
     <string name="verify_file_error_sig_not_signature">Diese Datei ist zu groß für eine abgetrennte Signatur. Wähle die .asc- oder .sig-Datei, nicht den signierten Inhalt.</string>
+
+    <!-- 4.2.0 RC4 workstream O8: strings added by O3/O5. -->
+    <string name="key_detail_fallbacks_strict_title">Nur aktivierte Fallbacks verwenden</string>
+    <string name="key_detail_fallbacks_strict_subtitle">Ohne das Übrige-Schlüssel-Netz: Es werden nur dieser Schlüssel und die oben aktivierten Fallbacks versucht.</string>
+    <string name="export_passphrase_label">Export mit einer Passphrase schützen (optional)</string>
+    <string name="export_passphrase_backup_label">Backup mit einer Passphrase schützen (optional; wird ignoriert, wenn der Schlüssel schon eine hat)</string>
+    <string name="export_passphrase_confirm_label">Export-Passphrase bestätigen</string>
+    <string name="export_passphrase_mismatch">Die Passphrasen stimmen nicht überein.</string>
+    <string name="export_passphrase_already_protected_note">Dieser Schlüssel hat bereits eine eigene Passphrase; der Export behält sie.</string>
 </resources>

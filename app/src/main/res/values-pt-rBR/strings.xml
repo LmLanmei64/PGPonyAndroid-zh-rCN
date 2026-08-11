@@ -1705,7 +1705,7 @@ Opcionalmente, bloqueie o app com sua impressão digital ou rosto para mais tran
     <string name="key_detail_add_userid_passphrase_label">Frase-senha</string>
     <string name="key_detail_add_userid_sheet_subtitle">Nova identidade para %1$s</string>
     <string name="key_detail_add_userid_sheet_title">Adicionar ID de usuário</string>
-    <string name="key_detail_fallbacks_explainer">Se uma mensagem não puder ser descriptografada com esta chave, estas chaves serão tentadas em seguida, em ordem. Desativado para todas as chaves até você ativá-las.</string>
+    <string name="key_detail_fallbacks_explainer">Se uma mensagem não puder ser descriptografada com esta chave, estas chaves serão tentadas em seguida, em ordem. Suas demais chaves ainda são tentadas por último, para que nada que descriptografava antes deixe de descriptografar.</string>
     <string name="key_detail_fallbacks_move_down">Mover para baixo</string>
     <string name="key_detail_fallbacks_move_up">Mover para cima</string>
     <string name="key_detail_fallbacks_none">Nenhuma outra chave privada para usar como alternativa.</string>
@@ -1766,4 +1766,13 @@ Opcionalmente, bloqueie o app com sua impressão digital ou rosto para mais tran
     <string name="sign_file_save_button">Salvar em Arquivos</string>
     <string name="sign_verify_error_file_unreadable">Não foi possível ler o arquivo selecionado. Selecione-o novamente.</string>
     <string name="verify_file_error_sig_not_signature">Esse arquivo é grande demais para ser uma assinatura separada. Escolha o arquivo .asc ou .sig, não o conteúdo assinado.</string>
+
+    <!-- 4.2.0 RC4 workstream O8: strings added by O3/O5. -->
+    <string name="key_detail_fallbacks_strict_title">Usar apenas as alternativas ativadas</string>
+    <string name="key_detail_fallbacks_strict_subtitle">Ignora a rede das demais chaves: apenas esta chave e as alternativas ativadas acima são tentadas.</string>
+    <string name="export_passphrase_label">Proteger esta exportação com uma frase-senha (opcional)</string>
+    <string name="export_passphrase_backup_label">Proteger o backup com uma frase-senha (opcional; ignorada se a chave já tiver uma)</string>
+    <string name="export_passphrase_confirm_label">Confirmar a frase-senha da exportação</string>
+    <string name="export_passphrase_mismatch">As frases-senha não coincidem.</string>
+    <string name="export_passphrase_already_protected_note">Esta chave já tem sua própria frase-senha; a exportação a mantém.</string>
 </resources>

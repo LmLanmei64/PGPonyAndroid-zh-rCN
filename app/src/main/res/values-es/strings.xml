@@ -1705,7 +1705,7 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
     <string name="key_detail_add_userid_passphrase_label">Frase de contraseña</string>
     <string name="key_detail_add_userid_sheet_subtitle">Nueva identidad para %1$s</string>
     <string name="key_detail_add_userid_sheet_title">Añadir ID de usuario</string>
-    <string name="key_detail_fallbacks_explainer">Si un mensaje no se puede descifrar con esta clave, se probarán estas claves a continuación, en orden. Desactivado para todas las claves hasta que las actives.</string>
+    <string name="key_detail_fallbacks_explainer">Si un mensaje no se puede descifrar con esta clave, se probarán estas claves a continuación, en orden. El resto de tus claves se prueban igualmente al final, para que nada que antes se descifraba deje de descifrarse.</string>
     <string name="key_detail_fallbacks_move_down">Bajar</string>
     <string name="key_detail_fallbacks_move_up">Subir</string>
     <string name="key_detail_fallbacks_none">No hay otras claves privadas de reserva.</string>
@@ -1766,4 +1766,13 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
     <string name="sign_file_save_button">Guardar en Archivos</string>
     <string name="sign_verify_error_file_unreadable">No se pudo leer el archivo seleccionado. Selecciónalo de nuevo.</string>
     <string name="verify_file_error_sig_not_signature">Ese archivo es demasiado grande para ser una firma separada. Elige el archivo .asc o .sig, no el contenido firmado.</string>
+
+    <!-- 4.2.0 RC4 workstream O8: strings added by O3/O5. -->
+    <string name="key_detail_fallbacks_strict_title">Usar solo las claves de reserva activadas</string>
+    <string name="key_detail_fallbacks_strict_subtitle">Omite la red de claves restantes: se prueban solo esta clave y las reservas activadas arriba.</string>
+    <string name="export_passphrase_label">Proteger esta exportación con una frase de contraseña (opcional)</string>
+    <string name="export_passphrase_backup_label">Proteger la copia con una frase de contraseña (opcional; se ignora si la clave ya tiene una)</string>
+    <string name="export_passphrase_confirm_label">Confirmar la frase de contraseña de exportación</string>
+    <string name="export_passphrase_mismatch">Las frases de contraseña no coinciden.</string>
+    <string name="export_passphrase_already_protected_note">Esta clave ya tiene su propia frase de contraseña; la exportación la conserva.</string>
 </resources>
