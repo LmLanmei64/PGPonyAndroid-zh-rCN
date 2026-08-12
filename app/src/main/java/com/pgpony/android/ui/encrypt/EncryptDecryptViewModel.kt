@@ -1006,7 +1006,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         }
         val signingKey = s.signingKey ?: run {
             _encryptState.value = s.copy(
-                errorMessage = "No signing key available. Generate or import a key pair first."
+                errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_no_signing_key)
             )
             return
         }
@@ -3895,7 +3895,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             } catch (e: Exception) {
                 _decryptState.value = _decryptState.value.copy(
                     signerLookupState = SignerLookupState.Failed(
-                        "Could not import key: ${e.message}"
+                        PGPonyApp.instance.getString(R.string.encdec_error_import_key_format, e.message ?: "")
                     )
                 )
             }

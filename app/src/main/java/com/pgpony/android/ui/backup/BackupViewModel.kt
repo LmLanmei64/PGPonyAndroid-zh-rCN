@@ -104,7 +104,7 @@ class BackupViewModel : ViewModel() {
             } catch (e: BackupError) {
                 _state.value = _state.value.copy(working = false, error = e.message)
             } catch (e: Exception) {
-                _state.value = _state.value.copy(working = false, error = e.message ?: "Backup failed")
+                _state.value = _state.value.copy(working = false, error = e.message ?: PGPonyApp.instance.getString(R.string.backup_error_failed))
             }
         }
     }
@@ -141,7 +141,7 @@ class BackupViewModel : ViewModel() {
             } catch (e: BackupError) {
                 _state.value = _state.value.copy(working = false, error = e.message)
             } catch (e: Exception) {
-                _state.value = _state.value.copy(working = false, error = e.message ?: "Restore failed")
+                _state.value = _state.value.copy(working = false, error = e.message ?: PGPonyApp.instance.getString(R.string.backup_error_restore_failed))
             }
         }
     }

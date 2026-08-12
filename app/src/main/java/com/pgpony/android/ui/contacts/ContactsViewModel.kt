@@ -208,7 +208,7 @@ class ContactsViewModel(
                             PGPonyApp.instance.getString(R.string.import_result_already_in_keyring)
                         ImportResolution.MERGED_NEW_MATERIAL ->
                             PGPonyApp.instance.getString(R.string.import_result_merged)
-                        else -> "Key found and imported for $contactName"
+                        else -> PGPonyApp.instance.getString(R.string.contacts_vm_success_imported_format, contactName)
                     }
                     _state.value = _state.value.copy(
                         discoveringEmail = null,

@@ -142,7 +142,7 @@ class ExchangeViewModel(
                         PGPonyApp.instance.getString(R.string.import_result_already_in_keyring)
                     ImportResolution.MERGED_NEW_MATERIAL ->
                         PGPonyApp.instance.getString(R.string.import_result_merged)
-                    else -> "Key imported from QR code"
+                    else -> PGPonyApp.instance.getString(R.string.exchange_vm_success_qr_imported)
                 }
                 _state.value = _state.value.copy(
                     scannedText = null,
@@ -205,7 +205,7 @@ class ExchangeViewModel(
                         PGPonyApp.instance.getString(R.string.import_result_already_in_keyring)
                     ImportResolution.MERGED_NEW_MATERIAL ->
                         PGPonyApp.instance.getString(R.string.import_result_merged)
-                    else -> "Key imported from key server"
+                    else -> PGPonyApp.instance.getString(R.string.exchange_vm_success_server_imported)
                 }
                 _state.value = _state.value.copy(
                     searchResult = null,

@@ -849,7 +849,7 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
                         PGPonyApp.instance.getString(R.string.import_result_merged)
                     ImportResolution.UPGRADED_TO_KEY_PAIR ->
                         PGPonyApp.instance.getString(R.string.keyring_status_key_upgraded)
-                    else -> if (preview.hasPrivateKey) "Key pair imported" else "Public key imported"
+                    else -> if (preview.hasPrivateKey) PGPonyApp.instance.getString(R.string.keyring_vm_success_keypair_imported) else PGPonyApp.instance.getString(R.string.keyring_vm_success_pubkey_imported)
                 }
                 _state.value = _state.value.copy(
                     isImporting = false,
@@ -892,7 +892,7 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
                 _state.value = _state.value.copy(
                     isImporting = false,
                     showImportSheet = false,
-                    successMessage = "Key imported successfully"
+                    successMessage = PGPonyApp.instance.getString(R.string.keyring_vm_success_imported)
                 )
                 loadKeys()
             } catch (e: Exception) {
