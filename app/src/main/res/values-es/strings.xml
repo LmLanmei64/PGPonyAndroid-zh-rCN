@@ -297,7 +297,7 @@ pgpony.norsehor.se</string>
     <string name="encrypt_sign_as_no_identity">(sin identidad)</string>
 
     <!-- ── Sign-only mode ───────────────────────────────────────────── -->
-    <string name="encrypt_sign_only_explainer">Produce un mensaje firmado en claro RFC 4880 que cualquiera con tu clave pública puede verificar. Sin cifrado — el texto es legible para todos.</string>
+    <string name="encrypt_sign_only_explainer">Produce un mensaje firmado en texto plano RFC 4880 que cualquiera con tu clave pública puede verificar. Sin cifrado — el texto es legible para todos.</string>
 
     <!-- ── File picker (encrypt) ────────────────────────────────────── -->
     <string name="encrypt_file_choose">Elige un archivo para cifrar</string>
@@ -344,7 +344,7 @@ pgpony.norsehor.se</string>
     <string name="verify_file_entry_button">Verificar un archivo</string>
     <string name="sign_file_entry_button">Firmar un archivo</string>
     <string name="sign_file_sheet_title">Firmar un archivo</string>
-    <string name="sign_file_sheet_subtitle">Elige un archivo y una clave de firma para crear una firma separada que puedas compartir junto a él.</string>
+    <string name="sign_file_sheet_subtitle">Elige un archivo y una clave para crear una firma separada que puedas compartir junto con este.</string>
     <string name="sign_file_pick_label">Elegir archivo para firmar</string>
     <string name="sign_file_sign_with_format">Firmar con: %1$s</string>
     <string name="sign_file_sign_with_none">Elegir clave de firma</string>
@@ -621,7 +621,7 @@ pgpony.norsehor.se</string>
 
     <!-- ── Export Private Key dialog ───────────────────────────────── -->
     <string name="key_detail_export_private_dialog_title">¿Exportar clave privada?</string>
-    <string name="key_detail_export_private_dialog_body_format">Esto exporta tu clave PRIVADA de %1$s como texto ASCII armor. Cualquiera que reciba este archivo podrá descifrar mensajes enviados a ti Y firmar mensajes como tú. Una vez compartida, PGPony no puede revertirlo.</string>
+    <string name="key_detail_export_private_dialog_body_format">Esto exporta tu clave PRIVADA de %1$s como texto ASCII armor. Cualquiera que reciba este archivo podrá descifrar mensajes cifrados para ti Y firmar mensajes como tú persona. Una vez compartida, PGPony no puede revertirlo.</string>
 
     <!-- ── Export biometric prompt ─────────────────────────────────── -->
     <string name="key_detail_export_biometric_title">Verificar identidad</string>
@@ -909,7 +909,7 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
 
     <!-- ── Permission view ──────────────────────────────────────────── -->
     <string name="contacts_permission_title">Acceso a Contactos</string>
-    <string name="contacts_permission_explainer">PGPony puede vincular claves de cifrado a tus\ncontactos para identificarlas mejor y\ndescubrir claves públicas automáticamente.</string>
+    <string name="contacts_permission_explainer">PGPony puede vincular claves de cifrado\na tus contactos para identificarlas\nmejor y descubrir claves públicas\nautomáticamente.</string>
     <string name="contacts_permission_button">Permitir acceso a Contactos</string>
 
     <!-- ── Empty state ──────────────────────────────────────────────── -->
@@ -1074,7 +1074,7 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
     <string name="export_private_sheet_title">Clave privada lista</string>
     <string name="export_private_sheet_warning">Esta clave permite descifrar mensajes que se te envíen Y firmar como tú. Trátala como una contraseña — guárdala en un lugar al que sólo tú tengas acceso.</string>
     <string name="export_public_sheet_title">Compartir clave pública</string>
-    <string name="export_public_sheet_explainer">Cualquier persona con esta clave puede verificar firmas tuyas y enviarte mensajes cifrados.</string>
+    <string name="export_public_sheet_explainer">Cualquier persona con esta clave puede verificar tu firma y enviarte mensajes cifrados.</string>
 
     <!-- ── RevocationResultSheet ─────────────────────────────────────── -->
     <string name="revocation_result_sheet_title">Clave revocada</string>
@@ -1107,7 +1107,7 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
          ════════════════════════════════════════════════════════════════ -->
     <string name="notes_editor_title_add">Añadir notas</string>
     <string name="notes_editor_title_edit">Editar notas</string>
-    <string name="notes_editor_explainer">Las notas se almacenan localmente sólo en este dispositivo y nunca se incluyen en las exportaciones o al compartir esta clave.</string>
+    <string name="notes_editor_explainer">Las notas se almacenan localmente en este dispositivo y nunca se incluyen en las exportaciones o al compartir la clave.</string>
     <string name="notes_editor_placeholder">Notas sobre esta clave…</string>
 
     <!-- ════════════════════════════════════════════════════════════════
@@ -1608,7 +1608,7 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
     <string name="settings_keyservers_title">Servidores de claves</string>
     <string name="settings_pass_store_biometric_subtitle">Pedir desbloqueo biométrico antes de abrir el Password Store.</string>
     <string name="settings_pass_store_biometric_title">Requerir biometría</string>
-    <string name="settings_pass_store_enable_subtitle">Abre y descifra un almacén pass existente. PGPony lo lee en su sitio y nunca lo modifica.</string>
+    <string name="settings_pass_store_enable_subtitle">Abre y descifra un almacén pass existente. PGPony lo lee in situ y nunca lo modifica.</string>
     <string name="settings_pass_store_enable_title">Password Store</string>
     <string name="settings_pass_store_open_subtitle">Explora tus almacenes importados.</string>
     <string name="settings_pass_store_open_title">Abrir Password Store</string>
@@ -1705,7 +1705,7 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
     <string name="key_detail_add_userid_passphrase_label">Frase de contraseña</string>
     <string name="key_detail_add_userid_sheet_subtitle">Nueva identidad para %1$s</string>
     <string name="key_detail_add_userid_sheet_title">Añadir ID de usuario</string>
-    <string name="key_detail_fallbacks_explainer">Si un mensaje no se puede descifrar con esta clave, se probarán estas claves a continuación, en orden. El resto de tus claves se prueban igualmente al final, para que nada que antes se descifraba deje de descifrarse.</string>
+    <string name="key_detail_fallbacks_explainer">Si un mensaje no se puede descifrar con la clave actual, se probarán estas claves en orden a continuación. El resto de tus claves se prueban igualmente al final, para que nada que antes se descifraba quede sin descifrar.</string>
     <string name="key_detail_fallbacks_move_down">Bajar</string>
     <string name="key_detail_fallbacks_move_up">Subir</string>
     <string name="key_detail_fallbacks_none">No hay otras claves privadas de reserva.</string>
@@ -1769,7 +1769,7 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
 
     <!-- 4.2.0 RC4 workstream O8: strings added by O3/O5. -->
     <string name="key_detail_fallbacks_strict_title">Usar solo las claves de reserva activadas</string>
-    <string name="key_detail_fallbacks_strict_subtitle">Omite la red de claves restantes: se prueban solo esta clave y las reservas activadas arriba.</string>
+    <string name="key_detail_fallbacks_strict_subtitle">Omite las claves restantes: se prueba sólo la clave actual y las de reserva activadas.</string>
     <string name="export_passphrase_label">Proteger esta exportación con una frase de contraseña (opcional)</string>
     <string name="export_passphrase_backup_label">Proteger la copia con una frase de contraseña (opcional; se ignora si la clave ya tiene una)</string>
     <string name="export_passphrase_confirm_label">Confirmar la frase de contraseña de exportación</string>
