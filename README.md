@@ -22,8 +22,8 @@ build contains no Google services and runs fully on de-Googled devices.
 
 The app ships two product flavors:
 
-- `play` — Google Play build. Includes the Play In-App Review dependency.
-- `foss` — F-Droid / IzzyOnDroid / direct APK. No Google Play dependencies.
+- `play`: Google Play build. Includes the Play In-App Review dependency.
+- `foss`: F-Droid / IzzyOnDroid / direct APK. No Google Play dependencies.
 
 ```
 ./gradlew assembleFossRelease
@@ -31,6 +31,46 @@ The app ships two product flavors:
 ```
 
 Debug variants are `assembleFossDebug` and `assemblePlayDebug`.
+
+## Verify a release
+
+Every release is built reproducibly, so you can rebuild the APK from the
+tagged source and confirm it matches the published binary bit for bit,
+and you can confirm the published APK is signed with the project's own
+key. You do not have to trust the download.
+
+Verify the signature and certificate. The release APK is signed with the
+PGPony release key; its certificate SHA-256 fingerprint is:
+
+```
+446bf9e621222a40c66cd2476e1a97105ccb2a9b16a01a91c1c7eb90765b50dc
+```
+
+Check a downloaded APK against it with the Android build tools:
+
+```
+apksigner verify --print-certs PGPony-<version>-foss.apk
+```
+
+The printed "certificate SHA-256 digest" must equal the fingerprint
+above. A detached OpenPGP signature (`.asc`) and a `.sha256` are
+published beside every release APK; the release notes carry the
+whole-file SHA-256 for downloaders and a content hash for rebuilders,
+each labeled with what it means.
+
+Rebuild from source and compare. The release gate script clones a tag
+twice into clean, isolated build roots, proves the two builds are
+byte-identical, and compares them against a candidate APK:
+
+```
+tools/verify_repro.sh rebuild v<version> PGPony-<version>-foss.apk
+```
+
+It requires an Android SDK and network access for the clone and
+dependency downloads, and prints per-dex SHA-256s and the canonical
+content hash. The full procedure, and how this maps to F-Droid's own
+verification, is in `REPRODUCIBLE_BUILDS_PLAYBOOK.md` and
+`docs/REPRODUCIBLE_BUILDS.md`.
 
 ## License
 
