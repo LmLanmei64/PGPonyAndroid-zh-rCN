@@ -233,8 +233,19 @@ data class EncryptUiState(
     val fileEncryptedWithPassword: Boolean = false,
     // ── 3.1.0 Phase 5 (J3/J4): Bundle compose ──────────────────────────
     val bundleBody: String = "",
-    val bundleAttachments: List<MimeAttachment> = emptyList(),
+    // 4.2.0 RC6 (#32): refs, not bytes. A picker add stores only the
+    // uri + metadata; the bytes are streamed at encrypt time by
+    // MimeBuilder.writeMixedSources, so a 350 MB attachment is never
+    // resident. Share-seeded and legacy adds stay ByteArray-backed via
+    // the `data` slot.
+    val bundleAttachments: List<BundleAttachmentRef> = emptyList(),
     val encryptedBundleArmored: String? = null,
+    // 4.2.0 RC6 (#32, tail): above BUNDLE_RESULT_INLINE_LIMIT the
+    // armored result stays in this scratch file instead of a String —
+    // a 750 MB bundle armors to ~1.4 GB, and the readText() that used
+    // to produce encryptedBundleArmored was the last OOM in the path.
+    // Exactly one of the two is non-null when the result sheet shows.
+    val encryptedBundleFile: java.io.File? = null,
     val showBundleResultSheet: Boolean = false,
     // ── Phase A5: "Sign a file" (detached signature, software key) ─────
     //
@@ -418,6 +429,43 @@ data class DecryptUiState(
  * even a 128 MB heap with Compose resident.
  */
 internal const val INLINE_FILE_LIMIT: Long = 4L * 1024 * 1024
+
+/**
+ * 4.2.0 RC6 (#32, tail): largest armored bundle result held as an
+ * in-memory String (which is what enables Copy Inline Block). Past it
+ * the result stays on disk and the sheet streams shares/saves from the
+ * file; copying multi-hundred-MB text into the clipboard was never
+ * going to work anyway.
+ */
+internal const val BUNDLE_RESULT_INLINE_LIMIT: Long = 8L * 1024 * 1024
+
+/**
+ * 4.2.0 RC6 (#32, AraafRoyall): one bundle attachment, byte- or
+ * uri-backed. Exactly one of [data] / [uri] is non-null. [size] is the
+ * byte count ([data].size for byte-backed; the picker's declared size
+ * for uri-backed, -1 when the provider declares none, e.g. some cloud
+ * documents). Deliberately NOT MimeAttachment: that is a transport
+ * model shared with the MIME parser and has no business knowing about
+ * content:// URIs (its own header says so); this type is compose-state
+ * only and converts to a MimeSource at encrypt time.
+ */
+class BundleAttachmentRef(
+    val filename: String,
+    val contentType: String,
+    val size: Long,
+    val data: ByteArray? = null,
+    val uri: android.net.Uri? = null
+) {
+    /** Open the backing bytes for one streaming pass. */
+    fun openStream(): java.io.InputStream =
+        data?.let { java.io.ByteArrayInputStream(it) }
+            ?: PGPonyApp.instance.contentResolver.openInputStream(uri!!)
+            ?: throw java.io.IOException("Cannot open attachment: $filename")
+
+    fun toMimeSource() = com.pgpony.android.crypto.mime.MimeBuilder.MimeSource(
+        filename, contentType, ::openStream
+    )
+}
 
 /**
  * 4.1.0 Phase 16. How much ciphertext the card decrypt path will
@@ -870,7 +918,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         recipientRings: List<org.bouncycastle.openpgp.PGPPublicKeyRing>
     ): String {
         val s = _encryptState.value
-        val payloadBytes = s.bundleAttachments.sumOf { it.data.size.toLong() }
+        val payloadBytes = s.bundleAttachments.sumOf { it.size.coerceAtLeast(0L) }
         _encryptState.value = _encryptState.value.copy(
             processedBytes = 0L,
             totalBytes = payloadBytes + payloadBytes * 4 / 3 + 1024
@@ -880,10 +928,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         )
         try {
             mimeFile.outputStream().buffered().use { sink ->
-                MimeBuilder.writeMixed(
+                MimeBuilder.writeMixedSources(
                     out = sink,
                     body = s.bundleBody.takeIf { it.isNotBlank() },
-                    attachments = s.bundleAttachments
+                    sources = s.bundleAttachments.map { it.toMimeSource() }
                 ) { done ->
                     _encryptState.value = _encryptState.value.copy(processedBytes = done)
                 }
@@ -1785,9 +1833,35 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      */
     fun addBundleAttachment(filename: String, contentType: String, bytes: ByteArray) {
         val existing = _encryptState.value.bundleAttachments
-        if (existing.any { it.filename == filename && it.data.size == bytes.size }) return
+        if (existing.any { it.filename == filename && it.size == bytes.size.toLong() }) return
         _encryptState.value = _encryptState.value.copy(
-            bundleAttachments = existing + MimeAttachment(filename, contentType, bytes),
+            bundleAttachments = existing + BundleAttachmentRef(
+                filename, contentType, bytes.size.toLong(), data = bytes
+            ),
+            errorMessage = null
+        )
+    }
+
+    /**
+     * 4.2.0 RC6 (#32): the streaming counterpart — store the pick as a
+     * uri + metadata and never read it here. The SAF read grant from
+     * the picker lasts for the process lifetime, which covers the
+     * encrypt that streams it later; an unreadable uri (revoked grant,
+     * removed cloud file) surfaces as an encrypt error rather than a
+     * silent skip.
+     */
+    fun addBundleAttachmentRef(
+        filename: String,
+        contentType: String,
+        size: Long,
+        uri: android.net.Uri
+    ) {
+        val existing = _encryptState.value.bundleAttachments
+        if (existing.any { it.filename == filename && it.size == size }) return
+        _encryptState.value = _encryptState.value.copy(
+            bundleAttachments = existing + BundleAttachmentRef(
+                filename, contentType, size, uri = uri
+            ),
             errorMessage = null
         )
     }
@@ -1801,7 +1875,11 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         _encryptState.value = _encryptState.value.copy(
             mode = EncryptMode.BUNDLE,
             bundleBody = "",
-            bundleAttachments = attachments,
+            bundleAttachments = attachments.map {
+                BundleAttachmentRef(
+                    it.filename, it.contentType, it.data.size.toLong(), data = it.data
+                )
+            },
             outputText = "",
             errorMessage = null
         )
@@ -1854,7 +1932,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         // thirds of the input after base64, so the total is an estimate
         // until the assembly finishes and it is corrected to the exact
         // figure below.
-        val payloadBytes = s.bundleAttachments.sumOf { it.data.size.toLong() }
+        val payloadBytes = s.bundleAttachments.sumOf { it.size.coerceAtLeast(0L) }
         fileOpJob = viewModelScope.launch {
             _encryptState.value = _encryptState.value.copy(
                 isProcessing = true,
@@ -1936,10 +2014,10 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                         PGPonyApp.instance, "bundle.mime", ScratchFiles.SCOPE_ENCRYPT
                     )
                     mimeFile.outputStream().buffered().use { sink ->
-                        MimeBuilder.writeMixed(
+                        MimeBuilder.writeMixedSources(
                             out = sink,
                             body = s.bundleBody.takeIf { it.isNotBlank() },
-                            attachments = s.bundleAttachments
+                            sources = s.bundleAttachments.map { it.toMimeSource() }
                         ) { done ->
                             if (job?.isActive == false) {
                                 throw java.io.InterruptedIOException("cancelled")
@@ -1977,12 +2055,22 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     }
                     // The container is plaintext and its job is done.
                     runCatching { mimeFile.delete() }
-                    val text = cipherFile.readText(Charsets.UTF_8)
-                    runCatching { cipherFile.delete() }
-                    text
+                    // 4.2.0 RC6 (#32, tail): only inline a result the
+                    // heap can afford; larger ones stay on disk for the
+                    // sheet to stream. The readText() below on a 1.4 GB
+                    // armored file was the OOM behind "file is too
+                    // large" after a successful streamed encrypt.
+                    if (cipherFile.length() <= BUNDLE_RESULT_INLINE_LIMIT) {
+                        val text = cipherFile.readText(Charsets.UTF_8)
+                        runCatching { cipherFile.delete() }
+                        Pair(text, null)
+                    } else {
+                        Pair(null, cipherFile)
+                    }
                 }
                 _encryptState.value = _encryptState.value.copy(
-                    encryptedBundleArmored = armoredOut,
+                    encryptedBundleArmored = armoredOut.first,
+                    encryptedBundleFile = armoredOut.second,
                     processedBytes = 0L,
                     totalBytes = 0L,
                     isProcessing = false,
@@ -2042,9 +2130,13 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     /** 3.1.0 Phase 5 (J4): dismiss the Bundle result. Clears the armored
      *  output and, per the privacy behavior, the composed inputs. */
     fun dismissBundleResult() {
+        // 4.2.0 RC6 (#32, tail): a file-backed result is scratch — gone
+        // with the sheet.
+        _encryptState.value.encryptedBundleFile?.let { runCatching { it.delete() } }
         _encryptState.value = _encryptState.value.copy(
             showBundleResultSheet = false,
-            encryptedBundleArmored = null
+            encryptedBundleArmored = null,
+            encryptedBundleFile = null
         )
         clearEncryptInputsIfEnabled()
     }
@@ -3400,8 +3492,29 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     )
                     scratch = out
                     val resolver = PGPonyApp.instance.contentResolver
+                    // 4.2.0 RC6 (#32, tail-4): a large .eml never had its
+                    // RFC 3156 envelope unwrapped on this path — only the
+                    // buffered (≤4 MB) decrypt did that — so the armor
+                    // parser saw "MIME-Version: 1.0" and failed with
+                    // "invalid header encountered". Probe pass finds the
+                    // armored payload's offset (0 for a plain armored
+                    // file, -1 → no skip for binary), real pass skips to
+                    // it. See MimeEnvelope.armoredPayloadOffset.
+                    val envelopeOffset = resolver.openInputStream(uri)?.use {
+                        MimeEnvelope.armoredPayloadOffset(it)
+                    } ?: -1L
                     val raw = resolver.openInputStream(uri)
                         ?: throw java.io.IOException("Could not open the selected file")
+                    if (envelopeOffset > 0) {
+                        var remaining = envelopeOffset
+                        while (remaining > 0) {
+                            val skipped = raw.skip(remaining)
+                            if (skipped <= 0) {
+                                if (raw.read() < 0) break
+                                remaining--
+                            } else remaining -= skipped
+                        }
+                    }
                     // 4.0.4 — counts ciphertext bytes consumed, which is
                     // the only figure we can report: the plaintext size
                     // is unknown until the literal packet ends.

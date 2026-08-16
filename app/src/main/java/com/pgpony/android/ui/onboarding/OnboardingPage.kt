@@ -286,6 +286,17 @@ private fun BiometricToggleRow(prefs: SharedPreferences) {
     var enabled by remember {
         mutableStateOf(prefs.getBoolean("biometric_lock", false))
     }
+    // RC5 P3 (#23): same capability gate as Settings' setBiometricLock.
+    // MainActivity's A11 lock gate assumes `biometric_lock == true`
+    // implies the device could authenticate when it was enabled; this
+    // toggle previously wrote the pref without checking. When the device
+    // can't authenticate the switch renders disabled instead of arming a
+    // lock the user could not open.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val canAuthenticate = remember {
+        com.pgpony.android.ui.keyring.BiometricGate.canAuthenticate(context) ==
+            com.pgpony.android.ui.keyring.BiometricAvailability.Available
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -318,6 +329,7 @@ private fun BiometricToggleRow(prefs: SharedPreferences) {
             }
             Switch(
                 checked = enabled,
+                enabled = canAuthenticate,
                 onCheckedChange = { newValue ->
                     enabled = newValue
                     prefs.edit().putBoolean("biometric_lock", newValue).apply()

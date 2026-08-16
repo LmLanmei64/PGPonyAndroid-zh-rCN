@@ -73,7 +73,6 @@ import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
-import com.pgpony.android.crypto.mime.MimeAttachment
 import com.pgpony.android.ui.encrypt.INLINE_FILE_LIMIT
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -115,7 +114,17 @@ sealed class IntentAction {
     // a Bundle: the attachments land pre-loaded in the Encrypt tab's
     // Bundle mode (body optional, recipients picked there, outputs per
     // J4). Mirrors iOS ExtensionEncryptView's multi-file route.
-    data class ComposeBundle(val attachments: List<MimeAttachment>) : IntentAction()
+    data class ComposeBundle(val files: List<ShareFileRef>) : IntentAction()
+
+    /** 4.2.0 RC6 (#32): one shared file as uri + metadata, unread. The
+     *  bundle streams it at encrypt time; size is -1 when the provider
+     *  declares none. */
+    data class ShareFileRef(
+        val filename: String,
+        val contentType: String,
+        val size: Long,
+        val uri: Uri
+    )
 
     data object None : IntentAction()
 }
@@ -348,7 +357,7 @@ object IntentHandler {
     /**
      * 3.1.0 Phase 6 (J5) — ACTION_SEND_MULTIPLE: collect every shared
      * URI (clipData plus the EXTRA_STREAM list — senders vary in which
-     * they populate), read each into a MimeAttachment, and route:
+     * they populate), capture each as a ShareFileRef, and route:
      * 2+ readable files → ComposeBundle; exactly one → the normal
      * single-file classification (handleFileUri); none readable → None.
      */
@@ -366,29 +375,21 @@ object IntentHandler {
         if (uris.isEmpty()) return IntentAction.None
         if (uris.size == 1) return handleFileUri(uris.first(), resolver)
 
-        val attachments = mutableListOf<MimeAttachment>()
-        for (uri in uris) {
-            try {
-                // 3.1.0 Phase 8 Fix1: robust read (virtual/cloud docs).
-                val bytes = DocumentBytes.read(resolver, uri) ?: continue
-                if (bytes.isEmpty()) continue
-                val name = displayName(uri, resolver) ?: "attachment"
-                val mime = resolver.getType(uri) ?: "application/octet-stream"
-                attachments.add(MimeAttachment(name, mime, bytes))
-            } catch (_: Exception) {
-                // Unreadable selection (revoked grant, cloud stub): skip
-                // it; the rest of the batch still lands.
-            }
-        }
-        return when {
-            attachments.size >= 2 -> IntentAction.ComposeBundle(attachments)
-            attachments.size == 1 -> IntentAction.EncryptFile(
-                attachments[0].data,
-                null,
-                attachments[0].filename
+        // 4.2.0 RC6 (#32): metadata only — this path used to
+        // DocumentBytes.read() every shared file into memory, so sharing
+        // a few large files OOMed before the compose screen even
+        // appeared. The refs stream at encrypt time; a file that turns
+        // out unreadable then (revoked grant, cloud stub) surfaces as an
+        // encrypt error instead of being silently dropped here.
+        val files = uris.map { uri ->
+            IntentAction.ShareFileRef(
+                filename = displayName(uri, resolver) ?: "attachment",
+                contentType = resolver.getType(uri) ?: "application/octet-stream",
+                size = DocumentBytes.declaredSize(resolver, uri) ?: -1L,
+                uri = uri
             )
-            else -> IntentAction.None
         }
+        return IntentAction.ComposeBundle(files)
     }
 
     private fun classifySend(intent: Intent, resolver: ContentResolver): ShareIntentContent {

@@ -193,6 +193,13 @@
     <string name="settings_data_clear_step2_title">¿Estás absolutamente seguro?</string>
     <string name="settings_data_clear_step2_body">Perderás el acceso a todos los mensajes cifrados que utilicen estas claves. No hay recuperación.</string>
     <string name="settings_data_clear_step2_confirm">BORRAR TODOS LOS DATOS</string>
+    <string name="settings_data_clear_backup_button">Guardar primero una copia de seguridad</string>
+    <string name="settings_data_clear_ack2_label">Estoy seguro. Eliminar todas las claves y todos los datos de la aplicación.</string>
+    <string name="settings_data_clear_biometric_title">Confirmar la eliminación de todos los datos</string>
+    <string name="settings_data_clear_biometric_subtitle">Autentícate para eliminar permanentemente todas las claves</string>
+    <string name="settings_data_clear_key_list_header_format">Claves que se destruirán permanentemente (%1$d):</string>
+    <string name="settings_data_clear_type_word">BORRAR</string>
+    <string name="settings_data_clear_type_label_format">Escribe %1$s para confirmar</string>
     <string name="settings_data_clear_success">Todos los datos borrados</string>
     <string name="settings_data_clear_error_format">Error al borrar: %1$s</string>
 
@@ -1237,6 +1244,8 @@ Opcionalmente, bloquea la app con tu huella digital o cara para mayor tranquilid
     <string name="bundle_result_share_eml">Compartir como correo (.eml)</string>
     <string name="bundle_result_share_asc">Compartir .asc cifrado</string>
     <string name="bundle_result_copy_inline">Copiar bloque inline</string>
+    <string name="bundle_result_copy_too_large">Demasiado grande para copiar. Compártelo o guárdalo como archivo.</string>
+    <string name="bundle_result_export_writing">Escribiendo el archivo… puede tardar con un paquete grande.</string>
     <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
     <string name="bundle_result_save_eml">Guardar .eml en Archivos</string>
     <string name="bundle_result_save_asc">Guardar .asc en Archivos</string>

@@ -729,28 +729,27 @@ private fun ShareEncryptFileResultContent(
     // own row. Done used to sit where Save is now, which is part of why
     // "done button does nothing" was the way the report was phrased: the
     // primary-looking action closed the screen and lost the file.
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Button(onClick = onSave, modifier = Modifier.weight(1f)) {
-            Icon(
-                imageVector = Icons.Filled.SaveAlt,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.common_button_save))
-        }
-        OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) {
-            Icon(
-                imageVector = Icons.Filled.Share,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.share_target_encrypt_file_result_share_button))
-        }
+    // RC5 follow-up (#13, CertainBot): the filled-Save-beside-outlined-
+    // Share pair read as lopsided. Now stacked full-width like the
+    // in-app result screen: filled primary Save on top, outlined Share
+    // below, Done unchanged on its own row.
+    Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
+        Icon(
+            imageVector = Icons.Filled.SaveAlt,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(stringResource(R.string.common_button_save))
+    }
+    OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth()) {
+        Icon(
+            imageVector = Icons.Filled.Share,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(stringResource(R.string.share_target_encrypt_file_result_share_button))
     }
     ShareSaveNote(saveNote)
     TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
@@ -820,28 +819,27 @@ private fun ShareDecryptFileResultContent(
     // 4.1.0 Phase 7b — same shape as the encrypt side. A decrypted file
     // that can only be shared back out to another app is not much use to
     // someone who wanted the file.
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Button(onClick = onSave, modifier = Modifier.weight(1f)) {
-            Icon(
-                imageVector = Icons.Filled.SaveAlt,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.common_button_save))
-        }
-        OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) {
-            Icon(
-                imageVector = Icons.Filled.Share,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.share_target_decrypt_file_result_share_button))
-        }
+    // RC5 follow-up (#13, CertainBot): the filled-Save-beside-outlined-
+    // Share pair read as lopsided. Now stacked full-width like the
+    // in-app result screen: filled primary Save on top, outlined Share
+    // below, Done unchanged on its own row.
+    Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
+        Icon(
+            imageVector = Icons.Filled.SaveAlt,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(stringResource(R.string.common_button_save))
+    }
+    OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth()) {
+        Icon(
+            imageVector = Icons.Filled.Share,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(stringResource(R.string.share_target_decrypt_file_result_share_button))
     }
     ShareSaveNote(saveNote)
     TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
@@ -978,10 +976,16 @@ private fun ShareResultActionRow(
 @Composable
 private fun ShareSaveNote(note: String?) {
     if (note == null) return
+    // RC5 P4 (#13, CertainBot): success note in the shared success green,
+    // failure in the theme error color. Every caller assigns either
+    // result_save_saved_note or result_save_failed_note, so the failed
+    // resource fully discriminates the two outcomes.
+    val failed = note == stringResource(R.string.result_save_failed_note)
     Text(
         text = note,
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = if (failed) MaterialTheme.colorScheme.error
+                else androidx.compose.ui.graphics.Color(0xFF22C55E),
     )
 }
 

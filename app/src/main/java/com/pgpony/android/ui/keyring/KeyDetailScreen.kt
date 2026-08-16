@@ -923,10 +923,16 @@ internal fun deleteWithOptionalBiometricGate(
     context: android.content.Context,
     onConfirmed: () -> Unit
 ) {
-    val prefs = context.getSharedPreferences("pgpony_prefs", android.content.Context.MODE_PRIVATE)
     val activity = context as? androidx.fragment.app.FragmentActivity
-    if (prefs.getBoolean("biometric_lock", false) &&
-        activity != null &&
+    // RC5 follow-up (#36, Araaf): the gate used to apply only when the
+    // app's Biometric Lock setting was on (the original L design), so a
+    // user running with the lock off deleted key pairs with no device
+    // auth at all. The P2 clear-all gauntlet already reversed that
+    // reasoning — destroying private key material justifies the prompt
+    // regardless of the lock setting — and single-key deletion is the
+    // same stakes at smaller scope. Now gated purely on device
+    // capability, same rule as the gauntlet.
+    if (activity != null &&
         BiometricGate.canAuthenticate(context) == BiometricAvailability.Available
     ) {
         BiometricGate.authenticate(

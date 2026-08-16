@@ -865,7 +865,9 @@ fun EncryptScreen(viewModel: EncryptDecryptViewModel) {
         )
     }
     // 3.1.0 Phase 5 (J4): Bundle output sheet (.eml / .asc / inline).
-    if (state.showBundleResultSheet && state.encryptedBundleArmored != null) {
+    if (state.showBundleResultSheet &&
+        (state.encryptedBundleArmored != null || state.encryptedBundleFile != null)
+    ) {
         BundleEncryptionResultScreen(
             state = state,
             onDismiss = { viewModel.dismissBundleResult() }
@@ -1713,17 +1715,17 @@ private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewM
         activity?.startMultiDocumentPicker(mimes) { uris ->
             for (uri in uris) {
                 try {
-                    val (name, _) = queryDocumentMetadata(context, uri)
-                    val bytes = context.contentResolver.openInputStream(uri)?.use {
-                        it.readBytes()
-                    } ?: continue
-                    if (bytes.isEmpty()) continue
+                    // 4.2.0 RC6 (#32): metadata only — no read here. The
+                    // pick used to readBytes() the whole file on the main
+                    // thread, which was the OOM (and the ANR) on large
+                    // attachments; the bytes now stream at encrypt time.
+                    val (name, declaredSize) = queryDocumentMetadata(context, uri)
                     val resolvedName = name
                         ?: uri.lastPathSegment?.substringAfterLast('/')
                         ?: "attachment"
                     val mime = context.contentResolver.getType(uri)
                         ?: "application/octet-stream"
-                    viewModel.addBundleAttachment(resolvedName, mime, bytes)
+                    viewModel.addBundleAttachmentRef(resolvedName, mime, declaredSize ?: -1L, uri)
                 } catch (_: Exception) {
                     // Unreadable selection (revoked grant, cloud stub):
                     // skip it; the rest of the batch still lands.
@@ -1791,17 +1793,15 @@ private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewM
                 activity?.startPhotoPicker { uris ->
                     for (uri in uris) {
                         try {
-                            val (name, _) = queryDocumentMetadata(context, uri)
-                            val bytes = context.contentResolver.openInputStream(uri)?.use {
-                                it.readBytes()
-                            } ?: continue
-                            if (bytes.isEmpty()) continue
+                            // 4.2.0 RC6 (#32): metadata only, same as the
+                            // document picker above.
+                            val (name, declaredSize) = queryDocumentMetadata(context, uri)
                             val resolvedName = name
                                 ?: uri.lastPathSegment?.substringAfterLast('/')
                                 ?: "photo"
                             val mime = context.contentResolver.getType(uri)
                                 ?: "image/*"
-                            viewModel.addBundleAttachment(resolvedName, mime, bytes)
+                            viewModel.addBundleAttachmentRef(resolvedName, mime, declaredSize ?: -1L, uri)
                         } catch (_: Exception) {
                             // Skip unreadable selections; the rest land.
                         }
@@ -1950,7 +1950,7 @@ private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewM
                             maxLines = 1
                         )
                         Text(
-                            formatFileSize(att.data.size.toLong()),
+                            if (att.size >= 0) formatFileSize(att.size) else "—",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -3057,10 +3057,15 @@ private fun SignFileModeBody(state: EncryptUiState, viewModel: EncryptDecryptVie
                     Text(stringResource(R.string.sign_file_save_button))
                 }
                 signFileSaveNote?.let {
+                    // RC5 P4 (#13, CertainBot): green on success, error
+                    // color on failure — same rule as the encryption
+                    // result screen's note.
+                    val failed = it == stringResource(R.string.result_save_failed_note)
                     Text(
                         it,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (failed) MaterialTheme.colorScheme.error
+                                else androidx.compose.ui.graphics.Color(0xFF22C55E),
                     )
                 }
                 OutlinedButton(

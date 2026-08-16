@@ -233,6 +233,14 @@
     <string name="settings_data_clear_step2_title">Are you absolutely sure?</string>
     <string name="settings_data_clear_step2_body">You will lose access to all encrypted messages that use these keys. There is no recovery.</string>
     <string name="settings_data_clear_step2_confirm">DELETE ALL DATA</string>
+    <!-- RC5 P2 (#16, AraafRoyall's data loss): the clear-all gauntlet. -->
+    <string name="settings_data_clear_backup_button">Save a backup first</string>
+    <string name="settings_data_clear_ack2_label">I am sure. Delete every key and all app data.</string>
+    <string name="settings_data_clear_biometric_title">Confirm deleting all data</string>
+    <string name="settings_data_clear_biometric_subtitle">Authenticate to permanently delete every key</string>
+    <string name="settings_data_clear_key_list_header_format">Keys that will be permanently destroyed (%1$d):</string>
+    <string name="settings_data_clear_type_word">DELETE</string>
+    <string name="settings_data_clear_type_label_format">Type %1$s to confirm</string>
     <string name="settings_data_clear_success">All data cleared</string>
     <string name="settings_data_clear_error_format">Clear failed: %1$s</string>
 
@@ -1659,6 +1667,8 @@
     <string name="bundle_result_share_eml">Share as Email (.eml)</string>
     <string name="bundle_result_share_asc">Share encrypted .asc</string>
     <string name="bundle_result_copy_inline">Copy inline block</string>
+    <string name="bundle_result_copy_too_large">Too large to copy. Share or save it as a file instead.</string>
+    <string name="bundle_result_export_writing">Writing file… this can take a while for a large bundle.</string>
     <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
     <string name="bundle_result_save_eml">Save .eml to Files</string>
     <string name="bundle_result_save_asc">Save .asc to Files</string>

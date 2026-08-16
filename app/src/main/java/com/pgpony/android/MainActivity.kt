@@ -888,7 +888,14 @@ fun PGPonyMainScreen(
         // the feature.
         if (biometricLockEnabled) {
             val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_STOP && !isAutoLockSuppressed()) {
+                // RC5 (Kevin): re-check the pref at event time instead of
+                // trusting the composition-time snapshot. A clear-all
+                // (reinstall semantics) wipes `biometric_lock` mid-session;
+                // without the live read the stale snapshot would re-lock a
+                // factory-fresh app on the next ON_STOP.
+                if (event == Lifecycle.Event.ON_STOP && !isAutoLockSuppressed() &&
+                    prefs.getBoolean("biometric_lock", false)
+                ) {
                     isLocked = true
                 }
             }
@@ -1021,7 +1028,13 @@ fun PGPonyMainScreen(
                 // 3.1.0 Phase 6 (J5): multi-file share lands pre-loaded in
                 // Bundle mode; the user adds an optional note, picks
                 // recipients, and encrypts (J3/J4 UI unchanged).
-                encDecVm.startBundleFromShare(action.attachments)
+                // 4.2.0 RC6 (#32): the share now hands over uri refs,
+                // never bytes; clear any draft, then add each ref so the
+                // attachments stream at encrypt time.
+                encDecVm.startBundleFromShare(emptyList())
+                for (f in action.files) {
+                    encDecVm.addBundleAttachmentRef(f.filename, f.contentType, f.size, f.uri)
+                }
                 navController.navigate(Screen.Encrypt.route) {
                     popUpTo(navController.graph.startDestinationId) { saveState = true }
                     launchSingleTop = true

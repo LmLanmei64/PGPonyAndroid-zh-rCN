@@ -1,0 +1,1 @@
+Fixes encrypting to a key by one of its extra identities. Multiple identities per key shipped in 4.2.0, but a mail client could only find a key by its primary address, so encrypting to a secondary identity failed to find the key. It now matches any identity on the key.

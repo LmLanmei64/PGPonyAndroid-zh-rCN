@@ -193,6 +193,13 @@
     <string name="settings_data_clear_step2_title">Você tem absoluta certeza?</string>
     <string name="settings_data_clear_step2_body">Você perderá o acesso a todas as mensagens cifradas que usam essas chaves. Não há recuperação.</string>
     <string name="settings_data_clear_step2_confirm">EXCLUIR TODOS OS DADOS</string>
+    <string name="settings_data_clear_backup_button">Salvar um backup primeiro</string>
+    <string name="settings_data_clear_ack2_label">Tenho certeza. Excluir todas as chaves e todos os dados do aplicativo.</string>
+    <string name="settings_data_clear_biometric_title">Confirmar a exclusão de todos os dados</string>
+    <string name="settings_data_clear_biometric_subtitle">Autentique-se para excluir permanentemente todas as chaves</string>
+    <string name="settings_data_clear_key_list_header_format">Chaves que serão destruídas permanentemente (%1$d):</string>
+    <string name="settings_data_clear_type_word">EXCLUIR</string>
+    <string name="settings_data_clear_type_label_format">Digite %1$s para confirmar</string>
     <string name="settings_data_clear_success">Todos os dados apagados</string>
     <string name="settings_data_clear_error_format">Falha ao apagar: %1$s</string>
 
@@ -1237,6 +1244,8 @@ Opcionalmente, bloqueie o app com sua impressão digital ou rosto para mais tran
     <string name="bundle_result_share_eml">Compartilhar como e-mail (.eml)</string>
     <string name="bundle_result_share_asc">Compartilhar .asc criptografado</string>
     <string name="bundle_result_copy_inline">Copiar bloco inline</string>
+    <string name="bundle_result_copy_too_large">Grande demais para copiar. Compartilhe ou salve como arquivo.</string>
+    <string name="bundle_result_export_writing">Gravando o arquivo… isso pode demorar com um pacote grande.</string>
     <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
     <string name="bundle_result_save_eml">Salvar .eml em Arquivos</string>
     <string name="bundle_result_save_asc">Salvar .asc em Arquivos</string>

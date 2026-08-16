@@ -21,9 +21,14 @@
 #       stripped. Two APKs with the same content hash will pass F-Droid's
 #       signature-copy verification against each other.
 #
-# Environment:
-#   REPO_URL  clone source (default: the public GitHub repo)
-#   WORK      fixed work directory (default: mktemp under /tmp)
+# Environment (all optional, defaults suit a standard foss-flavor app):
+#   REPO_URL      clone source. Default: the origin remote of the current
+#                 directory's git repo, so running from a checkout of the
+#                 app just works.
+#   GRADLE_TASK   build task. Default: :app:assembleFossRelease
+#   APK_REL_PATH  built APK path relative to the clone root. Default:
+#                 app/build/outputs/apk/foss/release/app-foss-release.apk
+#   WORK          fixed work directory (default: mktemp under /tmp)
 #
 # The work directory is always kept, so the clean build (buildA.apk) is
 # available for signing after a PASS. Delete it manually when done.
@@ -33,9 +38,9 @@
 
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/norsehorse-dev/PGPonyAndroid.git}"
-GRADLE_TASK=":app:assembleFossRelease"
-APK_REL_PATH="app/build/outputs/apk/foss/release/app-foss-release.apk"
+REPO_URL="${REPO_URL:-$(git remote get-url origin 2>/dev/null || true)}"
+GRADLE_TASK="${GRADLE_TASK:-:app:assembleFossRelease}"
+APK_REL_PATH="${APK_REL_PATH:-app/build/outputs/apk/foss/release/app-foss-release.apk}"
 
 say()  { printf '%s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -140,6 +145,7 @@ build_leg() {
 
 cmd_rebuild() {
     local tag="$1" candidate="${2:-}" work hA hB
+    [ -n "$REPO_URL" ] || fail "REPO_URL is not set and no git origin remote found here"
     if [ -n "${WORK:-}" ]; then
         work="$WORK"
         mkdir -p "$work"

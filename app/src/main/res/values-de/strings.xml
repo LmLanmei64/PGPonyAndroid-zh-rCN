@@ -193,6 +193,13 @@
     <string name="settings_data_clear_step2_title">Bist du dir wirklich sicher?</string>
     <string name="settings_data_clear_step2_body">Du verlierst den Zugriff auf alle verschlüsselten Nachrichten, die diese Schlüssel verwenden. Eine Wiederherstellung ist nicht möglich.</string>
     <string name="settings_data_clear_step2_confirm">ALLE DATEN LÖSCHEN</string>
+    <string name="settings_data_clear_backup_button">Zuerst ein Backup speichern</string>
+    <string name="settings_data_clear_ack2_label">Ich bin sicher. Alle Schlüssel und alle App-Daten löschen.</string>
+    <string name="settings_data_clear_biometric_title">Löschen aller Daten bestätigen</string>
+    <string name="settings_data_clear_biometric_subtitle">Authentifiziere dich, um alle Schlüssel dauerhaft zu löschen</string>
+    <string name="settings_data_clear_key_list_header_format">Schlüssel, die dauerhaft zerstört werden (%1$d):</string>
+    <string name="settings_data_clear_type_word">LÖSCHEN</string>
+    <string name="settings_data_clear_type_label_format">Gib %1$s ein, um zu bestätigen</string>
     <string name="settings_data_clear_success">Alle Daten gelöscht</string>
     <string name="settings_data_clear_error_format">Löschen fehlgeschlagen: %1$s</string>
 
@@ -1237,6 +1244,8 @@ Optional kannst du die App hinter deinem Fingerabdruck oder Gesicht sperren, um 
     <string name="bundle_result_share_eml">Als E-Mail teilen (.eml)</string>
     <string name="bundle_result_share_asc">Verschlüsselte .asc teilen</string>
     <string name="bundle_result_copy_inline">Inline-Block kopieren</string>
+    <string name="bundle_result_copy_too_large">Zu groß zum Kopieren. Teile oder speichere es stattdessen als Datei.</string>
+    <string name="bundle_result_export_writing">Datei wird geschrieben… bei einem großen Bündel kann das dauern.</string>
     <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
     <string name="bundle_result_save_eml">.eml in Dateien speichern</string>
     <string name="bundle_result_save_asc">.asc in Dateien speichern</string>

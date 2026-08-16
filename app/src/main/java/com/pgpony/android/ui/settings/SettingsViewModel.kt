@@ -46,6 +46,15 @@ data class SettingsUiState(
     val totalKeyPairs: Int = 0,
     val defaultKeyName: String? = null,
     val defaultKeyFingerprint: String? = null,
+    // RC5 gauntlet escalation (#16/#23 follow-up): the FULL keyring,
+    // revoked keys included, so the clear-all dialog can enumerate by
+    // name exactly what is about to be destroyed. recipientKeyChoices
+    // filters revoked keys and is wrong for this purpose.
+    val clearKeysPreview: List<com.pgpony.android.data.PGPKeyEntity> = emptyList(),
+    // RC5 (Kevin): one-shot signal that a clear-all completed. The
+    // screen consumes it, dismisses everything, and routes back to
+    // onboarding — the app should look like a fresh install.
+    val clearCompleted: Boolean = false,
     // Pro
     // Data
     val showClearConfirm: Boolean = false,
@@ -176,7 +185,14 @@ class SettingsViewModel(
         _state.value = _state.value.copy(clearInputsAfterEncrypt = enabled)
     }
 
-    private fun loadPreferences() {
+    /** RC5 P3 (#23): public so SettingsScreen can re-read persisted
+     *  preferences on entry. The onboarding biometric toggle (slide 5)
+     *  writes `biometric_lock` directly to prefs, and this ViewModel is
+     *  constructed BEFORE onboarding runs, so its init-time snapshot can
+     *  go stale: the Settings switch then shows off while the lock is
+     *  actually armed. Re-reading on screen entry keeps the UI truthful
+     *  for any pref mutated outside this ViewModel. */
+    fun loadPreferences() {
         _state.value = _state.value.copy(
             biometricLockEnabled = prefs.getBoolean("biometric_lock", false),
             requireBiometricForDecrypt = prefs.getBoolean("biometric_decrypt", false),
@@ -265,6 +281,7 @@ class SettingsViewModel(
             _state.value = _state.value.copy(
                 totalKeys = all.size,
                 totalKeyPairs = pairs.size,
+                clearKeysPreview = all,
                 defaultKeyName = defaultKey?.let {
                     it.userName.ifBlank { it.userEmail }
                 },
@@ -395,14 +412,18 @@ class SettingsViewModel(
                 for (key in allKeys) {
                     repo.deleteKey(key)
                 }
-                _state.value = _state.value.copy(
-                    isClearing = false,
-                    successMessage = PGPonyApp.instance.getString(R.string.settings_data_clear_success),
-                    totalKeys = 0,
-                    totalKeyPairs = 0,
-                    defaultKeyName = null,
-                    defaultKeyFingerprint = null
-                )
+                // RC5 (Kevin): reinstall semantics. Wipe the whole prefs
+                // file — onboarding_completed, biometric_lock, theme,
+                // cache durations, fallback strict flags, all of it —
+                // and drop any held provider passphrases. The app then
+                // routes back to onboarding exactly like a fresh
+                // install (the screen consumes clearCompleted below).
+                prefs.edit().clear().apply()
+                com.pgpony.android.provider.ProviderPassphraseCache.clearAll()
+                // Fresh default state, not a patch of the old one: every
+                // pref-backed field must read as factory-new, and the
+                // dialog flags must drop so the gauntlet dismisses.
+                _state.value = SettingsUiState(clearCompleted = true)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isClearing = false,
@@ -410,6 +431,12 @@ class SettingsViewModel(
                 )
             }
         }
+    }
+
+    /** RC5 (Kevin): the screen acknowledges the clear-all completion
+     *  after routing to onboarding, so the signal fires exactly once. */
+    fun consumeClearCompleted() {
+        _state.value = _state.value.copy(clearCompleted = false)
     }
 
     // ── Snackbar helpers (Phase 1) ─────────────────────────────────────

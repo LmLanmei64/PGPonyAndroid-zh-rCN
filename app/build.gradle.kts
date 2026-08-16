@@ -228,8 +228,8 @@ android {
         // The real fix, streaming the ciphertext through via the
         // session-key handoff, is open work for this 4.2.0 line, not yet
         // done.
-        versionCode = 420
-        versionName = "4.2.0"
+        versionCode = 421
+        versionName = "4.2.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

@@ -193,6 +193,13 @@
     <string name="settings_data_clear_step2_title">本当によろしいですか？</string>
     <string name="settings_data_clear_step2_body">これらの鍵を使用しているすべての暗号化メッセージへのアクセスを失います。復元はできません。</string>
     <string name="settings_data_clear_step2_confirm">すべてのデータを削除</string>
+    <string name="settings_data_clear_backup_button">まずバックアップを保存</string>
+    <string name="settings_data_clear_ack2_label">確認しました。すべての鍵とアプリのデータを削除します。</string>
+    <string name="settings_data_clear_biometric_title">全データ削除の確認</string>
+    <string name="settings_data_clear_biometric_subtitle">すべての鍵を完全に削除するには認証してください</string>
+    <string name="settings_data_clear_key_list_header_format">完全に破棄される鍵（%1$d件）：</string>
+    <string name="settings_data_clear_type_word">削除</string>
+    <string name="settings_data_clear_type_label_format">確認のため %1$s と入力してください</string>
     <string name="settings_data_clear_success">すべてのデータを削除しました</string>
     <string name="settings_data_clear_error_format">削除に失敗しました: %1$s</string>
 
@@ -1237,6 +1244,8 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="bundle_result_share_eml">メールとして共有（.eml）</string>
     <string name="bundle_result_share_asc">暗号化した.ascを共有</string>
     <string name="bundle_result_copy_inline">インラインブロックをコピー</string>
+    <string name="bundle_result_copy_too_large">コピーするには大きすぎます。代わりにファイルとして共有または保存してください。</string>
+    <string name="bundle_result_export_writing">ファイルを書き込んでいます… 大きなバンドルでは時間がかかることがあります。</string>
     <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
     <string name="bundle_result_save_eml">.emlをファイルに保存</string>
     <string name="bundle_result_save_asc">.ascをファイルに保存</string>

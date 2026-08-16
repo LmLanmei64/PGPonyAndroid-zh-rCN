@@ -193,6 +193,13 @@
     <string name="settings_data_clear_step2_title">Êtes-vous absolument sûr ?</string>
     <string name="settings_data_clear_step2_body">Vous perdrez l\'accès à tous les messages chiffrés qui utilisent ces clés. Aucune récupération possible.</string>
     <string name="settings_data_clear_step2_confirm">EFFACER TOUTES LES DONNÉES</string>
+    <string name="settings_data_clear_backup_button">Enregistrer d\'abord une sauvegarde</string>
+    <string name="settings_data_clear_ack2_label">Je suis sûr. Supprimer toutes les clés et toutes les données de l\'application.</string>
+    <string name="settings_data_clear_biometric_title">Confirmer la suppression de toutes les données</string>
+    <string name="settings_data_clear_biometric_subtitle">Authentifiez-vous pour supprimer définitivement toutes les clés</string>
+    <string name="settings_data_clear_key_list_header_format">Clés qui seront définitivement détruites (%1$d) :</string>
+    <string name="settings_data_clear_type_word">EFFACER</string>
+    <string name="settings_data_clear_type_label_format">Saisissez %1$s pour confirmer</string>
     <string name="settings_data_clear_success">Toutes les données effacées</string>
     <string name="settings_data_clear_error_format">Échec de l\'effacement : %1$s</string>
 
@@ -1237,6 +1244,8 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="bundle_result_share_eml">Partager en e-mail (.eml)</string>
     <string name="bundle_result_share_asc">Partager le .asc chiffré</string>
     <string name="bundle_result_copy_inline">Copier le bloc inline</string>
+    <string name="bundle_result_copy_too_large">Trop volumineux pour être copié. Partagez-le ou enregistrez-le comme fichier.</string>
+    <string name="bundle_result_export_writing">Écriture du fichier… cela peut prendre du temps pour un gros lot.</string>
     <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
     <string name="bundle_result_save_eml">Enregistrer le .eml dans Fichiers</string>
     <string name="bundle_result_save_asc">Enregistrer le .asc dans Fichiers</string>

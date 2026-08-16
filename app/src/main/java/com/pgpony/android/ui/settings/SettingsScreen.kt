@@ -111,7 +111,23 @@ fun SettingsScreen(
     }
 
     // Refresh stats when screen appears
-    LaunchedEffect(Unit) { viewModel.loadKeyStats() }
+    // RC5 P3 (#23): loadPreferences() re-syncs pref-backed switches with
+    // what is actually persisted. Covers the onboarding biometric toggle,
+    // which writes the pref directly before this ViewModel ever re-reads.
+    LaunchedEffect(Unit) {
+        viewModel.loadPreferences()
+        viewModel.loadKeyStats()
+    }
+    // RC5 (Kevin): a completed clear-all behaves like a reinstall — the
+    // gauntlet is already dismissed (state reset in the ViewModel), the
+    // keyring reloads empty, and the app returns to onboarding.
+    LaunchedEffect(state.clearCompleted) {
+        if (state.clearCompleted) {
+            viewModel.consumeClearCompleted()
+            onKeysChanged()
+            onReplayOnboarding()
+        }
+    }
 
     // RC3 §J (#20): system back pops a category sub-page back to the
     // category list instead of leaving Settings.
@@ -947,54 +963,190 @@ fun SettingsScreen(
         }
     }
 
-    // ── Clear Data Dialog ──────────────────────────────────────────────
+    // ── Clear Data Gauntlet ────────────────────────────────────────────
     //
-    // RC4 O6 (#16, AraafRoyall): was two stacked AlertDialogs (Continue →
-    // "Are you absolutely sure?"). Now ONE dialog with the delete-sheet-
-    // style acknowledgement checkbox gating the destructive button —
-    // same safeguard strength, one less stacked prompt, and the checkbox
-    // is a stronger deliberate act than a second tap ever was. The
-    // showClearStep2 state stays in the ViewModel (additive rule) but is
-    // no longer rendered.
+    // RC5 P2 (#16): RC4's single dialog + checkbox cost AraafRoyall his
+    // three keys. Per Kevin's decision (committed publicly in the #16
+    // reply), the feature stays but fires only through consecutive
+    // confirmations: step 1 = warning + a save-a-backup-first offer +
+    // acknowledgement; step 2 = consequences restated + a second, more
+    // explicit acknowledgement; then a biometric check whenever the
+    // device supports one (NOT gated on the app-lock setting — the
+    // stakes justify it; falls through only where no biometrics exist).
+    // This deliberately reverses O6's one-dialog consolidation for this
+    // ONE action: the incident is the evidence that prompt stacking is a
+    // feature here.
     if (state.showClearConfirm) {
-        var clearAcknowledged by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissClear() },
-            title = { Text(stringResource(R.string.settings_data_clear_step1_title)) },
-            text = {
-                Column {
-                    Text(stringResource(R.string.settings_data_clear_step1_body))
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(stringResource(R.string.settings_data_clear_step2_body))
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { clearAcknowledged = !clearAcknowledged },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = clearAcknowledged,
-                            onCheckedChange = { clearAcknowledged = it }
-                        )
-                        Text(
-                            stringResource(R.string.key_delete_ack_label),
-                            style = MaterialTheme.typography.bodyMedium
+        var clearStep by remember { mutableStateOf(1) }
+        var clearAck1 by remember { mutableStateOf(false) }
+        var clearAck2 by remember { mutableStateOf(false) }
+        val runClearWithBiometric = {
+            val fragmentActivity = context as? androidx.fragment.app.FragmentActivity
+            if (fragmentActivity != null &&
+                com.pgpony.android.ui.keyring.BiometricGate.canAuthenticate(context) ==
+                com.pgpony.android.ui.keyring.BiometricAvailability.Available
+            ) {
+                com.pgpony.android.ui.keyring.BiometricGate.authenticate(
+                    activity = fragmentActivity,
+                    title = context.getString(R.string.settings_data_clear_biometric_title),
+                    subtitle = context.getString(R.string.settings_data_clear_biometric_subtitle),
+                    onSuccess = { viewModel.clearAllData() },
+                    onError = { _, _ -> /* cancelled — the dialog stays */ }
+                )
+            } else {
+                viewModel.clearAllData()
+            }
+        }
+        if (clearStep == 1) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissClear() },
+                title = { Text(stringResource(R.string.settings_data_clear_step1_title)) },
+                text = {
+                    Column {
+                        Text(stringResource(R.string.settings_data_clear_step1_body))
+                        // RC5 escalation: name every key about to be
+                        // destroyed, revoked ones included, so the stakes
+                        // are concrete losses rather than an abstract
+                        // warning. Scroll-capped so a large keyring
+                        // doesn't push the buttons off screen.
+                        if (state.clearKeysPreview.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                stringResource(
+                                    R.string.settings_data_clear_key_list_header_format,
+                                    state.clearKeysPreview.size
+                                ),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Column(
+                                modifier = Modifier
+                                    .heightIn(max = 160.dp)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                state.clearKeysPreview.forEach { key ->
+                                    val label = key.userName.ifBlank { key.userEmail }
+                                    Text(
+                                        "\u2022 " + label +
+                                            (if (key.userEmail.isNotBlank() && label != key.userEmail) " (" + key.userEmail + ")" else "") +
+                                            " \u00b7 " + key.shortFingerprint,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.dismissClear()
+                                showBackup = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(stringResource(R.string.settings_data_clear_backup_button)) }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { clearAck1 = !clearAck1 },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = clearAck1, onCheckedChange = { clearAck1 = it })
+                            Text(
+                                stringResource(R.string.key_delete_ack_label),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { clearStep = 2 },
+                        enabled = clearAck1,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) { Text(stringResource(R.string.common_button_continue)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissClear() }) { Text(stringResource(R.string.common_button_cancel)) }
+                }
+            )
+        } else {
+            // RC5 escalation: on top of the second acknowledgement, the
+            // user must type the confirmation word exactly (case and
+            // all — muscle memory can't do it), and the final button
+            // then holds a 5-second countdown before it arms. Breaking
+            // any precondition resets the countdown.
+            var clearTyped by remember { mutableStateOf("") }
+            val clearTypeWord = stringResource(R.string.settings_data_clear_type_word)
+            val clearArmed = clearAck2 && clearTyped.trim() == clearTypeWord
+            var clearCountdown by remember { mutableStateOf(5) }
+            LaunchedEffect(clearArmed) {
+                if (clearArmed) {
+                    clearCountdown = 5
+                    while (clearCountdown > 0) {
+                        kotlinx.coroutines.delay(1000)
+                        clearCountdown--
+                    }
+                } else {
+                    clearCountdown = 5
+                }
+            }
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissClear() },
+                title = { Text(stringResource(R.string.settings_data_clear_step2_title)) },
+                text = {
+                    Column {
+                        Text(stringResource(R.string.settings_data_clear_step2_body))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { clearAck2 = !clearAck2 },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = clearAck2, onCheckedChange = { clearAck2 = it })
+                            Text(
+                                stringResource(R.string.settings_data_clear_ack2_label),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = clearTyped,
+                            onValueChange = { clearTyped = it },
+                            label = {
+                                Text(
+                                    stringResource(
+                                        R.string.settings_data_clear_type_label_format,
+                                        clearTypeWord
+                                    )
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { runClearWithBiometric() },
+                        enabled = clearArmed && clearCountdown == 0,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text(
+                            if (clearArmed && clearCountdown > 0)
+                                stringResource(R.string.settings_data_clear_step2_confirm) + " (" + clearCountdown + ")"
+                            else
+                                stringResource(R.string.settings_data_clear_step2_confirm)
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissClear() }) { Text(stringResource(R.string.common_button_cancel)) }
                 }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { viewModel.clearAllData() },
-                    enabled = clearAcknowledged,
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) { Text(stringResource(R.string.settings_data_clear_step2_confirm)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.dismissClear() }) { Text(stringResource(R.string.common_button_cancel)) }
-            }
-        )
+            )
+        }
     }
 
     // ── Security & Encryption Info (Phase 1) ────────────────────────────

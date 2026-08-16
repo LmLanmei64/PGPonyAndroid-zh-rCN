@@ -753,6 +753,49 @@ class KeyRepository(
     suspend fun getKeyPairs(): List<PGPKeyEntity> = dao.getKeyPairs()
     suspend fun getByFingerprint(fp: String): PGPKeyEntity? = dao.getByFingerprint(fp)
     suspend fun getByEmail(email: String): List<PGPKeyEntity> = dao.getByEmail(email)
+
+    /**
+     * 4.2.1 (#27, bluemle): resolve an email to every held key that
+     * carries it on ANY user id, primary or secondary.
+     *
+     * The indexed `userEmail` column holds only a key's PRIMARY parsed
+     * address, so [getByEmail] alone misses a key whose match is a
+     * SECONDARY identity added via multiple-identities (4.2.0 #29). That
+     * is why a mail client (which resolves a recipient address through
+     * the OpenPGP provider) could not encrypt to a secondary address:
+     * the lookup returned nothing and the client concluded there was no
+     * key. Reported by bluemle on 4.2.0 with v6 ML-KEM-1024 keys.
+     *
+     * This returns the UNION of the indexed primary matches and a scan
+     * of every key's full user-id set, deduped by fingerprint. The
+     * scan parses each stored public key once per resolve; the keyring
+     * is small and provider resolves are not a hot loop, so a scan is
+     * the right fix for a point release and needs no schema migration.
+     * A dedicated searchable user-id index is the 4.3.0 option if the
+     * scan ever proves too slow (it will not for realistic keyrings).
+     *
+     * Matching is case-insensitive on the address inside the angle
+     * brackets, which also makes this more robust than [getByEmail]'s
+     * case-sensitive column equality. Callers keep their own
+     * firstOrNull()/filter shape.
+     */
+    suspend fun getByAnyUserEmail(email: String): List<PGPKeyEntity> {
+        val target = email.substringAfterLast('<').substringBefore('>').trim()
+            .ifEmpty { email.trim() }
+        val byFingerprint = LinkedHashMap<String, PGPKeyEntity>()
+        dao.getByEmail(target).forEach { byFingerprint[it.fingerprint] = it }
+        dao.getAllKeys().forEach { entity ->
+            if (byFingerprint.containsKey(entity.fingerprint)) return@forEach
+            val ring = loadPublicKeyRing(entity.fingerprint) ?: return@forEach
+            val hit = ring.publicKey.userIDs.asSequence().any { uid ->
+                val addr = uid.substringAfterLast('<').substringBefore('>').trim()
+                    .ifEmpty { uid.trim() }
+                addr.equals(target, ignoreCase = true)
+            }
+            if (hit) byFingerprint[entity.fingerprint] = entity
+        }
+        return byFingerprint.values.toList()
+    }
     suspend fun getDefaultKey(): PGPKeyEntity? = dao.getDefaultKey()
     suspend fun keyCount(): Int = dao.count()
 

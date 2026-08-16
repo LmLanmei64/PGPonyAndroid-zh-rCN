@@ -380,10 +380,17 @@ fun EncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
             }
 
             savedNote?.let {
+                // RC5 P4 (#13, CertainBot): success in the same green as
+                // FileDecryptionResultScreen's saved status; failure in
+                // the theme error color. The note strings are the only
+                // two values ever assigned, so matching the failed
+                // resource is a complete discriminator.
+                val failed = it == stringResource(R.string.result_save_failed_note)
                 Text(
                     it,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (failed) MaterialTheme.colorScheme.error
+                            else androidx.compose.ui.graphics.Color(0xFF22C55E),
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
