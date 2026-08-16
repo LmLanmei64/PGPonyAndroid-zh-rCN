@@ -22,14 +22,14 @@ typing an address.
 Whole-file SHA-256 (is this download the published file):
 
 ```
-WHOLE_FILE_SHA256_HERE
+a6db202812b5fc30ea78cad29ff5eedda81bc4cebc7edb1dbc1979852aa6764f
 ```
 
 Content hash (for rebuilders; excludes signature, see
 REPRODUCIBLE_BUILDS_PLAYBOOK.md):
 
 ```
-CONTENT_HASH_HERE
+afb0fd16cb1beef6c98a059d26013e98d060695c40d6fcb25126cf2495f1d390
 ```
 
 The APK is signed with the NorseHorse release key
