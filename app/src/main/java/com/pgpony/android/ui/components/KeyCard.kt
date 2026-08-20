@@ -194,16 +194,7 @@ fun AlgorithmBadge(name: String) {
 
 @Composable
 fun TrustBadge(trust: TrustLevel) {
-    val (icon, tint) = when (trust) {
-        TrustLevel.UNKNOWN -> Icons.AutoMirrored.Filled.HelpOutline to Color.Gray
-        TrustLevel.UNVERIFIED -> Icons.Filled.Warning to Color(0xFFFBBF24)
-        TrustLevel.VERIFIED -> Icons.Filled.VerifiedUser to Color(0xFF22C55E)
-        TrustLevel.ULTIMATE -> Icons.Filled.Star to Color(0xFF3B82F6)
-    }
-    Icon(
-        imageVector = icon,
-        contentDescription = trust.localizedName(),
-        modifier = Modifier.size(20.dp),
-        tint = tint
-    )
+    // #24 — renders through the shared TrustMark so KeyCard, KeyDetail, and
+    // Contacts share one ladder and can't drift.
+    TrustMark(trust = trust, size = 20.dp)
 }

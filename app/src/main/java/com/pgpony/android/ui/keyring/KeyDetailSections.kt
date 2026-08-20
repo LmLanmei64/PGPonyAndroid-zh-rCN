@@ -90,6 +90,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pgpony.android.R
 import com.pgpony.android.crypto.SubkeyCapability
+import com.pgpony.android.crypto.UserIdService
 import com.pgpony.android.data.PGPKeyEntity
 import com.pgpony.android.data.TrustLevel
 import com.pgpony.android.ui.components.TrustBadge
@@ -128,6 +129,7 @@ internal object KeyDetailActionIds {
     const val REVOKE_KEY = "Revoke Key"
     const val EXPORT_REVOCATION_CERT = "Export Revocation Certificate"
     const val EXPORT_PRIVATE_KEY = "Export Private Key"
+    const val CHANGE_PASSPHRASE = "Change Passphrase"
 }
 
 // ── SectionGroup — visual wrapper for grouped-list sections ────────────
@@ -368,13 +370,13 @@ private fun DefaultChip() {
 fun FingerprintSection(
     key: PGPKeyEntity,
     copiedRecently: Boolean,
-    onCopy: () -> Unit
+    onCopy: () -> Unit,
+    onShare: () -> Unit
 ) {
     SectionGroup(title = stringResource(R.string.key_detail_section_fingerprint)) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onCopy)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -384,21 +386,48 @@ fun FingerprintSection(
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Medium
                 ),
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onCopy)
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = if (copiedRecently) Icons.Filled.CheckCircle else Icons.Filled.ContentCopy,
-                    contentDescription = null,
-                    tint = if (copiedRecently) Color(0xFF22C55E) else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = if (copiedRecently) stringResource(R.string.key_detail_fingerprint_copied) else stringResource(R.string.key_detail_fingerprint_tap_to_copy),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (copiedRecently) Color(0xFF22C55E) else MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable(onClick = onCopy)
+                ) {
+                    Icon(
+                        imageVector = if (copiedRecently) Icons.Filled.CheckCircle else Icons.Filled.ContentCopy,
+                        contentDescription = null,
+                        tint = if (copiedRecently) Color(0xFF22C55E) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (copiedRecently) stringResource(R.string.key_detail_fingerprint_copied) else stringResource(R.string.key_detail_fingerprint_tap_to_copy),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (copiedRecently) Color(0xFF22C55E) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable(onClick = onShare)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.IosShare,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = stringResource(R.string.key_detail_action_share_public_key),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     }
@@ -425,6 +454,17 @@ fun DetailsSection(
             value = if (key.isV6Key) stringResource(R.string.key_detail_detail_format_v6)
                     else stringResource(R.string.key_detail_detail_format_v4)
         )
+        // §5.5.2 (board t/3): honest storage-level row. Software keystore for
+        // every non-card key today; hardware card for card-backed keys. No
+        // TEE/StrongBox claim until §5.5.3 actually lands. Secret-bearing keys
+        // only (a public-only key has no key material to protect).
+        if (key.isKeyPair || key.isCardBacked) {
+            DetailRow(
+                label = stringResource(R.string.key_detail_detail_storage),
+                value = if (key.isCardBacked) stringResource(R.string.key_detail_detail_storage_card)
+                        else stringResource(R.string.key_detail_detail_storage_software)
+            )
+        }
         DetailRow(label = stringResource(R.string.key_detail_detail_created), value = formatDate(key.createdAt))
         ExpiresRow(key = key, onEditExpiry = onEditExpiry)
         TrustLevelRow(trust = key.trustLevel, onClick = onTrustTap)
@@ -711,6 +751,15 @@ fun ActionsSection(
                 onClick = { onComingSoon(KeyDetailActionIds.EXPORT_PRIVATE_KEY) }
             )
         }
+        // §1.1 (#26): software key pairs only. Card keys change the passphrase
+        // on the card (the CHANGE_CARD_PIN row above).
+        if (key.isKeyPair && !key.isCardBacked) {
+            ActionRow(
+                icon = Icons.Filled.Password,
+                label = stringResource(R.string.key_detail_action_change_passphrase),
+                onClick = { onComingSoon(KeyDetailActionIds.CHANGE_PASSPHRASE) }
+            )
+        }
         if (key.isKeyPair && !key.isDefault) {
             ActionRow(
                 icon = Icons.Filled.Star,
@@ -932,6 +981,61 @@ fun SubkeysSection(
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(stringResource(R.string.key_detail_subkeys_add_action))
+            }
+        }
+    }
+}
+
+/**
+ * §5.6.7 (Play review) — human-readable notations (name=value) carried on
+ * the primary UID's self-cert. Read-only list here; the Edit action opens
+ * EditNotationsSheet. Only software key pairs can edit, since a save
+ * re-signs the self-cert. When empty but editable the section still
+ * renders so there is an entry point to add the first notation.
+ */
+@Composable
+fun NotationsSection(
+    notations: List<UserIdService.Notation>,
+    canEdit: Boolean = false,
+    onEdit: (() -> Unit)? = null
+) {
+    if (notations.isEmpty() && !canEdit) return
+    SectionGroup(title = stringResource(R.string.key_detail_notations_title)) {
+        if (notations.isEmpty()) {
+            Text(
+                text = stringResource(R.string.key_detail_notations_empty),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+        } else {
+            notations.forEach { n ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = n.name,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = n.value,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+        if (canEdit && onEdit != null) {
+            TextButton(
+                onClick = onEdit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(stringResource(R.string.key_detail_notations_edit_action))
             }
         }
     }

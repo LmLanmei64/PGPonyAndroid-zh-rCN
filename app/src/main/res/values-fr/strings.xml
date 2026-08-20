@@ -193,6 +193,13 @@
     <string name="settings_data_clear_step2_title">Êtes-vous absolument sûr ?</string>
     <string name="settings_data_clear_step2_body">Vous perdrez l\'accès à tous les messages chiffrés qui utilisent ces clés. Aucune récupération possible.</string>
     <string name="settings_data_clear_step2_confirm">EFFACER TOUTES LES DONNÉES</string>
+    <string name="settings_data_clear_backup_button">Enregistrer d\'abord une sauvegarde</string>
+    <string name="settings_data_clear_ack2_label">Je suis sûr. Supprimer toutes les clés et toutes les données de l\'application.</string>
+    <string name="settings_data_clear_biometric_title">Confirmer la suppression de toutes les données</string>
+    <string name="settings_data_clear_biometric_subtitle">Authentifiez-vous pour supprimer définitivement toutes les clés</string>
+    <string name="settings_data_clear_key_list_header_format">Clés qui seront définitivement détruites (%1$d) :</string>
+    <string name="settings_data_clear_type_word">EFFACER</string>
+    <string name="settings_data_clear_type_label_format">Saisissez %1$s pour confirmer</string>
     <string name="settings_data_clear_success">Toutes les données effacées</string>
     <string name="settings_data_clear_error_format">Échec de l\'effacement : %1$s</string>
 
@@ -225,8 +232,8 @@
     <string name="settings_about_reset_tips_subtitle">Réafficher les conseils contextuels sur chaque onglet</string>
     <string name="settings_about_reset_tips_success">Les conseils réapparaîtront à chaque visite d\'écran</string>
     <string name="settings_about_footer">PGPony pour Android
-par NorseHorse (Kevin Stewart)
-pgpony.norsehor.se</string>
+par NorseHorse
+pgpony.app</string>
 
     <!-- ════════════════════════════════════════════════════════════════
          MainActivity — small UI strings (tab labels, etc.)
@@ -876,6 +883,10 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="onboarding_page_keyring_hint">Vous pouvez les gérer à tout moment depuis l\'onglet Trousseau.</string>
     <string name="onboarding_page_biometric_toggle_title">Activer le verrouillage biométrique</string>
     <string name="onboarding_page_biometric_toggle_subtitle">Demande l\'empreinte digitale ou le visage pour ouvrir PGPony</string>
+    <string name="onboarding_slide_updates_title">Restez à jour</string>
+    <string name="onboarding_slide_updates_body">Vous avez installé PGPony en dehors d\'une boutique d\'applications, il ne se met donc pas à jour tout seul. PGPony peut consulter GitHub pour trouver de nouvelles versions et vous avertir. Il ne télécharge ni n\'installe jamais rien de lui-même.</string>
+    <string name="onboarding_page_updates_toggle_title">Rechercher des mises à jour</string>
+    <string name="onboarding_page_updates_toggle_subtitle">M\'avertir lorsqu\'une version plus récente est disponible.</string>
 
     <!-- ── OnboardingScreen — Skip / Next / Get Started ─────────────── -->
     <string name="onboarding_screen_skip">Passer</string>
@@ -1116,6 +1127,12 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="sign_as_sheet_title">Signer en tant que</string>
     <string name="sign_as_sheet_explainer">Les destinataires peuvent vérifier que le message provient de cette clé. Toute personne disposant de votre clé publique pour cette identité verra votre nom comme signataire.</string>
     <string name="sign_as_sheet_selected_cd">Sélectionné</string>
+    <string name="sign_as_subkey_title">Clé de signature</string>
+    <string name="sign_as_subkey_explainer">Cette clé a plusieurs clés de signature. Choisissez celle qui signe.</string>
+    <string name="sign_as_subkey_automatic">Automatique</string>
+    <string name="sign_as_subkey_automatic_detail">%1$s · %2$s</string>
+    <string name="sign_as_subkey_primary_label">Clé principale (%1$s)</string>
+    <string name="sign_as_subkey_subkey_label">Sous-clé (%1$s)</string>
     <string name="sign_as_sheet_default_badge">PAR DÉFAUT</string>
     <string name="sign_as_sheet_empty">Aucune paire de clés disponible.</string>
 
@@ -1237,6 +1254,8 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="bundle_result_share_eml">Partager en e-mail (.eml)</string>
     <string name="bundle_result_share_asc">Partager le .asc chiffré</string>
     <string name="bundle_result_copy_inline">Copier le bloc inline</string>
+    <string name="bundle_result_copy_too_large">Trop volumineux pour être copié. Partagez-le ou enregistrez-le comme fichier.</string>
+    <string name="bundle_result_export_writing">Écriture du fichier… cela peut prendre du temps pour un gros lot.</string>
     <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
     <string name="bundle_result_save_eml">Enregistrer le .eml dans Fichiers</string>
     <string name="bundle_result_save_asc">Enregistrer le .asc dans Fichiers</string>
@@ -1263,6 +1282,11 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="settings_email_format_attachment">Pièce jointe</string>
     <string name="settings_email_format_both">Les deux</string>
     <string name="settings_email_format_subtitle">Intégré place le bloc chiffré dans le corps du message pour que les clients compatibles PGP le déchiffrent automatiquement ; Pièce jointe envoie un fichier .asc.</string>
+    <string name="settings_section_sharing">Partage</string>
+    <string name="settings_share_format_label">Méthode de partage par défaut</string>
+    <string name="settings_share_format_inline">Texte en ligne</string>
+    <string name="settings_share_format_file">Fichier .asc</string>
+    <string name="settings_share_format_subtitle">Comment le bouton Partager empaquette un résultat chiffré ou signé.</string>
     <!-- 3.1.0 Phase 8 Fix1 — file import read error -->
     <string name="keyring_error_file_read">Impossible de lire ce fichier. Enregistrez-le en local (app Fichiers) puis réessayez l\'import.</string>
     <!-- 3.1.0 Phase 8 Fix2 — file import diagnostic -->
@@ -1596,6 +1620,7 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="settings_biometric_sign_title">Exiger l\'empreinte pour signer</string>
     <string name="settings_card_pin_cache_held_until_cleared">PIN mémorisé jusqu\'à ce que vous l\'effaciez.</string>
     <string name="settings_card_pin_cache_until_cleared">Jusqu\'à effacement</string>
+    <string name="settings_session_until_locked">Jusqu\'au verrouillage du téléphone</string>
     <string name="settings_clear_inputs_subtitle">Efface le message, les fichiers et les mots de passe à la fermeture d\'un résultat de chiffrement</string>
     <string name="settings_clear_inputs_title">Effacer les saisies après chiffrement</string>
     <string name="settings_key_refresh_disclosure">Quand cette option est active, PGPony envoie périodiquement les empreintes de vos clés à vos serveurs de clés activés (dont keys.pgpony.app) pour récupérer les mises à jour. Utilisez l\'option onion sous Proxy pour rester sur Tor.</string>
@@ -1662,6 +1687,8 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="qr_multipart_hint">Scannez chaque partie avec PGPony. Les autres lecteurs de QR ne peuvent pas reconstituer une clé divisée.</string>
     <string name="qr_part_previous">Partie précédente</string>
     <string name="qr_part_next">Partie suivante</string>
+    <string name="qr_autorotate_play_cd">Reprendre la rotation automatique</string>
+    <string name="qr_autorotate_pause_cd">Suspendre la rotation automatique</string>
     <string name="qr_scan_progress_format">%1$d partie(s) scannée(s) sur %2$d. Continuez.</string>
     <string name="qr_scan_restarted">C\'est une clé différente. On recommence.</string>
     <string name="share_target_decrypt_passphrase_required">Cette clé est protégée par une phrase secrète. Saisissez-la et réessayez.</string>
@@ -1677,12 +1704,26 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <!-- 4.2.0 RC3 workstream M: localization sweep for strings added by workstreams A-N. -->
     <string name="encdec_error_bundle_signing_key">Impossible de signer ce paquet : la clé de signature sélectionnée n\'a pas pu être déverrouillée. Choisissez une autre clé de signature ou désactivez la signature.</string>
     <string name="encrypt_mode_sign_file">Signer un fichier</string>
-    <string name="key_delete_ack_label">Je comprends que cette action est irréversible</string>
+    <string name="key_delete_ack_label">Je comprends qu\'elle sera détruite après la période de récupération</string>
     <string name="key_delete_backup_button">Enregistrer d\'abord une sauvegarde (.asc)</string>
     <string name="key_delete_biometric_subtitle">Authentifiez-vous pour supprimer cette paire de clés</string>
     <string name="key_delete_biometric_title">Confirmer la suppression de la clé</string>
     <string name="key_delete_confirm_button">Supprimer la paire de clés</string>
-    <string name="key_delete_sheet_body">Vos clés publique et privée seront supprimées définitivement. Rien de ce qui a été chiffré pour cette clé ne pourra plus jamais être déchiffré, ni par vous ni par personne.</string>
+    <string name="key_delete_backed_up_on">Dans une sauvegarde du %1$s</string>
+    <string name="key_delete_never_backed_up">Jamais sauvegardée. Enregistrez une sauvegarde d\'abord si vous pourriez en avoir besoin.</string>
+    <string name="settings_section_keys">Clés</string>
+    <string name="settings_recycle_bin_title">Récemment supprimés</string>
+    <string name="settings_recycle_bin_subtitle">Restaurer ou supprimer définitivement les clés effacées</string>
+    <string name="recycle_bin_title">Récemment supprimés</string>
+    <string name="recycle_bin_empty_state">Rien ici. Les clés supprimées restent %1$d jours avant d\'être détruites.</string>
+    <string name="recycle_bin_empty_action">Vider la corbeille</string>
+    <string name="recycle_bin_restore">Restaurer</string>
+    <string name="recycle_bin_delete_now">Supprimer définitivement</string>
+    <string name="recycle_bin_deleted_on">Supprimée %1$s</string>
+    <string name="recycle_bin_purge_confirm_body">Détruire définitivement cette clé ? Cette action est irréversible.</string>
+    <string name="recycle_bin_empty_confirm_body">Détruire définitivement toutes les clés de la corbeille ? Cette action est irréversible.</string>
+    <string name="recycle_bin_restored">Clé restaurée</string>
+    <string name="key_delete_sheet_body">Cette clé est déplacée vers Récemment supprimés pendant %1$d jours, puis détruite définitivement. Vous pouvez la restaurer jusque-là. Une fois détruite, rien de ce qui a été chiffré avec elle ne pourra plus être déchiffré.</string>
     <string name="key_delete_sheet_title">Supprimer la paire de clés ?</string>
     <string name="key_detail_add_subkey_apply">Ajouter une sous-clé</string>
     <string name="key_detail_add_subkey_expiry_label">Expiration</string>
@@ -1698,6 +1739,19 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="key_detail_add_subkey_type_rsa_4096_sign">RSA 4096 (Signature)</string>
     <string name="key_detail_add_subkey_type_x25519_encrypt">X25519 (Chiffrement)</string>
     <string name="key_detail_add_userid_apply">Ajouter un ID utilisateur</string>
+    <string name="key_detail_notations_title">Notations</string>
+    <string name="key_detail_notations_empty">Aucune notation sur cette clé.</string>
+    <string name="key_detail_notations_edit_action">Modifier les notations</string>
+    <string name="key_detail_notations_sheet_title">Modifier les notations</string>
+    <string name="key_detail_notations_sheet_subtitle">Notations de l\'identité principale de %1$s.</string>
+    <string name="key_detail_notations_sheet_empty">Aucune notation pour l\'instant. Ajoutez-en une ci-dessous.</string>
+    <string name="key_detail_notations_name_label">Nom</string>
+    <string name="key_detail_notations_value_label">Valeur</string>
+    <string name="key_detail_notations_remove_row">Supprimer</string>
+    <string name="key_detail_notations_add_row">Ajouter une notation</string>
+    <string name="key_detail_notations_name_hint">Chaque nom de notation doit contenir @ et avoir une valeur, par exemple use@example.com.</string>
+    <string name="key_detail_notations_apply">Enregistrer les notations</string>
+    <string name="key_detail_notations_failed">Impossible de mettre à jour les notations</string>
     <string name="key_detail_add_userid_email_label">E-mail</string>
     <string name="key_detail_add_userid_failed">Impossible d\'ajouter l\'ID utilisateur. Veuillez réessayer.</string>
     <string name="key_detail_add_userid_make_primary_label">En faire l\'ID utilisateur principal</string>
@@ -1755,6 +1809,19 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="settings_more_passpony_subtitle">Vos pass et sésames, dans votre poche</string>
     <string name="settings_more_ponyfamily_subtitle">Toute la famille sur pony.norsehor.se</string>
     <string name="settings_more_ponyfamily_title">Toutes les applis Pony</string>
+    <string name="settings_desktop_title">PGPony for Desktop</string>
+    <string name="settings_desktop_subtitle">OpenPGP pour macOS, Linux et Windows.</string>
+    <string name="update_channel_name">Mises à jour</string>
+    <string name="update_channel_description">Vous avertit lorsqu\'une version sideload plus récente est disponible.</string>
+    <string name="update_available_title">Mise à jour disponible</string>
+    <string name="update_available_text">PGPony %1$s est disponible. Appuyez pour ouvrir la version.</string>
+    <string name="settings_section_updates">Mises à jour</string>
+    <string name="settings_updates_toggle_title">Rechercher des mises à jour</string>
+    <string name="settings_updates_toggle_subtitle">Consulte GitHub pour trouver des versions plus récentes et vous avertit. Contourne la voie de mise à jour de F-Droid et ne télécharge ni n\'installe rien.</string>
+    <string name="settings_updates_check_now">Vérifier maintenant</string>
+    <string name="settings_updates_found">Mise à jour disponible : %1$s</string>
+    <string name="settings_updates_uptodate">À jour.</string>
+    <string name="settings_updates_failed">Impossible de vérifier les mises à jour.</string>
     <string name="settings_more_quorumpony_subtitle">Divisez un secret en cartes. Quelques-unes suffisent à le reconstituer.</string>
     <string name="settings_more_relaypony_subtitle">Transfert de fichiers chiffré, de téléphone à téléphone</string>
     <string name="settings_more_vaultpony_subtitle">Coffres chiffrés compatibles VeraCrypt, entièrement sur votre appareil</string>
@@ -1775,4 +1842,29 @@ Vous pouvez aussi verrouiller l\'application derrière votre empreinte digitale 
     <string name="export_passphrase_confirm_label">Confirmer la phrase secrète d\'export</string>
     <string name="export_passphrase_mismatch">Les phrases secrètes ne correspondent pas.</string>
     <string name="export_passphrase_already_protected_note">Cette clé a déjà sa propre phrase secrète ; l\'export la conserve.</string>
+    <!-- 4.3.0 (#26): change key passphrase -->
+    <string name="key_detail_action_change_passphrase">Changer la phrase secrète</string>
+    <string name="change_passphrase_sheet_title">Changer la phrase secrète</string>
+    <string name="change_passphrase_sheet_subtitle">Définissez, changez ou supprimez la phrase secrète qui protège cette clé sur cet appareil.</string>
+    <string name="change_passphrase_current_label">Phrase secrète actuelle</string>
+    <string name="change_passphrase_new_label">Nouvelle phrase secrète</string>
+    <string name="change_passphrase_remove_warning">Laissez la nouvelle phrase secrète vide pour supprimer la protection. La clé sera alors stockée sur cet appareil sans phrase secrète, et quiconque peut utiliser l\'appareil peut l\'utiliser.</string>
+    <string name="change_passphrase_remove_ack">Stocker cette clé sans phrase secrète</string>
+    <string name="change_passphrase_backup_note">Les sauvegardes existantes conservent l\'ancienne phrase secrète jusqu\'à ce que vous exportiez à nouveau la clé.</string>
+    <string name="change_passphrase_apply">Changer</string>
+    <string name="change_passphrase_failed">Impossible de changer la phrase secrète.</string>
+    <!-- 4.3.0 (#31): zip output packaging -->
+    <string name="enc_result_wrap_zip_label">Emballer dans un .zip</string>
+    <string name="enc_result_wrap_zip_note">Emballage pour le transport, pas de chiffrement. Utile quand un canal altère les fichiers .gpg ou .asc.</string>
+    <!-- 4.3.0 (#31): zip decrypt -->
+    <string name="decrypt_zip_no_pgp">Aucun message chiffré trouvé dans ce .zip.</string>
+    <string name="decrypt_zip_multiple">Ce .zip contient plusieurs fichiers chiffrés. Extrayez-les et déchiffrez-les un par un.</string>
+    <string name="decrypt_zip_failed">Impossible de lire le .zip.</string>
+    <!-- 4.3.0 (#36): Key Detail top-bar content descriptions -->
+    <string name="key_detail_show_qr_cd">Afficher le code QR</string>
+    <string name="key_detail_actions_menu_cd">Plus d\'actions</string>
+    <!-- 4.3.0 (#36/§5.5.2): storage-level row -->
+    <string name="key_detail_detail_storage">Stockage</string>
+    <string name="key_detail_detail_storage_software">Trousseau logiciel</string>
+    <string name="key_detail_detail_storage_card">Carte de sécurité matérielle</string>
 </resources>

@@ -87,7 +87,10 @@ object CompositeLibrePGPKeyMaterial {
         p += oidLen
         val bits = ((pub[p].toInt() and 0xFF) shl 8) or (pub[p + 1].toInt() and 0xFF); p += 2
         val pointLen = (bits + 7) / 8
-        val ecc = curve.normalizePoint(pub.copyOfRange(p, p + pointLen))
+        val rawPoint = pub.copyOfRange(p, p + pointLen)
+        // Montgomery curves normalize the minimal MPI back to the fixed curve
+        // length; a Weierstrass curve keeps its uncompressed 0x04 || X || Y point.
+        val ecc = if (curve.weierstrass) rawPoint else curve.normalizePoint(rawPoint)
         p += pointLen
         val kyberLen = readUInt32(pub, p); p += 4
         val kyber = pub.copyOfRange(p, p + kyberLen)

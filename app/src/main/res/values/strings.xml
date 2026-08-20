@@ -164,6 +164,19 @@
     <!-- RC3 §J: sibling-app site links. Brand names are locale-invariant; the
          subtitles are the taglines from pony.norsehor.se and translate normally. -->
     <string name="settings_more_ponyfamily_title">All Pony apps</string>
+    <string name="settings_desktop_title">PGPony for Desktop</string>
+    <string name="settings_desktop_subtitle">OpenPGP for macOS, Linux and Windows.</string>
+    <string name="update_channel_name">Updates</string>
+    <string name="update_channel_description">Notifies you when a newer sideloaded build is available.</string>
+    <string name="update_available_title">Update available</string>
+    <string name="update_available_text">PGPony %1$s is available. Tap to open the release.</string>
+    <string name="settings_section_updates">Updates</string>
+    <string name="settings_updates_toggle_title">Check for updates</string>
+    <string name="settings_updates_toggle_subtitle">Checks GitHub for newer releases and notifies you. It bypasses the F-Droid update path and never downloads or installs anything.</string>
+    <string name="settings_updates_check_now">Check now</string>
+    <string name="settings_updates_found">Update available: %1$s</string>
+    <string name="settings_updates_uptodate">Up to date.</string>
+    <string name="settings_updates_failed">Could not check for updates.</string>
     <string name="settings_more_ponyfamily_subtitle">The whole family at pony.norsehor.se</string>
     <string name="settings_more_quorumpony_title" translatable="false">QuorumPony</string>
     <string name="settings_more_quorumpony_subtitle">Split a secret into cards. Any few rebuild it.</string>
@@ -177,6 +190,8 @@
     <string name="settings_more_passpony_subtitle">Your pass and passage store, in your pocket</string>
     <string name="settings_more_relaypony_title" translatable="false">RelayPony</string>
     <string name="settings_more_relaypony_subtitle">Encrypted file transfer, phone to phone</string>
+    <string name="settings_more_scrubpony_title" translatable="false">ScrubPony</string>
+    <string name="settings_more_scrubpony_subtitle">Strip identifying metadata from images. No pixel moves.</string>
     <string name="settings_more_source_title">Open-source engine</string>
     <string name="settings_more_source_subtitle">PGPonyCore on GitHub, the audited crypto core</string>
     <string name="settings_more_appsource_title">Source code</string>
@@ -233,6 +248,14 @@
     <string name="settings_data_clear_step2_title">Are you absolutely sure?</string>
     <string name="settings_data_clear_step2_body">You will lose access to all encrypted messages that use these keys. There is no recovery.</string>
     <string name="settings_data_clear_step2_confirm">DELETE ALL DATA</string>
+    <!-- RC5 P2 (#16, AraafRoyall's data loss): the clear-all gauntlet. -->
+    <string name="settings_data_clear_backup_button">Save a backup first</string>
+    <string name="settings_data_clear_ack2_label">I am sure. Delete every key and all app data.</string>
+    <string name="settings_data_clear_biometric_title">Confirm deleting all data</string>
+    <string name="settings_data_clear_biometric_subtitle">Authenticate to permanently delete every key</string>
+    <string name="settings_data_clear_key_list_header_format">Keys that will be permanently destroyed (%1$d):</string>
+    <string name="settings_data_clear_type_word">DELETE</string>
+    <string name="settings_data_clear_type_label_format">Type %1$s to confirm</string>
     <string name="settings_data_clear_success">All data cleared</string>
     <string name="settings_data_clear_error_format">Clear failed: %1$s</string>
 
@@ -264,7 +287,7 @@
     <string name="settings_about_reset_tips_title">Reset Tips</string>
     <string name="settings_about_reset_tips_subtitle">Show contextual hints again on each tab</string>
     <string name="settings_about_reset_tips_success">Tips will reappear as you visit each screen</string>
-    <string name="settings_about_footer">PGPony for Android\nby NorseHorse (Kevin Stewart)\npgpony.norsehor.se</string>
+    <string name="settings_about_footer">PGPony for Android\nby NorseHorse\npgpony.app</string>
 
     <!-- ════════════════════════════════════════════════════════════════
          MainActivity — small UI strings (tab labels, etc.)
@@ -733,6 +756,19 @@
     <string name="key_detail_add_userid_make_primary_label">Make this the primary User ID</string>
     <string name="key_detail_add_userid_passphrase_label">Passphrase</string>
     <string name="key_detail_add_userid_apply">Add User ID</string>
+    <string name="key_detail_notations_title">Notations</string>
+    <string name="key_detail_notations_empty">No notations on this key.</string>
+    <string name="key_detail_notations_edit_action">Edit notations</string>
+    <string name="key_detail_notations_sheet_title">Edit notations</string>
+    <string name="key_detail_notations_sheet_subtitle">Notations carried on the primary identity of %1$s.</string>
+    <string name="key_detail_notations_sheet_empty">No notations yet. Add one below.</string>
+    <string name="key_detail_notations_name_label">Name</string>
+    <string name="key_detail_notations_value_label">Value</string>
+    <string name="key_detail_notations_remove_row">Remove</string>
+    <string name="key_detail_notations_add_row">Add notation</string>
+    <string name="key_detail_notations_name_hint">Each notation name must contain @ and have a value, for example use@example.com.</string>
+    <string name="key_detail_notations_apply">Save notations</string>
+    <string name="key_detail_notations_failed">Could not update notations</string>
     <string name="key_detail_add_userid_failed">Could not add the User ID. Please try again.</string>
     <string name="key_detail_userid_action_sheet_title_revoke">Revoke User ID</string>
     <string name="key_detail_userid_action_sheet_title_make_primary">Make Primary User ID</string>
@@ -785,14 +821,30 @@
     <string name="key_detail_delete_dialog_confirm">Delete</string>
     <!-- RC3 §L (#21): key-pair delete safeguards sheet. -->
     <string name="key_delete_sheet_title">Delete key pair?</string>
-    <string name="key_delete_sheet_body">Both your public and private key will be permanently deleted. Anything encrypted to this key can never be decrypted again, by you or anyone else.</string>
+    <string name="key_delete_sheet_body">This key moves to Recently Deleted for %1$d days, then is permanently destroyed. You can restore it until then. Once destroyed, anything encrypted to it can never be decrypted again, by you or anyone else.</string>
     <string name="key_delete_backup_button">Save a backup first (.asc)</string>
-    <string name="key_delete_ack_label">I understand this cannot be undone</string>
+    <string name="key_delete_ack_label">I understand it will be destroyed after the recovery window</string>
     <string name="key_delete_confirm_button">Delete key pair</string>
+    <string name="key_delete_backed_up_on">In a backup from %1$s</string>
+    <string name="key_delete_never_backed_up">Never backed up. Save a backup first if you might need it.</string>
+    <string name="settings_section_keys">Keys</string>
+    <string name="settings_recycle_bin_title">Recently Deleted</string>
+    <string name="settings_recycle_bin_subtitle">Restore or permanently remove deleted keys</string>
+    <string name="recycle_bin_title">Recently Deleted</string>
+    <string name="recycle_bin_empty_state">Nothing here. Deleted keys stay for %1$d days before they are destroyed.</string>
+    <string name="recycle_bin_empty_action">Empty bin</string>
+    <string name="recycle_bin_restore">Restore</string>
+    <string name="recycle_bin_delete_now">Delete permanently</string>
+    <string name="recycle_bin_deleted_on">Deleted %1$s</string>
+    <string name="recycle_bin_purge_confirm_body">Permanently destroy this key? This cannot be undone.</string>
+    <string name="recycle_bin_empty_confirm_body">Permanently destroy every key in the bin? This cannot be undone.</string>
+    <string name="recycle_bin_restored">Key restored</string>
     <string name="key_delete_biometric_title">Confirm key deletion</string>
     <string name="key_delete_biometric_subtitle">Authenticate to delete this key pair</string>
     <!-- RC4 O5 (#16, CertainBot): optional passphrase on exported/backed-up private keys. -->
     <string name="export_passphrase_label">Protect this export with a passphrase (optional)</string>
+    <string name="export_private_gpg_compat_label">GnuPG-compatible format</string>
+    <string name="export_private_gpg_compat_caption">Emit the composite key the way GnuPG (GPG4WIN) expects, so it can be imported there. Leave off for other apps.</string>
     <string name="export_passphrase_backup_label">Protect the backup with a passphrase (optional; ignored if the key already has one)</string>
     <string name="export_passphrase_confirm_label">Confirm export passphrase</string>
     <string name="export_passphrase_mismatch">Passphrases don\'t match.</string>
@@ -850,6 +902,8 @@
     <string name="qr_multipart_hint">Scan every part with PGPony. Other QR readers cannot reassemble a split key.</string>
     <string name="qr_part_previous">Previous part</string>
     <string name="qr_part_next">Next part</string>
+    <string name="qr_autorotate_play_cd">Resume auto-rotation</string>
+    <string name="qr_autorotate_pause_cd">Pause auto-rotation</string>
     <string name="qr_scan_progress_format">Scanned %1$d of %2$d parts. Keep going.</string>
     <string name="qr_scan_restarted">That is a different key. Starting over.</string>
     <string name="kd_vm_status_trust_updated">Trust level updated</string>
@@ -1039,6 +1093,10 @@
     <string name="onboarding_page_keyring_hint">Manage them from the Keyring tab anytime.</string>
     <string name="onboarding_page_biometric_toggle_title">Enable Biometric Lock</string>
     <string name="onboarding_page_biometric_toggle_subtitle">Require fingerprint or face to open PGPony</string>
+    <string name="onboarding_slide_updates_title">Stay up to date</string>
+    <string name="onboarding_slide_updates_body">You installed PGPony outside an app store, so it will not update itself. PGPony can check GitHub for new releases and notify you. It never downloads or installs anything on its own.</string>
+    <string name="onboarding_page_updates_toggle_title">Check for updates</string>
+    <string name="onboarding_page_updates_toggle_subtitle">Notify me when a newer version is available.</string>
 
     <!-- ── OnboardingScreen — Skip / Next / Get Started ─────────────── -->
     <string name="onboarding_screen_skip">Skip</string>
@@ -1283,6 +1341,12 @@
     <string name="sign_as_sheet_title">Sign as</string>
     <string name="sign_as_sheet_explainer">Recipients can verify the message came from this key. Anyone with your public key for that identity will see your name as the signer.</string>
     <string name="sign_as_sheet_selected_cd">Selected</string>
+    <string name="sign_as_subkey_title">Signing key</string>
+    <string name="sign_as_subkey_explainer">This key has more than one signing key. Choose which one signs.</string>
+    <string name="sign_as_subkey_automatic">Automatic</string>
+    <string name="sign_as_subkey_automatic_detail">%1$s · %2$s</string>
+    <string name="sign_as_subkey_primary_label">Primary key (%1$s)</string>
+    <string name="sign_as_subkey_subkey_label">Subkey (%1$s)</string>
     <string name="sign_as_sheet_default_badge">DEFAULT</string>
     <string name="sign_as_sheet_empty">No key pairs available.</string>
     <string name="sign_as_sheet_set_default">Set as default signer</string>
@@ -1656,9 +1720,13 @@
     <string name="encdec_error_bundle_signing_key">This bundle could not be signed: the selected signing key could not be unlocked. Choose a different signing key, or turn signing off.</string>
     <string name="bundle_result_title">Bundle encrypted</string>
     <string name="bundle_result_subtitle_format">%1$d attachments · %2$d recipients</string>
+    <string name="bundle_result_section_email">Send as email</string>
+    <string name="bundle_result_section_file">Send as file</string>
     <string name="bundle_result_share_eml">Share as Email (.eml)</string>
     <string name="bundle_result_share_asc">Share encrypted .asc</string>
     <string name="bundle_result_copy_inline">Copy inline block</string>
+    <string name="bundle_result_copy_too_large">Too large to copy. Share or save it as a file instead.</string>
+    <string name="bundle_result_export_writing">Writing file… this can take a while for a large bundle.</string>
     <!-- 3.1.0 Phase 5 Fix1 — Bundle result Save-to-Files -->
     <string name="bundle_result_save_eml">Save .eml to Files</string>
     <string name="bundle_result_save_asc">Save .asc to Files</string>
@@ -1677,6 +1745,7 @@
     <string name="settings_card_pin_cache_clear">Clear now</string>
     <!-- 4.0.0 Phase 9 (G9) — "Until I clear it" PIN cache mode -->
     <string name="settings_card_pin_cache_until_cleared">Until I clear it</string>
+    <string name="settings_session_until_locked">Until the phone locks</string>
     <string name="settings_card_pin_cache_held_until_cleared">PIN remembered until you clear it.</string>
     <!-- RC3 §J (#15): provider passphrase-cache duration picker. Duration chips,
          "Remember for", and "Clear now" reuse the card-PIN strings above. -->
@@ -1704,6 +1773,11 @@
     <string name="settings_email_format_attachment">Attachment</string>
     <string name="settings_email_format_both">Both</string>
     <string name="settings_email_format_subtitle">Inline puts the encrypted block in the email body so PGP-aware clients decrypt it automatically; Attachment sends a .asc file.</string>
+    <string name="settings_section_sharing">Sharing</string>
+    <string name="settings_share_format_label">Default sharing method</string>
+    <string name="settings_share_format_inline">Inline text</string>
+    <string name="settings_share_format_file">.asc file</string>
+    <string name="settings_share_format_subtitle">How the Share button packages an encrypted or signed result.</string>
     <!-- 3.1.0 Phase 8 Fix1 — file import read error -->
     <string name="keyring_error_file_read">Couldn\'t read that file. Try saving it to local storage (Files app) and importing again.</string>
     <!-- 3.1.0 Phase 8 Fix2 — file import diagnostic -->
@@ -1845,4 +1919,29 @@
     <string name="okc_migration_title">Coming from OpenKeychain?</string>
     <string name="okc_migration_body">Export your keys in OpenKeychain, then pick that file below — they all import at once. For an encrypted OpenKeychain backup (a .sec.pgp file), use Settings → Backup → Restore instead.</string>
     <string name="okc_migration_onboarding_body">Choose \"Restore from a backup\" for an encrypted OpenKeychain backup, or \"I already have a key\" to import an exported key file.</string>
+    <!-- 4.3.0 (#26): change key passphrase -->
+    <string name="key_detail_action_change_passphrase">Change passphrase</string>
+    <string name="change_passphrase_sheet_title">Change passphrase</string>
+    <string name="change_passphrase_sheet_subtitle">Set, change, or remove the passphrase that protects this key on this device.</string>
+    <string name="change_passphrase_current_label">Current passphrase</string>
+    <string name="change_passphrase_new_label">New passphrase</string>
+    <string name="change_passphrase_remove_warning">Leave the new passphrase blank to remove protection. The key will then be stored on this device without a passphrase, and anyone who can use the device can use it.</string>
+    <string name="change_passphrase_remove_ack">Store this key without a passphrase</string>
+    <string name="change_passphrase_backup_note">Existing backups keep the old passphrase until you export the key again.</string>
+    <string name="change_passphrase_apply">Change</string>
+    <string name="change_passphrase_failed">Could not change the passphrase.</string>
+    <!-- 4.3.0 (#31): zip output packaging -->
+    <string name="enc_result_wrap_zip_label">Wrap in .zip</string>
+    <string name="enc_result_wrap_zip_note">Packaging for transport, not encryption. Useful when a channel mangles .gpg or .asc files.</string>
+    <!-- 4.3.0 (#31): zip decrypt -->
+    <string name="decrypt_zip_no_pgp">No encrypted message found in this .zip.</string>
+    <string name="decrypt_zip_multiple">This .zip contains several encrypted files. Extract them and decrypt one at a time.</string>
+    <string name="decrypt_zip_failed">Could not read the .zip.</string>
+    <!-- 4.3.0 (#36): Key Detail top-bar content descriptions -->
+    <string name="key_detail_show_qr_cd">Show QR code</string>
+    <string name="key_detail_actions_menu_cd">More actions</string>
+    <!-- 4.3.0 (#36/§5.5.2): storage-level row -->
+    <string name="key_detail_detail_storage">Storage</string>
+    <string name="key_detail_detail_storage_software">Software keystore</string>
+    <string name="key_detail_detail_storage_card">Hardware security card</string>
 </resources>

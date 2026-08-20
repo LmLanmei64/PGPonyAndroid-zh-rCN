@@ -471,8 +471,25 @@ class ShareTargetViewModel(
                 val outName = sourceFilename?.let { stripPgpExtension(it) } ?: "decrypted_file"
                 val (out, result) = withContext(Dispatchers.IO) {
                     val dest = ScratchFiles.allocate(PGPonyApp.instance, outName, ScratchFiles.SCOPE_QUICK)
+                    // 4.2.0 RC6 (#32, tail-4): same envelope-skip the
+                    // in-app streamed decrypt gained — a shared large
+                    // .eml was fed to the armor parser headers-first.
+                    val envelopeOffset = PGPonyApp.instance.contentResolver
+                        .openInputStream(uri)?.use {
+                            com.pgpony.android.crypto.mime.MimeEnvelope.armoredPayloadOffset(it)
+                        } ?: -1L
                     val input = PGPonyApp.instance.contentResolver.openInputStream(uri)
                         ?: throw java.io.IOException("Could not open the shared file")
+                    if (envelopeOffset > 0) {
+                        var remaining = envelopeOffset
+                        while (remaining > 0) {
+                            val skipped = input.skip(remaining)
+                            if (skipped <= 0) {
+                                if (input.read() < 0) break
+                                remaining--
+                            } else remaining -= skipped
+                        }
+                    }
                     val r = input.use { source ->
                         dest.outputStream().buffered().use { sink ->
                             PGPCryptoService.shared.decryptStream(

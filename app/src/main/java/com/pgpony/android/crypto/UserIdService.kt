@@ -74,6 +74,10 @@ class UserIdService private constructor() {
         val secretRing: PGPSecretKeyRing
     )
 
+    /** §5.6.7 (Play review): a human-readable key notation (RFC 9580
+     *  §5.2.3.24), name@domain=value, on the primary UID self-cert. */
+    data class Notation(val name: String, val value: String)
+
     /**
      * Add [userId] as a new self-certified identity on [secretRing].
      * If [makePrimary] is true, the previously-primary UID (explicit
@@ -119,6 +123,58 @@ class UserIdService private constructor() {
         primary = PGPPublicKey.addCertification(primary, userId, newCert)
 
         return reassemble(secretRing, publicRing, primary)
+    }
+
+    /**
+     * §5.6.7: the human-readable notations on the primary UID's latest
+     * self-cert. Empty when the key has none or no resolvable primary UID.
+     */
+    fun readNotations(primary: PGPPublicKey): List<Notation> {
+        val primaryUid = currentPrimaryUserId(primary) ?: return emptyList()
+        val cert = latestSelfCert(primary, primaryUid) ?: return emptyList()
+        val occ = cert.hashedSubPackets?.notationDataOccurrences ?: return emptyList()
+        return occ.filter { it.isHumanReadable }.map { Notation(it.notationName, it.notationValue) }
+    }
+
+    /**
+     * §5.6.7: replace the primary UID's notation set with [notations] and
+     * reissue its self-cert, preserving key flags, preferred algorithms,
+     * features, key-expiry, and the primary-UID flag. Human-readable flag is
+     * set; names must contain '@' (RFC 9580). Rides the same reassemble path
+     * as addUserId, so composite rings round-trip too (the validation matrix
+     * confirms v4, v6, and both composite forms).
+     */
+    fun setNotations(
+        secretRing: PGPSecretKeyRing,
+        publicRing: PGPPublicKeyRing,
+        notations: List<Notation>,
+        passphrase: String?
+    ): UpdatedRings {
+        notations.firstOrNull { !it.name.contains('@') }?.let {
+            throw UserIdError.UnsupportedKey("Notation name must contain '@': ${it.name}")
+        }
+        val primary = publicRing.publicKey
+        val primaryUid = currentPrimaryUserId(primary)
+            ?: throw UserIdError.UnsupportedKey("Key has no primary User ID")
+        val primarySecret = secretRing.secretKey
+        val privateKey = extractPrivate(primarySecret, passphrase)
+        val signerBuilder = BcPGPContentSignerBuilder(primarySecret.publicKey.algorithm, HashAlgorithmTags.SHA256)
+        val existing = latestSelfCert(primary, primaryUid)
+        val isPrimaryFlag = existing?.hashedSubPackets?.isPrimaryUserID ?: false
+        val sub = PGPSignatureSubpacketGenerator()
+        copyUserIdSubpackets(existing?.hashedSubPackets, isPrimaryFlag, sub)
+        for (n in notations) {
+            sub.setNotationData(false, true, n.name, n.value)
+        }
+        val gen = PGPSignatureGenerator(signerBuilder, primary).apply {
+            init(PGPSignature.POSITIVE_CERTIFICATION, privateKey)
+        }
+        gen.setHashedSubpackets(sub.generate())
+        val newCert = gen.generateCertification(primaryUid, primary)
+        var updated = primary
+        if (existing != null) updated = PGPPublicKey.removeCertification(updated, primaryUid, existing)
+        updated = PGPPublicKey.addCertification(updated, primaryUid, newCert)
+        return reassemble(secretRing, publicRing, updated)
     }
 
     /**

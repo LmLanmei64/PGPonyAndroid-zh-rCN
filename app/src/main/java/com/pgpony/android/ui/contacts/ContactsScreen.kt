@@ -49,6 +49,7 @@ import com.pgpony.android.MainActivity
 import com.pgpony.android.contacts.ContactWithKeys
 import com.pgpony.android.data.TrustLevel
 import com.pgpony.android.ui.components.AlgorithmBadge
+import com.pgpony.android.ui.components.TrustMark
 import com.pgpony.android.ui.components.ScreenTooltip
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -514,47 +515,24 @@ private fun LinkedContactRow(contact: ContactWithKeys) {
 }
 
 /**
- * Phase A9 — small icon-only badge showing a key's trust level.
- * Mirrors iOS trustColor() + system image mapping:
- *
- *   UNKNOWN    → HelpOutline       (gray)
- *   UNVERIFIED → Warning           (yellow)
- *   VERIFIED   → VerifiedUser      (green — same as the section header)
- *   ULTIMATE   → WorkspacePremium  (blue — premium star icon)
- *
- * 14dp size to match the key icon and algorithm badge inline with
- * the fingerprint row.
+ * Small icon-only badge showing a key's trust level. #24 routes the shape
+ * and color through the shared ui.components.TrustMark ladder; this wrapper
+ * only supplies the contacts-specific content descriptions and the 14dp
+ * size that lines up with the key icon and algorithm badge on the
+ * fingerprint row.
  */
 @Composable
 private fun TrustBadge(trust: TrustLevel) {
-    val (icon, tint, label) = when (trust) {
-        TrustLevel.UNKNOWN    -> Triple(
-            Icons.AutoMirrored.Filled.HelpOutline,
-            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-            stringResource(R.string.contacts_trust_unknown_cd)
-        )
-        TrustLevel.UNVERIFIED -> Triple(
-            Icons.Filled.Warning,
-            Color(0xFFEAB308), // yellow-500
-            stringResource(R.string.contacts_trust_unverified_cd)
-        )
-        TrustLevel.VERIFIED   -> Triple(
-            Icons.Filled.VerifiedUser,
-            Color(0xFF22C55E), // green-500
-            stringResource(R.string.contacts_trust_verified_cd)
-        )
-        TrustLevel.ULTIMATE   -> Triple(
-            Icons.Filled.WorkspacePremium,
-            Color(0xFF3B82F6), // blue-500
-            stringResource(R.string.contacts_trust_ultimate_cd)
-        )
+    // #24 — one ladder for every surface (see ui.components.TrustMark).
+    // Contacts keeps its own content descriptions; shape and color come
+    // from the shared mark.
+    val label = when (trust) {
+        TrustLevel.UNKNOWN    -> stringResource(R.string.contacts_trust_unknown_cd)
+        TrustLevel.UNVERIFIED -> stringResource(R.string.contacts_trust_unverified_cd)
+        TrustLevel.VERIFIED   -> stringResource(R.string.contacts_trust_verified_cd)
+        TrustLevel.ULTIMATE   -> stringResource(R.string.contacts_trust_ultimate_cd)
     }
-    Icon(
-        imageVector = icon,
-        contentDescription = label,
-        tint = tint,
-        modifier = Modifier.size(14.dp)
-    )
+    TrustMark(trust = trust, size = 14.dp, contentDescription = label)
 }
 
 @Composable

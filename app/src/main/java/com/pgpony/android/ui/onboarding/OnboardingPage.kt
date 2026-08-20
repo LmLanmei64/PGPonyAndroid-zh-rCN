@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.foundation.clickable
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.pgpony.android.R
 import com.pgpony.android.i18n.LanguageManager
+import com.pgpony.android.update.UpdateCheckService
 import com.pgpony.android.i18n.LanguageState
 import com.pgpony.android.i18n.SupportedLanguage
 import com.pgpony.android.ui.keyring.KeyringViewModel
@@ -156,6 +158,11 @@ fun OnboardingPage(
         if (slide.showBiometricToggle) {
             Spacer(modifier = Modifier.height(32.dp))
             BiometricToggleRow(prefs = prefs)
+        }
+        // §5.6.9 (Piotr): sideload update-check opt-in.
+        if (slide.showUpdateToggle) {
+            Spacer(modifier = Modifier.height(32.dp))
+            UpdateToggleRow(prefs = prefs)
         }
 
         // A14 Picker — slide 0 hosts an inline language picker. Tapping
@@ -286,6 +293,17 @@ private fun BiometricToggleRow(prefs: SharedPreferences) {
     var enabled by remember {
         mutableStateOf(prefs.getBoolean("biometric_lock", false))
     }
+    // RC5 P3 (#23): same capability gate as Settings' setBiometricLock.
+    // MainActivity's A11 lock gate assumes `biometric_lock == true`
+    // implies the device could authenticate when it was enabled; this
+    // toggle previously wrote the pref without checking. When the device
+    // can't authenticate the switch renders disabled instead of arming a
+    // lock the user could not open.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val canAuthenticate = remember {
+        com.pgpony.android.ui.keyring.BiometricGate.canAuthenticate(context) ==
+            com.pgpony.android.ui.keyring.BiometricAvailability.Available
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -318,9 +336,56 @@ private fun BiometricToggleRow(prefs: SharedPreferences) {
             }
             Switch(
                 checked = enabled,
+                enabled = canAuthenticate,
                 onCheckedChange = { newValue ->
                     enabled = newValue
                     prefs.edit().putBoolean("biometric_lock", newValue).apply()
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun UpdateToggleRow(prefs: SharedPreferences) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var enabled by remember {
+        mutableStateOf(UpdateCheckService.isEnabled(context))
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.SystemUpdate,
+                contentDescription = null,
+                tint = Color(0xFF8B5CF6),
+                modifier = Modifier.size(28.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.onboarding_page_updates_toggle_title),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    stringResource(R.string.onboarding_page_updates_toggle_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = { newValue ->
+                    enabled = newValue
+                    UpdateCheckService.setEnabled(context, newValue)
                 }
             )
         }

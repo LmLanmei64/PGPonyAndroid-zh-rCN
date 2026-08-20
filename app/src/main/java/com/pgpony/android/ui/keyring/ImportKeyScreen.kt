@@ -543,7 +543,17 @@ private fun ImportPreviewCard(
             HorizontalDivider()
 
             DetailRow(stringResource(R.string.import_preview_detail_user_label), preview.userId.ifBlank { stringResource(R.string.import_preview_detail_user_empty) })
-            DetailRow(stringResource(R.string.import_preview_detail_fingerprint_label), preview.shortFingerprint, mono = true)
+            // RC5 follow-up (#35, CertainBot): the import preview is
+            // exactly the moment a fingerprint gets verified against an
+            // out-of-band copy, so it shows the FULL fingerprint in the
+            // standard 4-char groups (10 groups for v4, 16 for v6), not
+            // the 8-char short id. The row wraps; monospace keeps the
+            // groups aligned.
+            DetailRow(
+                stringResource(R.string.import_preview_detail_fingerprint_label),
+                preview.fingerprint.uppercase().chunked(4).joinToString(" "),
+                mono = true
+            )
             DetailRow(stringResource(R.string.import_preview_detail_algorithm_label), preview.algorithmShortName)
 
             // ── Source badges ─────────────────────────────────────────

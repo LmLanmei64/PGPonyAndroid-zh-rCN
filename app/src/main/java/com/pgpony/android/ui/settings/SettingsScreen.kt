@@ -42,6 +42,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
+import com.pgpony.android.update.UpdateCheckService
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -76,7 +78,8 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onReplayOnboarding: () -> Unit = {},
     onOpenPassStore: () -> Unit = {},
-    onKeysChanged: () -> Unit = {}
+    onKeysChanged: () -> Unit = {},
+    onOpenRecycleBin: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
     // RC3 §J (#20): which category sub-page is open; null = the top-level
@@ -111,7 +114,23 @@ fun SettingsScreen(
     }
 
     // Refresh stats when screen appears
-    LaunchedEffect(Unit) { viewModel.loadKeyStats() }
+    // RC5 P3 (#23): loadPreferences() re-syncs pref-backed switches with
+    // what is actually persisted. Covers the onboarding biometric toggle,
+    // which writes the pref directly before this ViewModel ever re-reads.
+    LaunchedEffect(Unit) {
+        viewModel.loadPreferences()
+        viewModel.loadKeyStats()
+    }
+    // RC5 (Kevin): a completed clear-all behaves like a reinstall — the
+    // gauntlet is already dismissed (state reset in the ViewModel), the
+    // keyring reloads empty, and the app returns to onboarding.
+    LaunchedEffect(state.clearCompleted) {
+        if (state.clearCompleted) {
+            viewModel.consumeClearCompleted()
+            onKeysChanged()
+            onReplayOnboarding()
+        }
+    }
 
     // RC3 §J (#20): system back pops a category sub-page back to the
     // category list instead of leaving Settings.
@@ -357,6 +376,10 @@ fun SettingsScreen(
             // ── 3.1.0 Phase 8 (E4 F-item): email send format ────────────
             SectionHeader(stringResource(R.string.settings_section_email))
             EmailFormatSection()
+            Spacer(modifier = Modifier.height(16.dp))
+            // ── §5.5.1 (board t/1): default sharing method ──────────────
+            SectionHeader(stringResource(R.string.settings_section_sharing))
+            DefaultShareFormatSection()
             Spacer(modifier = Modifier.height(16.dp))
             // ── PGP Output Section: customizable armor comment ─────────
             //
@@ -642,6 +665,15 @@ fun SettingsScreen(
             SectionHeader(stringResource(R.string.settings_section_proxy))
             ProxySection()
             Spacer(modifier = Modifier.height(16.dp))
+            // ── §5.6.1 (#36 part 1): recycle bin ───────────────────────
+            SettingsAction(
+                title = stringResource(R.string.settings_recycle_bin_title),
+                subtitle = stringResource(R.string.settings_recycle_bin_subtitle),
+                icon = Icons.Filled.Delete,
+                iconTint = Color(0xFF8B5CF6),
+                onClick = onOpenRecycleBin
+            )
+            Spacer(modifier = Modifier.height(16.dp))
 
                 }
                 SettingsCategory.APPEARANCE -> {
@@ -800,6 +832,28 @@ fun SettingsScreen(
                 iconTint = Color(0xFF8B5CF6),
                 onClick = { showSecurityInfo = true }
             )
+            // §5.55 (Kevin): PGPony for Desktop. The same product, not a
+            // sibling app, so it sits ABOVE the More-from list rather than
+            // in it. Opens the product site in a Custom Tab.
+            SettingsAction(
+                title = stringResource(R.string.settings_desktop_title),
+                subtitle = stringResource(R.string.settings_desktop_subtitle),
+                icon = Icons.Filled.Computer,
+                iconTint = Color(0xFF8B5CF6),
+                trailingIcon = Icons.AutoMirrored.Filled.OpenInNew,
+                onClick = {
+                    try {
+                        CustomTabsIntent.Builder().build().launchUrl(
+                            context,
+                            android.net.Uri.parse("https://pgpony.app/desktop")
+                        )
+                    } catch (e: Exception) {
+                        viewModel.showError(
+                            context.getString(R.string.settings_support_browser_error)
+                        )
+                    }
+                }
+            )
             Spacer(modifier = Modifier.height(16.dp))
             // ── More from NorseHorse ───────────────────────────────────
             // Every sibling app links to its product site (see the list
@@ -822,6 +876,7 @@ fun SettingsScreen(
                 Triple(R.string.settings_more_vaultpony_title, R.string.settings_more_vaultpony_subtitle, "https://vaultpony.app"),
                 Triple(R.string.settings_more_passpony_title, R.string.settings_more_passpony_subtitle, "https://passpony.app"),
                 Triple(R.string.settings_more_relaypony_title, R.string.settings_more_relaypony_subtitle, "https://relaypony.app"),
+                Triple(R.string.settings_more_scrubpony_title, R.string.settings_more_scrubpony_subtitle, "https://scrubpony.app"),
             ).forEach { (titleRes, subtitleRes, url) ->
                 SettingsAction(
                     title = stringResource(titleRes),
@@ -887,6 +942,12 @@ fun SettingsScreen(
                     }
                 }
             )
+            // ── §5.6.9 (Piotr): update check, offered only on sideloads ──
+            if (UpdateCheckService.isEligible(context)) {
+                Spacer(modifier = Modifier.height(16.dp))
+                SectionHeader(stringResource(R.string.settings_section_updates))
+                UpdateCheckSection()
+            }
             Spacer(modifier = Modifier.height(16.dp))
             // ── About Section ──────────────────────────────────────────
             SectionHeader(stringResource(R.string.settings_section_about))
@@ -947,54 +1008,190 @@ fun SettingsScreen(
         }
     }
 
-    // ── Clear Data Dialog ──────────────────────────────────────────────
+    // ── Clear Data Gauntlet ────────────────────────────────────────────
     //
-    // RC4 O6 (#16, AraafRoyall): was two stacked AlertDialogs (Continue →
-    // "Are you absolutely sure?"). Now ONE dialog with the delete-sheet-
-    // style acknowledgement checkbox gating the destructive button —
-    // same safeguard strength, one less stacked prompt, and the checkbox
-    // is a stronger deliberate act than a second tap ever was. The
-    // showClearStep2 state stays in the ViewModel (additive rule) but is
-    // no longer rendered.
+    // RC5 P2 (#16): RC4's single dialog + checkbox cost AraafRoyall his
+    // three keys. Per Kevin's decision (committed publicly in the #16
+    // reply), the feature stays but fires only through consecutive
+    // confirmations: step 1 = warning + a save-a-backup-first offer +
+    // acknowledgement; step 2 = consequences restated + a second, more
+    // explicit acknowledgement; then a biometric check whenever the
+    // device supports one (NOT gated on the app-lock setting — the
+    // stakes justify it; falls through only where no biometrics exist).
+    // This deliberately reverses O6's one-dialog consolidation for this
+    // ONE action: the incident is the evidence that prompt stacking is a
+    // feature here.
     if (state.showClearConfirm) {
-        var clearAcknowledged by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissClear() },
-            title = { Text(stringResource(R.string.settings_data_clear_step1_title)) },
-            text = {
-                Column {
-                    Text(stringResource(R.string.settings_data_clear_step1_body))
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(stringResource(R.string.settings_data_clear_step2_body))
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { clearAcknowledged = !clearAcknowledged },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = clearAcknowledged,
-                            onCheckedChange = { clearAcknowledged = it }
-                        )
-                        Text(
-                            stringResource(R.string.key_delete_ack_label),
-                            style = MaterialTheme.typography.bodyMedium
+        var clearStep by remember { mutableStateOf(1) }
+        var clearAck1 by remember { mutableStateOf(false) }
+        var clearAck2 by remember { mutableStateOf(false) }
+        val runClearWithBiometric = {
+            val fragmentActivity = context as? androidx.fragment.app.FragmentActivity
+            if (fragmentActivity != null &&
+                com.pgpony.android.ui.keyring.BiometricGate.canAuthenticate(context) ==
+                com.pgpony.android.ui.keyring.BiometricAvailability.Available
+            ) {
+                com.pgpony.android.ui.keyring.BiometricGate.authenticate(
+                    activity = fragmentActivity,
+                    title = context.getString(R.string.settings_data_clear_biometric_title),
+                    subtitle = context.getString(R.string.settings_data_clear_biometric_subtitle),
+                    onSuccess = { viewModel.clearAllData() },
+                    onError = { _, _ -> /* cancelled — the dialog stays */ }
+                )
+            } else {
+                viewModel.clearAllData()
+            }
+        }
+        if (clearStep == 1) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissClear() },
+                title = { Text(stringResource(R.string.settings_data_clear_step1_title)) },
+                text = {
+                    Column {
+                        Text(stringResource(R.string.settings_data_clear_step1_body))
+                        // RC5 escalation: name every key about to be
+                        // destroyed, revoked ones included, so the stakes
+                        // are concrete losses rather than an abstract
+                        // warning. Scroll-capped so a large keyring
+                        // doesn't push the buttons off screen.
+                        if (state.clearKeysPreview.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                stringResource(
+                                    R.string.settings_data_clear_key_list_header_format,
+                                    state.clearKeysPreview.size
+                                ),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Column(
+                                modifier = Modifier
+                                    .heightIn(max = 160.dp)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                state.clearKeysPreview.forEach { key ->
+                                    val label = key.userName.ifBlank { key.userEmail }
+                                    Text(
+                                        "\u2022 " + label +
+                                            (if (key.userEmail.isNotBlank() && label != key.userEmail) " (" + key.userEmail + ")" else "") +
+                                            " \u00b7 " + key.shortFingerprint,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.dismissClear()
+                                showBackup = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(stringResource(R.string.settings_data_clear_backup_button)) }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { clearAck1 = !clearAck1 },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = clearAck1, onCheckedChange = { clearAck1 = it })
+                            Text(
+                                stringResource(R.string.key_delete_ack_label),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { clearStep = 2 },
+                        enabled = clearAck1,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) { Text(stringResource(R.string.common_button_continue)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissClear() }) { Text(stringResource(R.string.common_button_cancel)) }
+                }
+            )
+        } else {
+            // RC5 escalation: on top of the second acknowledgement, the
+            // user must type the confirmation word exactly (case and
+            // all — muscle memory can't do it), and the final button
+            // then holds a 5-second countdown before it arms. Breaking
+            // any precondition resets the countdown.
+            var clearTyped by remember { mutableStateOf("") }
+            val clearTypeWord = stringResource(R.string.settings_data_clear_type_word)
+            val clearArmed = clearAck2 && clearTyped.trim() == clearTypeWord
+            var clearCountdown by remember { mutableStateOf(5) }
+            LaunchedEffect(clearArmed) {
+                if (clearArmed) {
+                    clearCountdown = 5
+                    while (clearCountdown > 0) {
+                        kotlinx.coroutines.delay(1000)
+                        clearCountdown--
+                    }
+                } else {
+                    clearCountdown = 5
+                }
+            }
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissClear() },
+                title = { Text(stringResource(R.string.settings_data_clear_step2_title)) },
+                text = {
+                    Column {
+                        Text(stringResource(R.string.settings_data_clear_step2_body))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { clearAck2 = !clearAck2 },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = clearAck2, onCheckedChange = { clearAck2 = it })
+                            Text(
+                                stringResource(R.string.settings_data_clear_ack2_label),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = clearTyped,
+                            onValueChange = { clearTyped = it },
+                            label = {
+                                Text(
+                                    stringResource(
+                                        R.string.settings_data_clear_type_label_format,
+                                        clearTypeWord
+                                    )
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { runClearWithBiometric() },
+                        enabled = clearArmed && clearCountdown == 0,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text(
+                            if (clearArmed && clearCountdown > 0)
+                                stringResource(R.string.settings_data_clear_step2_confirm) + " (" + clearCountdown + ")"
+                            else
+                                stringResource(R.string.settings_data_clear_step2_confirm)
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissClear() }) { Text(stringResource(R.string.common_button_cancel)) }
                 }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { viewModel.clearAllData() },
-                    enabled = clearAcknowledged,
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) { Text(stringResource(R.string.settings_data_clear_step2_confirm)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.dismissClear() }) { Text(stringResource(R.string.common_button_cancel)) }
-            }
-        )
+            )
+        }
     }
 
     // ── Security & Encryption Info (Phase 1) ────────────────────────────
@@ -1045,6 +1242,56 @@ private fun SectionHeader(title: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
     )
+}
+
+// §5.6.9 (Piotr): sideload update-check control. Rendered only when the
+// build is a sideload (see UpdateCheckService.isEligible). Opt-in switch
+// plus a manual "Check now" that toasts the outcome. Notify-and-link only;
+// no download happens here or in the service.
+@Composable
+private fun UpdateCheckSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var enabled by remember { mutableStateOf(UpdateCheckService.isEnabled(context)) }
+    var checking by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        SettingsToggle(
+            title = stringResource(R.string.settings_updates_toggle_title),
+            subtitle = stringResource(R.string.settings_updates_toggle_subtitle),
+            icon = Icons.Filled.SystemUpdate,
+            iconTint = Color(0xFF8B5CF6),
+            checked = enabled,
+            onCheckedChange = {
+                enabled = it
+                UpdateCheckService.setEnabled(context, it)
+            }
+        )
+        if (enabled) {
+            TextButton(
+                onClick = {
+                    if (checking) return@TextButton
+                    checking = true
+                    scope.launch {
+                        val result = UpdateCheckService.checkForUpdate(context, force = true)
+                        val msg = when (result) {
+                            is UpdateCheckService.CheckResult.UpdateAvailable ->
+                                context.getString(R.string.settings_updates_found, result.version)
+                            UpdateCheckService.CheckResult.UpToDate ->
+                                context.getString(R.string.settings_updates_uptodate)
+                            else ->
+                                context.getString(R.string.settings_updates_failed)
+                        }
+                        android.widget.Toast.makeText(
+                            context, msg, android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        checking = false
+                    }
+                }
+            ) {
+                Text(stringResource(R.string.settings_updates_check_now))
+            }
+        }
+    }
 }
 
 @Composable
@@ -1402,7 +1649,9 @@ private fun PassphraseCacheSection() {
             900 to stringResource(R.string.settings_card_pin_cache_15min),
             3600 to stringResource(R.string.settings_card_pin_cache_1hr),
             com.pgpony.android.provider.ProviderPassphraseCache.DURATION_UNTIL_CLEARED to
-                stringResource(R.string.settings_card_pin_cache_until_cleared)
+                stringResource(R.string.settings_card_pin_cache_until_cleared),
+            com.pgpony.android.session.SessionPolicy.DURATION_UNTIL_LOCKED to
+                stringResource(R.string.settings_session_until_locked)
         )
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
@@ -1422,7 +1671,7 @@ private fun PassphraseCacheSection() {
         }
         Spacer(modifier = Modifier.height(8.dp))
         if (remainingMs > 0) {
-            if (com.pgpony.android.provider.ProviderPassphraseCache.isUntilCleared()) {
+            if (com.pgpony.android.session.SessionPolicy.isLifecycleHeld()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -1523,7 +1772,9 @@ private fun CardPinCacheSection() {
                 // timer. Wrong-PIN / manual Clear / process death still
                 // clear it; only the countdown goes away.
                 com.pgpony.android.crypto.card.CardPinCache.DURATION_UNTIL_CLEARED to
-                    stringResource(R.string.settings_card_pin_cache_until_cleared)
+                    stringResource(R.string.settings_card_pin_cache_until_cleared),
+                com.pgpony.android.session.SessionPolicy.DURATION_UNTIL_LOCKED to
+                    stringResource(R.string.settings_session_until_locked)
             )
             // 4.0.0 Phase 9 — five choices no longer fit a segmented row
             // ("1 hour" already ellipsized on narrow devices with four).
@@ -1553,7 +1804,7 @@ private fun CardPinCacheSection() {
                 // held PIN reports Long.MAX_VALUE, so show the held state
                 // instead of a (nonsense) countdown. Clear now works the
                 // same in both branches.
-                if (com.pgpony.android.crypto.card.CardPinCache.isUntilCleared()) {
+                if (com.pgpony.android.session.SessionPolicy.isLifecycleHeld()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1679,6 +1930,51 @@ private fun EmailFormatSection() {
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             stringResource(R.string.settings_email_format_subtitle),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+// §5.5.1 (board t/1): default packaging for the result Share button —
+// inline armored text vs a .asc file. Generalizes the email-format idea to
+// the general share sheet.
+@Composable
+private fun DefaultShareFormatSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember {
+        context.getSharedPreferences("pgpony_prefs", android.content.Context.MODE_PRIVATE)
+    }
+    var format by remember {
+        mutableStateOf(prefs.getString("default_share_format", "text") ?: "text")
+    }
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Text(
+            stringResource(R.string.settings_share_format_label),
+            style = MaterialTheme.typography.labelLarge
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        val choices = listOf(
+            "text" to stringResource(R.string.settings_share_format_inline),
+            "file" to stringResource(R.string.settings_share_format_file)
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            choices.forEachIndexed { index, (value, label) ->
+                SegmentedButton(
+                    selected = format == value,
+                    onClick = {
+                        format = value
+                        prefs.edit().putString("default_share_format", value).apply()
+                    },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = choices.size)
+                ) {
+                    Text(label, maxLines = 1)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            stringResource(R.string.settings_share_format_subtitle),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

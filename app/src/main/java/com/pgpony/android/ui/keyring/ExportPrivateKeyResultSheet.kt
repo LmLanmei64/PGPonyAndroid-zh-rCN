@@ -65,6 +65,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -89,9 +90,9 @@ fun ExportPrivateKeyResultSheet(
     // RC4 O5 (#16, CertainBot): the ring already has its own passphrase —
     // hide the export-passphrase fields and say so instead.
     alreadyProtected: Boolean = false,
-    onCopy: (exportPassphrase: String?) -> Unit,
-    onSaveFile: (exportPassphrase: String?) -> Unit,
-    onShare: (exportPassphrase: String?) -> Unit,
+    onCopy: (exportPassphrase: String?, gpgCompat: Boolean) -> Unit,
+    onSaveFile: (exportPassphrase: String?, gpgCompat: Boolean) -> Unit,
+    onShare: (exportPassphrase: String?, gpgCompat: Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -104,6 +105,8 @@ fun ExportPrivateKeyResultSheet(
         exportPassphrase.isNotEmpty() && exportPassphrase != exportPassphraseConfirm
     val effectivePassphrase: String? =
         if (alreadyProtected || exportPassphrase.isBlank()) null else exportPassphrase
+    // issue #2 symptom D: emit GnuPG's native composite-secret format.
+    var gpgCompat by remember { mutableStateOf(false) }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
@@ -261,9 +264,27 @@ fun ExportPrivateKeyResultSheet(
                 }
             }
 
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.export_private_gpg_compat_label),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = stringResource(R.string.export_private_gpg_compat_caption),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = gpgCompat, onCheckedChange = { gpgCompat = it })
+            }
+
             OutlinedButton(
                 enabled = !passphraseMismatch,
-                onClick = { onCopy(effectivePassphrase) },
+                onClick = { onCopy(effectivePassphrase, gpgCompat) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.error
@@ -284,7 +305,7 @@ fun ExportPrivateKeyResultSheet(
             // whichever way it leaves the app.
             OutlinedButton(
                 enabled = !passphraseMismatch,
-                onClick = { onSaveFile(effectivePassphrase) },
+                onClick = { onSaveFile(effectivePassphrase, gpgCompat) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.error
@@ -301,7 +322,7 @@ fun ExportPrivateKeyResultSheet(
 
             OutlinedButton(
                 enabled = !passphraseMismatch,
-                onClick = { onShare(effectivePassphrase) },
+                onClick = { onShare(effectivePassphrase, gpgCompat) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.error

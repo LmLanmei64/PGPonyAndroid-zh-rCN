@@ -321,7 +321,10 @@ class PGPonyOpenPgpService : Service() {
                 .mapNotNull { raw ->
                     val email = raw.substringAfterLast('<').substringBefore('>').trim()
                         .ifEmpty { raw.trim() }
-                    repo.getByEmail(email).firstOrNull()
+                    // 4.2.1 (#27): match ANY user id, not just the primary,
+                    // so a secondary identity (4.2.0 #29) resolves here and
+                    // the client is offered encryption to it.
+                    repo.getByAnyUserEmail(email).firstOrNull()
                 }
                 .map { entity -> java.lang.Long.parseUnsignedLong(entity.longKeyId, 16) }
                 .toLongArray()
@@ -465,7 +468,11 @@ class PGPonyOpenPgpService : Service() {
                 // Encrypting to every held key makes the message openable
                 // by whichever is convenient (receive prefers software —
                 // no NFC tap — but the card can always open it too).
-                val matches = repo.getByEmail(email).filter { !it.isRevoked }
+                // 4.2.1 (#27): resolve across all user ids so encrypt to a
+                // secondary identity actually finds the key — without this,
+                // the getKeyIds fix above would offer encryption that then
+                // failed here at send time.
+                val matches = repo.getByAnyUserEmail(email).filter { !it.isRevoked }
                 var added = false
                 matches.forEach { entity ->
                     repo.loadPublicKeyRing(entity.fingerprint)?.let { ring ->
@@ -547,6 +554,28 @@ class PGPonyOpenPgpService : Service() {
                     signPassphrase = resolved.passphrase
                     signKeyId = resolved.keyId
                     signKeyLabel = resolved.label
+                    // RC5 P1 (#34, EmanuelLoos — his diagnosis): the
+                    // client sends ONE sign+encrypt covering outbound AND
+                    // encrypt-to-self, so the client's configured key
+                    // rides along as a recipient. If the signing default
+                    // just substituted that key away (e.g. v6 → v4 for a
+                    // classical recipient), leaving its ring in the
+                    // recipient set embeds a composite PKESK that pre-v6
+                    // clients cannot parse past — the recipient loses the
+                    // WHOLE message even though their own packet is fine.
+                    // So encrypt-to-self follows the substitution,
+                    // unconditionally: the self-copy becomes readable by
+                    // the substitute key instead. No toggle — a
+                    // backwards-compatible message carrying a v6 PKESK
+                    // defeats the slot's entire purpose.
+                    if (resolved.entity.fingerprint != resolved.clientEntity.fingerprint &&
+                        rings.containsKey(resolved.clientEntity.fingerprint)
+                    ) {
+                        repo.loadPublicKeyRing(resolved.entity.fingerprint)?.let { subRing ->
+                            rings.remove(resolved.clientEntity.fingerprint)
+                            rings[resolved.entity.fingerprint] = subRing
+                        }
+                    }
                 }
             }
         }
@@ -781,7 +810,9 @@ class PGPonyOpenPgpService : Service() {
             userIds.forEach { raw ->
                 val email = raw.substringAfterLast('<').substringBefore('>').trim()
                     .ifEmpty { raw.trim() }
-                val matches = repo.getByEmail(email).filter { !it.isRevoked }
+                // 4.2.1 (#27): secondary identities count for the
+                // Autocrypt recommendation too.
+                val matches = repo.getByAnyUserEmail(email).filter { !it.isRevoked }
                 if (matches.isEmpty()) {
                     anyMissing = true
                     allConfirmed = false
@@ -1381,7 +1412,10 @@ class PGPonyOpenPgpService : Service() {
                     val raw = data.getStringExtra(OpenPgpApi.EXTRA_USER_ID) ?: ""
                     val email = raw.substringAfterLast('<').substringBefore('>').trim()
                         .ifEmpty { raw.trim() }
-                    repo.getByEmail(email).firstOrNull { !it.isRevoked }
+                    // 4.2.1 (#27): a client asking for a key by a secondary
+                    // identity address should get it, same as the resolve
+                    // sites above.
+                    repo.getByAnyUserEmail(email).firstOrNull { !it.isRevoked }
                 }
                 else -> null
             }
@@ -1425,7 +1459,11 @@ class PGPonyOpenPgpService : Service() {
             val ring: org.bouncycastle.openpgp.PGPSecretKeyRing,
             val passphrase: String?,
             val keyId: Long,
-            val label: String
+            val label: String,
+            // RC5 P1 (#34): encryptOp needs both to swap the
+            // encrypt-to-self recipient when a substitution happened.
+            val entity: com.pgpony.android.data.PGPKeyEntity,
+            val clientEntity: com.pgpony.android.data.PGPKeyEntity
         ) : SignResolve()
 
         /** P2c: the signing key lives on a hardware card. */
@@ -1497,7 +1535,7 @@ class PGPonyOpenPgpService : Service() {
         // PGPony's default passphrase-less keys).
         val passphrase = data.getStringExtra(OpenPgpApi.EXTRA_PASSPHRASE)
             ?: ProviderPassphraseCache.get(effectiveKeyId)
-        return SignResolve.Ok(ring, passphrase, effectiveKeyId, entity.userID)
+        return SignResolve.Ok(ring, passphrase, effectiveKeyId, entity.userID, entity, clientEntity)
     }
 
     /**

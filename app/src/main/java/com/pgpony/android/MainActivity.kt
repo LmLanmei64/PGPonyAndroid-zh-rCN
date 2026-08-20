@@ -126,6 +126,7 @@ import com.pgpony.android.ui.components.LockScreen
 import com.pgpony.android.ui.keyring.KeyDetailScreen
 import com.pgpony.android.ui.keyring.KeyDetailViewModel
 import com.pgpony.android.ui.keyring.KeyringScreen
+import com.pgpony.android.ui.keyring.RecentlyDeletedScreen
 import com.pgpony.android.ui.keyring.KeyringViewModel
 import com.pgpony.android.ui.encrypt.EncryptScreen
 import com.pgpony.android.ui.encrypt.DecryptScreen
@@ -805,10 +806,14 @@ fun PGPonyMainScreen(
     // ── First-run onboarding gate (Phase 3, inline-gen in Phase 3.1) ────
     //
     // A14 Picker fix — rememberSaveable instead of remember so this
-    // state survives Activity recreation. AppCompatDelegate.setApplicationLocales()
-    // (called from the language picker, Settings or Onboarding) triggers
-    // Activity.recreate() so the new locale takes effect across the UI.
-    // With plain `remember`, the recreated Composable would re-read
+    // state survives Activity recreation. As of RC4 MainActivity declares
+    // configChanges="locale|layoutDirection", so on API 33+ a language
+    // switch lands as an in-place onConfigurationChanged (no recreate, no
+    // flash, and the current route is preserved). API 26-32 still gets a
+    // real recreate via AppCompat's compat shim, and any config change
+    // (rotation, dark mode) recreates on every API level — so this
+    // saveable is still required. With plain `remember`, the recreated
+    // Composable would re-read
     // `prefs.getBoolean("onboarding_completed", false)` — which returns
     // `true` for anyone who completed onboarding before tapping "Replay
     // first-run intro" (replay only mutates the in-memory flag, not the
@@ -888,7 +893,14 @@ fun PGPonyMainScreen(
         // the feature.
         if (biometricLockEnabled) {
             val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_STOP && !isAutoLockSuppressed()) {
+                // RC5 (Kevin): re-check the pref at event time instead of
+                // trusting the composition-time snapshot. A clear-all
+                // (reinstall semantics) wipes `biometric_lock` mid-session;
+                // without the live read the stale snapshot would re-lock a
+                // factory-fresh app on the next ON_STOP.
+                if (event == Lifecycle.Event.ON_STOP && !isAutoLockSuppressed() &&
+                    prefs.getBoolean("biometric_lock", false)
+                ) {
                     isLocked = true
                 }
             }
@@ -1021,7 +1033,13 @@ fun PGPonyMainScreen(
                 // 3.1.0 Phase 6 (J5): multi-file share lands pre-loaded in
                 // Bundle mode; the user adds an optional note, picks
                 // recipients, and encrypts (J3/J4 UI unchanged).
-                encDecVm.startBundleFromShare(action.attachments)
+                // 4.2.0 RC6 (#32): the share now hands over uri refs,
+                // never bytes; clear any draft, then add each ref so the
+                // attachments stream at encrypt time.
+                encDecVm.startBundleFromShare(emptyList())
+                for (f in action.files) {
+                    encDecVm.addBundleAttachmentRef(f.filename, f.contentType, f.size, f.uri)
+                }
                 navController.navigate(Screen.Encrypt.route) {
                     popUpTo(navController.graph.startDestinationId) { saveState = true }
                     launchSingleTop = true
@@ -1250,7 +1268,16 @@ fun PGPonyMainScreen(
                         viewModel = settingsVm,
                         onReplayOnboarding = { onboardingDone = false },
                         onOpenPassStore = { navController.navigate("pass_store") },
-                        onKeysChanged = { keyringVm.loadKeys() }
+                        onKeysChanged = { keyringVm.loadKeys() },
+                        onOpenRecycleBin = { navController.navigate("recently_deleted") }
+                    )
+                }
+                // §5.6.1 (#36 part 1): key recycle bin. Reuses the shared
+                // KeyringViewModel for its repo-backed list + actions.
+                composable("recently_deleted") {
+                    RecentlyDeletedScreen(
+                        viewModel = keyringVm,
+                        onBack = { navController.popBackStack() }
                     )
                 }
             }

@@ -241,13 +241,41 @@ fun EncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
 
             OutlinedButton(
                 onClick = {
-                    // ACTION_SEND with the armored text. Apps that
-                    // accept text/plain can ingest the ciphertext
-                    // directly; on API 26+ this surfaces the share
-                    // sheet with Messages, Mail, etc. as targets.
-                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    // §5.5.1 (board t/1): the Share button honors the
+                    // default sharing method — inline armored text
+                    // (text/plain EXTRA_TEXT, the original behavior) or a
+                    // .asc file (FileProvider EXTRA_STREAM). Falls back to
+                    // text if the file could not be staged.
+                    val shareFmt = context.getSharedPreferences(
+                        "pgpony_prefs", android.content.Context.MODE_PRIVATE
+                    ).getString("default_share_format", "text") ?: "text"
+                    val textIntent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(Intent.EXTRA_TEXT, output)
+                    }
+                    val sendIntent = if (shareFmt == "file") {
+                        try {
+                            val exportsDir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+                            val shareName = when {
+                                detached -> "signature.asc"
+                                signOnly -> "signed-message.asc"
+                                else -> "message.asc"
+                            }
+                            val outFile = java.io.File(exportsDir, shareName)
+                            outFile.writeBytes(output.toByteArray(Charsets.UTF_8))
+                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                context, "${context.packageName}.fileprovider", outFile
+                            )
+                            Intent(Intent.ACTION_SEND).apply {
+                                type = "application/octet-stream"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                        } catch (_: Exception) {
+                            textIntent
+                        }
+                    } else {
+                        textIntent
                     }
                     context.startActivity(
                         Intent.createChooser(
@@ -380,10 +408,17 @@ fun EncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
             }
 
             savedNote?.let {
+                // RC5 P4 (#13, CertainBot): success in the same green as
+                // FileDecryptionResultScreen's saved status; failure in
+                // the theme error color. The note strings are the only
+                // two values ever assigned, so matching the failed
+                // resource is a complete discriminator.
+                val failed = it == stringResource(R.string.result_save_failed_note)
                 Text(
                     it,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (failed) MaterialTheme.colorScheme.error
+                            else androidx.compose.ui.graphics.Color(0xFF22C55E),
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )

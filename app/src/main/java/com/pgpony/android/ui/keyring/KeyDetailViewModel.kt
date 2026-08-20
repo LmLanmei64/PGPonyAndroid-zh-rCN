@@ -171,6 +171,14 @@ data class KeyDetailUiState(
     val showAddUserIdSheet: Boolean = false,
     val addUserIdInFlight: Boolean = false,
     val addUserIdError: String? = null,
+    val showChangePassphraseSheet: Boolean = false,
+    val changePassphraseInFlight: Boolean = false,
+    val changePassphraseError: String? = null,
+    // §5.6.7 (Play review) — editable primary-UID notations.
+    val notations: List<UserIdService.Notation> = emptyList(),
+    val showNotationsSheet: Boolean = false,
+    val notationsInFlight: Boolean = false,
+    val notationsError: String? = null,
     /** Non-null while UserIdActionSheet (revoke or make-primary) is open,
      *  identifying which UID and which action it's confirming. */
     val userIdAction: UserIdActionRequest? = null,
@@ -344,7 +352,11 @@ class KeyDetailViewModel(
                 signingDefaults = loaded?.takeIf { it.isKeyPair }
                     ?.let { repo.signingDefaultsFor(it.fingerprint) },
                 signerChoices = loaded?.takeIf { it.isKeyPair }
-                    ?.let { signerChoicePool() } ?: emptyList()
+                    ?.let { signerChoicePool() } ?: emptyList(),
+                // §5.6.7 — human-readable notations on the primary self-cert.
+                notations = loaded?.let {
+                    withContext(Dispatchers.IO) { repo.readNotations(it.fingerprint) }
+                } ?: emptyList()
             )
         }
     }
@@ -451,7 +463,9 @@ class KeyDetailViewModel(
             return
         }
         viewModelScope.launch {
-            val armored = repo.exportArmoredPublicKey(key.fingerprint)
+            // §5.6.5 (#37): export + QR encode off the main thread so a
+            // large post-quantum key does not stall the sheet on open.
+            val armored = withContext(Dispatchers.IO) { repo.exportArmoredPublicKey(key.fingerprint) }
             if (armored.isNullOrBlank()) {
                 _state.value = _state.value.copy(
                     errorMessage = PGPonyApp.instance.getString(R.string.kd_vm_error_export_for_qr),
@@ -465,7 +479,7 @@ class KeyDetailViewModel(
             // rather than ZXing's "data too big", which is the half of #3
             // that could always have been fixed cheaply.
             val frames = try {
-                QrBitmap.encodeFrames(armored)
+                withContext(Dispatchers.Default) { QrBitmap.encodeFrames(armored) }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     errorMessage = PGPonyApp.instance.getString(R.string.kd_vm_error_qr_failed_format, e.message ?: "")
@@ -1056,7 +1070,7 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
         val key = _state.value.key ?: return
         viewModelScope.launch {
             try {
-                repo.deleteByFingerprint(key.fingerprint)
+                repo.softDeleteByFingerprint(key.fingerprint)
                 // No state cleanup — the screen pops the back stack via
                 // the event, the VM dies with the back stack entry.
                 _events.tryEmit(KeyDetailEvent.KeyDeleted)
@@ -1306,6 +1320,103 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
 
     /** Add a new User ID, then reload both the entity and the UID list so
      *  the new row (and any primary-badge change) appears immediately. */
+    fun showChangePassphraseSheet() {
+        _state.value = _state.value.copy(showChangePassphraseSheet = true, changePassphraseError = null)
+    }
+
+    fun dismissChangePassphraseSheet() {
+        _state.value = _state.value.copy(showChangePassphraseSheet = false, changePassphraseError = null)
+    }
+
+    /**
+     * §1.1 (#26) Change, set, or remove the key's passphrase. Empty
+     * [newPassphrase] removes protection. A wrong [oldPassphrase] surfaces as
+     * the incorrect-passphrase retry; on success the sheet dismisses and the
+     * protected flag is updated so the export sheet reflects the new state.
+     */
+    fun changePassphrase(oldPassphrase: String, newPassphrase: String) {
+        val key = _state.value.key ?: return
+        _state.value = _state.value.copy(changePassphraseInFlight = true, changePassphraseError = null)
+        viewModelScope.launch {
+            try {
+                val ok = withContext(Dispatchers.Default) {
+                    repo.changePassphrase(key.fingerprint, oldPassphrase, newPassphrase)
+                }
+                if (!ok) {
+                    _state.value = _state.value.copy(
+                        changePassphraseInFlight = false,
+                        changePassphraseError = PGPonyApp.instance.getString(R.string.change_passphrase_failed)
+                    )
+                    return@launch
+                }
+                com.pgpony.android.session.InAppPassphraseCache.clear(key.fingerprint)
+                _state.value = _state.value.copy(
+                    changePassphraseInFlight = false,
+                    showChangePassphraseSheet = false,
+                    privateKeyIsProtected = newPassphrase.isNotEmpty()
+                )
+            } catch (e: org.bouncycastle.openpgp.PGPException) {
+                _state.value = _state.value.copy(
+                    changePassphraseInFlight = false,
+                    changePassphraseError = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase_retry)
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    changePassphraseInFlight = false,
+                    changePassphraseError = e.message
+                        ?: PGPonyApp.instance.getString(R.string.change_passphrase_failed)
+                )
+            }
+        }
+    }
+
+    fun showNotationsSheet() {
+        _state.value = _state.value.copy(showNotationsSheet = true, notationsError = null)
+    }
+
+    fun dismissNotationsSheet() {
+        if (_state.value.notationsInFlight) return
+        _state.value = _state.value.copy(showNotationsSheet = false, notationsError = null)
+    }
+
+    /** §5.6.7 — replace the primary UID's notation set and re-sign it,
+     *  then reload so the Notations section reflects the change. */
+    fun saveNotations(notations: List<UserIdService.Notation>, passphrase: String?) {
+        val key = _state.value.key ?: return
+        _state.value = _state.value.copy(notationsInFlight = true, notationsError = null)
+        viewModelScope.launch {
+            try {
+                repo.setNotations(key.fingerprint, notations, passphrase)
+                val reloaded = repo.getByFingerprint(key.fingerprint)
+                val refreshed = withContext(Dispatchers.IO) { repo.readNotations(key.fingerprint) }
+                _state.value = _state.value.copy(
+                    key = reloaded ?: key,
+                    notations = refreshed,
+                    notationsInFlight = false,
+                    showNotationsSheet = false
+                )
+            } catch (e: UserIdService.UserIdError) {
+                val msg = when (e) {
+                    is UserIdService.UserIdError.InvalidPassphrase,
+                    is UserIdService.UserIdError.PassphraseRequired ->
+                        PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase_retry)
+                    else -> e.message ?: PGPonyApp.instance.getString(R.string.key_detail_notations_failed)
+                }
+                _state.value = _state.value.copy(notationsInFlight = false, notationsError = msg)
+            } catch (e: org.bouncycastle.openpgp.PGPException) {
+                _state.value = _state.value.copy(
+                    notationsInFlight = false,
+                    notationsError = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase_retry)
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    notationsInFlight = false,
+                    notationsError = e.message ?: PGPonyApp.instance.getString(R.string.key_detail_notations_failed)
+                )
+            }
+        }
+    }
+
     fun addUserId(userId: String, makePrimary: Boolean, passphrase: String?) {
         val key = _state.value.key ?: return
         _state.value = _state.value.copy(addUserIdInFlight = true, addUserIdError = null)
@@ -1435,6 +1546,17 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
         return repo.exportArmoredPrivateKey(key.fingerprint, exportPassphrase)
     }
 
+    /**
+     * issue #2 symptom D: same as [armoredPrivateKeyForShare] but emits
+     * GnuPG's native composite-secret format so GPG4WIN / gpg 2.5.x can
+     * import a PGPony composite key. [exportPassphrase] protects the copy.
+     */
+    fun armoredPrivateKeyGpgCompatForShare(exportPassphrase: String? = null): String? {
+        val key = _state.value.key ?: return null
+        if (!key.isKeyPair) return null
+        return repo.exportArmoredPrivateKeyGpgCompat(key.fingerprint, exportPassphrase)
+    }
+
     // ── Phase A7 Fix4: Export private key result sheet ────────────────
 
     /**
@@ -1452,6 +1574,11 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
             showExportPrivateResultSheet = true,
             pendingExportedPrivate = armored
         )
+        // §4.3: producing a private-key copy counts as a backup for the
+        // delete-safeguard state (the delete sheet reads lastBackedUpAt).
+        _state.value.key?.let { k ->
+            if (k.isKeyPair) viewModelScope.launch { repo.markBackedUp(k.fingerprint) }
+        }
     }
 
     /**

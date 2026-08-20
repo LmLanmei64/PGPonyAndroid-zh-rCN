@@ -65,6 +65,9 @@ data class DuplicateImportOutcome(
 
 data class KeyringUiState(
     val allKeys: List<PGPKeyEntity> = emptyList(),
+    // §5.6.1 recycle bin: soft-deleted keys, loaded on demand for the
+    // Recently Deleted screen.
+    val deletedKeys: List<PGPKeyEntity> = emptyList(),
     // Phase A1: subkey rows loaded alongside keys. Empty map means
     // either migration hasn't run yet or the keyring is empty. Keyed
     // by PGPKeyEntity.id (NOT fingerprint) for direct lookup from a
@@ -234,6 +237,13 @@ enum class ExpirationOption(val displayName: String, val seconds: Long?) {
 
 class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
 
+    private companion object {
+        /** RC5 P3 (#23): minimum visible duration for the pull-to-refresh
+         *  indicator. Long enough to read as "the app responded", short
+         *  enough not to feel like fake work. */
+        const val MIN_REFRESH_SPIN_MS = 650L
+    }
+
     private val _state = MutableStateFlow(KeyringUiState())
     val state: StateFlow<KeyringUiState> = _state.asStateFlow()
 
@@ -399,6 +409,12 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
     fun refresh() {
         viewModelScope.launch {
             _state.value = _state.value.copy(isRefreshing = true)
+            // RC5 P3 (#23): the DB re-read completes sub-frame, so without a
+            // floor the isRefreshing true→false round-trip lands inside one
+            // composition and PullToRefreshBox's indicator never animates
+            // (the "refresh arrow does not spin" report). Hold the flag for
+            // a short minimum so the spinner visibly runs.
+            val startedAt = android.os.SystemClock.elapsedRealtime()
             try {
                 val keys = repo.getAllKeys()
                 val subkeyMap = mutableMapOf<String, List<PgpSubkeyEntity>>()
@@ -409,15 +425,29 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
                     allKeys = keys,
                     subkeysByPrimaryId = subkeyMap,
                     legacyCompositeFingerprints = computeLegacyCompositeFingerprints(keys),
-                    isRefreshing = false
                 )
+                holdRefreshIndicator(startedAt)
             } catch (e: Exception) {
+                holdRefreshIndicator(startedAt)
                 _state.value = _state.value.copy(
                     isRefreshing = false,
                     errorMessage = PGPonyApp.instance.getString(R.string.keyring_error_refresh_failed_format, e.message ?: "")
                 )
             }
         }
+    }
+
+    /** RC5 P3 (#23): keep the pull-to-refresh indicator visible for at
+     *  least [MIN_REFRESH_SPIN_MS] measured from [startedAt], then drop
+     *  isRefreshing. The success path clears the flag here (after the data
+     *  copy above) so the list updates immediately while the spinner
+     *  finishes its arc; the error path calls this before surfacing the
+     *  message. */
+    private suspend fun holdRefreshIndicator(startedAt: Long) {
+        val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
+        val remaining = MIN_REFRESH_SPIN_MS - elapsed
+        if (remaining > 0) kotlinx.coroutines.delay(remaining)
+        _state.value = _state.value.copy(isRefreshing = false)
     }
 
     // ── Generate ───────────────────────────────────────────────────────
@@ -922,11 +952,43 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
         _state.value = _state.value.copy(keyToDelete = null)
     }
 
+    // ── §5.6.1 recycle bin ────────────────────────────────────────────
+    fun loadDeletedKeys() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(deletedKeys = repo.getDeletedKeys())
+        }
+    }
+
+    fun restoreDeletedKey(entity: PGPKeyEntity) {
+        viewModelScope.launch {
+            repo.restoreKey(entity.id)
+            loadKeys()
+            _state.value = _state.value.copy(
+                deletedKeys = repo.getDeletedKeys(),
+                successMessage = PGPonyApp.instance.getString(R.string.recycle_bin_restored)
+            )
+        }
+    }
+
+    fun purgeDeletedKey(entity: PGPKeyEntity) {
+        viewModelScope.launch {
+            repo.purgeKey(entity)
+            _state.value = _state.value.copy(deletedKeys = repo.getDeletedKeys())
+        }
+    }
+
+    fun emptyRecycleBin() {
+        viewModelScope.launch {
+            repo.emptyRecycleBin()
+            _state.value = _state.value.copy(deletedKeys = emptyList())
+        }
+    }
+
     fun deleteKey() {
         val key = _state.value.keyToDelete ?: return
         viewModelScope.launch {
             try {
-                repo.deleteKey(key)
+                repo.softDeleteKey(key)
                 _state.value = _state.value.copy(
                     keyToDelete = null,
                     successMessage = PGPonyApp.instance.getString(R.string.keyring_status_key_deleted)

@@ -45,7 +45,15 @@ fun OnboardingScreen(
     onImportExisting: () -> Unit = {},
     onRestoreBackup: () -> Unit = {}
 ) {
-    val slides = OnboardingSlides.all
+    // §5.6.9 (Piotr): the update-check slide is sideload-only — drop it on
+    // F-Droid / Play installs, which update themselves.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val slides = remember(context) {
+        OnboardingSlides.all.filterNot {
+            it.showUpdateToggle &&
+                !com.pgpony.android.update.UpdateCheckService.isEligible(context)
+        }
+    }
     val pagerState = rememberPagerState(pageCount = { slides.size })
     val scope = rememberCoroutineScope()
 

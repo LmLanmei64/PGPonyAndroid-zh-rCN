@@ -59,11 +59,12 @@ enum class SupportedLanguage(val tag: String, val nativeName: String) {
     ES("es", "Español"),
     FR("fr", "Français"),
     JA("ja", "日本語"),
-    PT_BR("pt-BR", "Português (Brasil)");
+    PT_BR("pt-BR", "Português (Brasil)"),
+    RU("ru", "Русский");
 
     companion object {
         /**
-         * Resolve a language tag (or BCP-47 locale) to one of our six
+         * Resolve a language tag (or BCP-47 locale) to one of our seven
          * supported languages, snapping region variants to the closest
          * canonical entry. Returns null if nothing matches at all.
          *
@@ -93,6 +94,7 @@ enum class SupportedLanguage(val tag: String, val nativeName: String) {
                 "fr" -> FR
                 "ja" -> JA
                 "pt" -> PT_BR
+                "ru" -> RU
                 else -> null
             }
         }

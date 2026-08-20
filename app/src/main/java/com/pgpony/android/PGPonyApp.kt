@@ -13,6 +13,7 @@ import com.pgpony.android.data.MIGRATION_4_5
 import com.pgpony.android.data.MIGRATION_5_6
 import com.pgpony.android.data.MIGRATION_6_7
 import com.pgpony.android.data.MIGRATION_7_8
+import com.pgpony.android.data.MIGRATION_8_9
 import com.pgpony.android.autocrypt.AutocryptPeerStore
 import com.pgpony.android.data.PGPDatabase
 import com.pgpony.android.data.SecureKeyStore
@@ -67,7 +68,7 @@ class PGPonyApp : Application() {
             PGPDatabase::class.java,
             "pgpony.db"
         )
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
             .build()
 
         // Initialize secure key storage
@@ -115,6 +116,37 @@ class PGPonyApp : Application() {
         // haven't opted in. The DB read happens off-thread so it
         // doesn't block app startup.
         KeyExpirationService.createNotificationChannel(applicationContext)
+        // §5.6.9 (Piotr): sideload update-check channel + a throttled launch
+        // check. The service self-gates on install source, the opt-in
+        // pref, and a once-a-day throttle, so this is a no-op on F-Droid /
+        // Play installs or when the user has not opted in.
+        com.pgpony.android.update.UpdateCheckService.createNotificationChannel(applicationContext)
+        // §3 (#15): device-lock listener that clears held secrets when the
+        // session policy is "until the phone locks". SCREEN_OFF is a
+        // protected system broadcast; NOT_EXPORTED keeps it API-34-safe.
+        androidx.core.content.ContextCompat.registerReceiver(
+            this,
+            com.pgpony.android.session.SessionLockReceiver(),
+            android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        applicationScope.launch {
+            try {
+                com.pgpony.android.update.UpdateCheckService.checkForUpdate(applicationContext)
+            } catch (e: Exception) {
+                // best-effort; a failed check just tries again next launch
+            }
+        }
+        // §5.6.1 recycle bin: purge keys binned past the retention window.
+        applicationScope.launch {
+            try {
+                keyRepository.purgeExpiredDeleted(
+                    com.pgpony.android.data.repository.KeyRepository.RECYCLE_BIN_RETENTION_MS
+                )
+            } catch (e: Exception) {
+                // best-effort; retried next launch
+            }
+        }
 
         // ── Phase A12 Fix1: bootstrap observable theme state ───────────
         //

@@ -74,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pgpony.android.R
+import com.pgpony.android.crypto.SigningKeyOption
 import com.pgpony.android.data.PGPKeyEntity
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,7 +87,12 @@ fun SignAsSheet(
     // v4.0.0 (iOS parity): the persisted default-signer fingerprint (empty
     // when none pinned), and the action to pin a new one.
     defaultSignerFingerprint: String = "",
-    onSetDefault: ((PGPKeyEntity) -> Unit)? = null
+    onSetDefault: ((PGPKeyEntity) -> Unit)? = null,
+    // §4.5 (#22): signing-subkey choices for the current selection; the
+    // second-level picker shows only when there are 2+ signing keys.
+    signingSubkeyOptions: List<SigningKeyOption> = emptyList(),
+    selectedSigningKeyId: Long? = null,
+    onSelectSigningSubkey: ((Long?) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -139,7 +145,99 @@ fun SignAsSheet(
                 )
             }
 
+            // §4.5 (#22): second-level signing-subkey picker. Shown only
+            // when the selected key has more than one signing-capable key.
+            if (signingSubkeyOptions.size > 1 && onSelectSigningSubkey != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                Spacer(modifier = Modifier.height(12.dp))
+                SigningSubkeyPicker(
+                    options = signingSubkeyOptions,
+                    selectedKeyId = selectedSigningKeyId,
+                    onSelect = onSelectSigningSubkey
+                )
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun SigningSubkeyPicker(
+    options: List<SigningKeyOption>,
+    selectedKeyId: Long?,
+    onSelect: (Long?) -> Unit
+) {
+    Text(
+        text = stringResource(R.string.sign_as_subkey_title),
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold
+    )
+    Spacer(modifier = Modifier.height(2.dp))
+    Text(
+        text = stringResource(R.string.sign_as_subkey_explainer),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    SubkeyRow(
+        title = stringResource(R.string.sign_as_subkey_automatic),
+        subtitle = options.firstOrNull()?.let {
+            stringResource(R.string.sign_as_subkey_automatic_detail, it.algorithmLabel, it.keyIdHex)
+        },
+        isSelected = selectedKeyId == null,
+        onClick = { onSelect(null) }
+    )
+    options.forEach { opt ->
+        SubkeyRow(
+            title = if (opt.isPrimary)
+                stringResource(R.string.sign_as_subkey_primary_label, opt.algorithmLabel)
+            else
+                stringResource(R.string.sign_as_subkey_subkey_label, opt.algorithmLabel),
+            subtitle = opt.keyIdHex,
+            isSelected = selectedKeyId == opt.keyId,
+            onClick = { onSelect(opt.keyId) }
+        )
+    }
+}
+
+@Composable
+private fun SubkeyRow(
+    title: String,
+    subtitle: String?,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+        }
+        if (isSelected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = stringResource(R.string.sign_as_sheet_selected_cd),
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
         }
     }
 }

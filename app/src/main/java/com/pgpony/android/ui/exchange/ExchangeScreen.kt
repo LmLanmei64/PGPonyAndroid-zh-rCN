@@ -12,8 +12,13 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.pgpony.android.qr.QrAnimation
 import androidx.compose.runtime.*
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
@@ -105,6 +110,17 @@ private fun ShowKeySection(
     clipboard: androidx.compose.ui.platform.ClipboardManager
 ) {
     val haptics = rememberHaptics()
+    // §5.6.5 (#37): auto-rotate multi-part frames on the Exchange QR. Manual
+    // next/prev stay for now; tapping one pauses so a part can be held.
+    var autoRotate by remember { mutableStateOf(true) }
+    LaunchedEffect(state.qrFrames.size, autoRotate) {
+        if (state.qrFrames.size > 1 && autoRotate) {
+            while (true) {
+                kotlinx.coroutines.delay(QrAnimation.FRAME_INTERVAL_MS)
+                viewModel.qrNext()
+            }
+        }
+    }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp),
@@ -165,19 +181,36 @@ private fun ShowKeySection(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedButton(onClick = { viewModel.qrPrev() }) {
-                            Text(stringResource(R.string.qr_part_previous))
+                        OutlinedButton(onClick = { autoRotate = false; viewModel.qrPrev() }) {
+                            Icon(
+                                imageVector = Icons.Filled.FastRewind,
+                                contentDescription = stringResource(R.string.qr_part_previous)
+                            )
                         }
-                        Text(
-                            stringResource(
-                                R.string.qr_part_of_format,
-                                state.qrIndex + 1,
-                                state.qrFrames.size
-                            ),
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        OutlinedButton(onClick = { viewModel.qrNext() }) {
-                            Text(stringResource(R.string.qr_part_next))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { autoRotate = !autoRotate }) {
+                                Icon(
+                                    imageVector = if (autoRotate) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                    contentDescription = stringResource(
+                                        if (autoRotate) R.string.qr_autorotate_pause_cd
+                                        else R.string.qr_autorotate_play_cd
+                                    )
+                                )
+                            }
+                            Text(
+                                stringResource(
+                                    R.string.qr_part_of_format,
+                                    state.qrIndex + 1,
+                                    state.qrFrames.size
+                                ),
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                        }
+                        OutlinedButton(onClick = { autoRotate = false; viewModel.qrNext() }) {
+                            Icon(
+                                imageVector = Icons.Filled.FastForward,
+                                contentDescription = stringResource(R.string.qr_part_next)
+                            )
                         }
                     }
                     Text(
