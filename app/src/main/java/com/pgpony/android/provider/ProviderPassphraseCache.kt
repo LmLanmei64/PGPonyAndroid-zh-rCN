@@ -37,6 +37,7 @@ package com.pgpony.android.provider
 import android.content.Context
 import android.os.SystemClock
 import com.pgpony.android.PGPonyApp
+import com.pgpony.android.session.SessionPolicy
 import java.util.concurrent.ConcurrentHashMap
 
 object ProviderPassphraseCache {
@@ -63,19 +64,17 @@ object ProviderPassphraseCache {
         PGPonyApp.instance.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     }.getOrNull()
 
-    fun durationSec(): Int =
-        prefsOrNull()?.getInt(KEY_DURATION_SEC, DEFAULT_DURATION_SEC) ?: DEFAULT_DURATION_SEC
+    // §3 (#15): unified — reads the single SessionPolicy duration.
+    fun durationSec(): Int = SessionPolicy.durationSec()
 
-    fun isUntilCleared(): Boolean = durationSec() == DURATION_UNTIL_CLEARED
+    fun isUntilCleared(): Boolean = SessionPolicy.isUntilCleared()
 
     fun setDurationSec(seconds: Int) {
-        // No bookkeeping on held entries: expiry is recomputed from the
-        // preference on every read, so the new duration binds instantly.
-        prefsOrNull()?.edit()?.putInt(KEY_DURATION_SEC, seconds)?.apply()
+        SessionPolicy.setDurationSec(seconds)
     }
 
     private fun remainingMsOf(entry: Entry): Long {
-        if (isUntilCleared()) return Long.MAX_VALUE
+        if (SessionPolicy.isLifecycleHeld()) return Long.MAX_VALUE
         val expiresAt = entry.storedAt + durationSec() * 1000L
         return (expiresAt - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
     }

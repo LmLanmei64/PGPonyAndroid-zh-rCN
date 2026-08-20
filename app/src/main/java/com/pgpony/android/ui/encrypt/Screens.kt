@@ -1358,7 +1358,10 @@ private fun EncryptModeBody(state: EncryptUiState, viewModel: EncryptDecryptView
                 keyPairs = state.availableSigningKeys,
                 defaultSignerFingerprint = state.defaultSignerFingerprint,
                 onSelect = { viewModel.setSigningKey(it) },
-                onSetDefault = { viewModel.setDefaultSigner(it) }
+                onSetDefault = { viewModel.setDefaultSigner(it) },
+                signingSubkeyOptions = state.signingSubkeyOptions,
+                selectedSigningKeyId = state.selectedSigningKeyId,
+                onSelectSigningSubkey = { viewModel.setSigningSubkey(it) }
             )
         }
     }
@@ -1464,7 +1467,11 @@ private fun SignAsPicker(
     keyPairs: List<com.pgpony.android.data.PGPKeyEntity>,
     defaultSignerFingerprint: String,
     onSelect: (com.pgpony.android.data.PGPKeyEntity) -> Unit,
-    onSetDefault: (com.pgpony.android.data.PGPKeyEntity) -> Unit
+    onSetDefault: (com.pgpony.android.data.PGPKeyEntity) -> Unit,
+    // §4.5 (#22): signing-subkey choices for the chosen signer.
+    signingSubkeyOptions: List<com.pgpony.android.crypto.SigningKeyOption> = emptyList(),
+    selectedSigningKeyId: Long? = null,
+    onSelectSigningSubkey: ((Long?) -> Unit)? = null
 ) {
     var showSignAsSheet by remember { mutableStateOf(false) }
     SignAsRow(
@@ -1481,7 +1488,10 @@ private fun SignAsPicker(
             },
             onDismiss = { showSignAsSheet = false },
             defaultSignerFingerprint = defaultSignerFingerprint,
-            onSetDefault = onSetDefault
+            onSetDefault = onSetDefault,
+            signingSubkeyOptions = signingSubkeyOptions,
+            selectedSigningKeyId = selectedSigningKeyId,
+            onSelectSigningSubkey = onSelectSigningSubkey
         )
     }
 }
@@ -1511,7 +1521,10 @@ private fun SignModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewMod
             keyPairs = state.availableSigningKeys,
             defaultSignerFingerprint = state.defaultSignerFingerprint,
             onSelect = { viewModel.setSigningKey(it) },
-            onSetDefault = { viewModel.setDefaultSigner(it) }
+            onSetDefault = { viewModel.setDefaultSigner(it) },
+            signingSubkeyOptions = state.signingSubkeyOptions,
+            selectedSigningKeyId = state.selectedSigningKeyId,
+            onSelectSigningSubkey = { viewModel.setSigningSubkey(it) }
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
@@ -1881,7 +1894,10 @@ private fun BundleModeBody(state: EncryptUiState, viewModel: EncryptDecryptViewM
                 keyPairs = bundleSigningKeys,
                 defaultSignerFingerprint = state.defaultSignerFingerprint,
                 onSelect = { viewModel.setSigningKey(it) },
-                onSetDefault = { viewModel.setDefaultSigner(it) }
+                onSetDefault = { viewModel.setDefaultSigner(it) },
+                signingSubkeyOptions = state.signingSubkeyOptions,
+                selectedSigningKeyId = state.selectedSigningKeyId,
+                onSelectSigningSubkey = { viewModel.setSigningSubkey(it) }
             )
         }
     }
@@ -2250,7 +2266,10 @@ private fun FileSection(state: EncryptUiState, viewModel: EncryptDecryptViewMode
                 keyPairs = state.availableSigningKeys,
                 defaultSignerFingerprint = state.defaultSignerFingerprint,
                 onSelect = { viewModel.setSigningKey(it) },
-                onSetDefault = { viewModel.setDefaultSigner(it) }
+                onSetDefault = { viewModel.setDefaultSigner(it) },
+                signingSubkeyOptions = state.signingSubkeyOptions,
+                selectedSigningKeyId = state.selectedSigningKeyId,
+                onSelectSigningSubkey = { viewModel.setSigningSubkey(it) }
             )
         }
     }

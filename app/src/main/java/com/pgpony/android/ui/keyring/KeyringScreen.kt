@@ -385,6 +385,7 @@ fun KeyringScreen(
             DeleteKeySheet(
                 keyOwnerLabel = deleteOwnerLabel,
                 shortFingerprint = key.shortFingerprint,
+                lastBackedUpAt = key.lastBackedUpAt,
                 onSaveBackup = { backupPass ->
                     val armored = viewModel.armoredPrivateFor(key, backupPass)
                     if (armored == null) {

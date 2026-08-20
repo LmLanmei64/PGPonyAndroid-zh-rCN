@@ -132,6 +132,12 @@ data class EncryptUiState(
     val selectedRecipients: List<PGPKeyEntity> = emptyList(),
     val availableRecipients: List<PGPKeyEntity> = emptyList(),
     val signingKey: PGPKeyEntity? = null,
+    // §4.5 (#22): signing-subkey choices for the chosen signer (first entry
+    // is the automatic pick); selectedSigningKeyId is the user's choice,
+    // null = automatic. Only populated for software key pairs with 2+
+    // signing-capable keys; the picker hides otherwise.
+    val signingSubkeyOptions: List<com.pgpony.android.crypto.SigningKeyOption> = emptyList(),
+    val selectedSigningKeyId: Long? = null,
     val availableSigningKeys: List<PGPKeyEntity> = emptyList(),
     // v4.0.0 (iOS parity) — persisted default signer fingerprint; preselected
     // on open ahead of the generic isDefault flag. Empty = none pinned.
@@ -644,6 +650,12 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
             }
             val signableKeys = unrevokedKeyPairs + cardSigners
             val defaultSignerFpr = appPrefs.getString("pgpony_default_signer_fpr", "") ?: ""
+            // §4.5 (#22): resolve the signer once so the subkey-option
+            // refresh can tell whether it changed.
+            val resolvedSigner = signableKeys.firstOrNull { it.fingerprint == defaultSignerFpr }
+                ?: signableKeys.firstOrNull { it.isDefault }
+                ?: signableKeys.firstOrNull()
+            val signerChanged = resolvedSigner?.fingerprint != _encryptState.value.signingKey?.fingerprint
 
             // Phase A4 — default/remembered recipient pre-selection. Only seed
             // when nothing is selected yet (loadKeys also runs on tab return,
@@ -667,11 +679,14 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 // (loadKeys runs on tab return, so this can happen), bump
                 // it back to default-or-first to avoid the user signing
                 // with a revoked key on autopilot.
-                signingKey = signableKeys.firstOrNull { it.fingerprint == defaultSignerFpr }
-                    ?: signableKeys.firstOrNull { it.isDefault }
-                    ?: signableKeys.firstOrNull(),
+                signingKey = resolvedSigner,
+                // §4.5 (#22): reset the subkey choice only when the signer
+                // actually changed, so a tab-return doesn't clobber a pick.
+                selectedSigningKeyId = if (signerChanged) null else _encryptState.value.selectedSigningKeyId,
+                signingSubkeyOptions = if (signerChanged) emptyList() else _encryptState.value.signingSubkeyOptions,
                 defaultSignerFingerprint = defaultSignerFpr
             )
+            if (signerChanged) refreshSigningSubkeyOptions(resolvedSigner)
             // Phase A6 — DECRYPT side keeps revoked keys available.
             // A user can still legitimately decrypt messages that were
             // encrypted to them BEFORE revocation; the private material
@@ -744,17 +759,46 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     }
 
     fun setSigningKey(key: PGPKeyEntity?) {
-        _encryptState.value = _encryptState.value.copy(signingKey = key)
+        _encryptState.value = _encryptState.value.copy(
+            signingKey = key,
+            selectedSigningKeyId = null,
+            signingSubkeyOptions = emptyList()
+        )
+        refreshSigningSubkeyOptions(key)
+    }
+
+    /** §4.5 (#22): choose which signing subkey signs; null = automatic. */
+    fun setSigningSubkey(keyId: Long?) {
+        _encryptState.value = _encryptState.value.copy(selectedSigningKeyId = keyId)
+    }
+
+    /** §4.5 (#22): recompute the signing-subkey choices for [key]. Only
+     *  software key pairs have selectable signing subkeys; a card-backed
+     *  signer signs on the card, so there is no software subkey choice. */
+    private fun refreshSigningSubkeyOptions(key: PGPKeyEntity?) {
+        if (key == null || !key.isKeyPair || key.isCardBacked) return
+        viewModelScope.launch {
+            val options = withContext(Dispatchers.IO) {
+                repo.loadSecretKeyRing(key.fingerprint)?.let { crypto.signingKeyOptions(it) } ?: emptyList()
+            }
+            if (_encryptState.value.signingKey?.fingerprint == key.fingerprint) {
+                _encryptState.value = _encryptState.value.copy(signingSubkeyOptions = options)
+            }
+        }
     }
 
     /** v4.0.0 (iOS parity) — pin [key] as the default signer, preselected
      *  on every Sign + Encrypt open. Persisted in app prefs. */
     fun setDefaultSigner(key: PGPKeyEntity) {
         appPrefs.edit().putString("pgpony_default_signer_fpr", key.fingerprint).apply()
+        val changed = _encryptState.value.signingKey?.fingerprint != key.fingerprint
         _encryptState.value = _encryptState.value.copy(
             defaultSignerFingerprint = key.fingerprint,
-            signingKey = key
+            signingKey = key,
+            selectedSigningKeyId = if (changed) null else _encryptState.value.selectedSigningKeyId,
+            signingSubkeyOptions = if (changed) emptyList() else _encryptState.value.signingSubkeyOptions
         )
+        if (changed) refreshSigningSubkeyOptions(key)
     }
 
     fun setDetachedSignature(enabled: Boolean) {
@@ -1074,12 +1118,16 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 // where it should reappear.
                 showSignPassphraseDialog = false,
             )
+            // RC3 §N (#34): sign-without-encrypting default.
+            val effectiveSigner = resolveEffectiveSigner(
+                base = signingKey, recipients = emptyList(), signOnly = true
+            )
+            val signFp = effectiveSigner.fingerprint
+            // §3 (#15): reuse a cached in-app passphrase when the caller has
+            // none, so a second in-app op on the same key does not re-prompt.
+            val effPass = passphrase ?: com.pgpony.android.session.InAppPassphraseCache.get(signFp)
             try {
-                // RC3 §N (#34): sign-without-encrypting default.
-                val effectiveSigner = resolveEffectiveSigner(
-                    base = signingKey, recipients = emptyList(), signOnly = true
-                )
-                val secRing = repo.loadSecretKeyRing(effectiveSigner.fingerprint)
+                val secRing = repo.loadSecretKeyRing(signFp)
                     ?: throw SigningError.NoSigningKey()
 
                 val signed = if (s.detachedSignature) {
@@ -1089,7 +1137,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                         signing.signDetached(
                             data = s.inputText.toByteArray(Charsets.UTF_8),
                             secretKeyRing = secRing,
-                            passphrase = passphrase
+                            passphrase = effPass,
+                            signingKeyId = s.selectedSigningKeyId
                         ),
                         Charsets.UTF_8
                     )
@@ -1097,10 +1146,14 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     signing.signClear(
                         text = s.inputText,
                         secretKeyRing = secRing,
-                        passphrase = passphrase
+                        passphrase = effPass,
+                        signingKeyId = s.selectedSigningKeyId
                     )
                 }
 
+                // §3 (#15): remember the working passphrase for the session
+                // (skip unprotected keys, which need none).
+                if (!effPass.isNullOrEmpty()) com.pgpony.android.session.InAppPassphraseCache.put(signFp, effPass)
                 _encryptState.value = _encryptState.value.copy(
                     outputText = signed,
                     isProcessing = false,
@@ -1123,6 +1176,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     errorMessage = null
                 )
             } catch (e: SigningError.InvalidPassphrase) {
+                // §3 (#15): a wrong cached/entered passphrase must not loop.
+                com.pgpony.android.session.InAppPassphraseCache.clear(signFp)
                 _encryptState.value = _encryptState.value.copy(
                     isProcessing = false,
                     // Keep the dialog visible so the user can correct the
@@ -1204,7 +1259,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                         signingSecretKey = signingRing,
                         passphrase = passphrase,
                         filename = s.filename,
-                        armor = true
+                        armor = true,
+                        signingKeyId = s.selectedSigningKeyId
                     )
                 }
                 _encryptState.value = _encryptState.value.copy(
@@ -1375,6 +1431,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         signPassphrase: String?,
         literalFilename: String?,
         messagePassword: String?,
+        signingKeyId: Long? = null,
         totalBytes: Long
     ): java.io.File = withContext(Dispatchers.IO) {
         val job = coroutineContext[kotlinx.coroutines.Job]
@@ -1401,7 +1458,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     // 4.0.4 — see COMPRESSION_LIMIT. Deflate over a
                     // 105 MB archive costs minutes and saves nothing.
                     enableCompression = totalBytes in 0..COMPRESSION_LIMIT,
-                    messagePassword = messagePassword
+                    messagePassword = messagePassword,
+                    signingKeyId = signingKeyId
                 )
             }
         }
@@ -1500,7 +1558,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                             signingSecretKey = signingRing,
                             passphrase = passphrase,
                             filename = s.selectedFileName,
-                            armor = false
+                            armor = false,
+                            signingKeyId = s.selectedSigningKeyId
                         )
                     }
                 } else null
@@ -1513,6 +1572,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                         signPassphrase = passphrase,
                         literalFilename = s.selectedFileName,
                         messagePassword = null,
+                        signingKeyId = s.selectedSigningKeyId,
                         totalBytes = s.selectedFileSize ?: 0L
                     )
                 } else null
@@ -2049,7 +2109,8 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                                 signingSecretKey = signingRing,
                                 passphrase = passphrase,
                                 filename = null,
-                                armor = true
+                                armor = true,
+                                signingKeyId = s.selectedSigningKeyId
                             )
                         }
                     }
@@ -2603,9 +2664,15 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
      * happens — the cleartext is already visible to anyone holding the
      * input. We just verify the signature and surface the result.
      */
-    private fun verifyClearSignedPath(s: DecryptUiState) {
+    private fun verifyClearSignedPath(s: DecryptUiState) = runClearSignedVerify(s.inputText)
+
+    /** §5.6.10 (CertainBot) — verify a cleartext-signed .asc picked into the
+     *  decrypt file slot, using the same verification surface as pasted text. */
+    private fun verifyClearSignedFile(armored: String) = runClearSignedVerify(armored)
+
+    private fun runClearSignedVerify(armored: String) {
         viewModelScope.launch {
-            _decryptState.value = s.copy(isProcessing = true, errorMessage = null)
+            _decryptState.value = _decryptState.value.copy(isProcessing = true, errorMessage = null)
             // 4.0.4 — off the main thread. viewModelScope.launch runs on
             // Dispatchers.Main.immediate, and loadPublicKeyRing is a plain
             // blocking call: an EncryptedSharedPreferences read (Tink
@@ -2616,7 +2683,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 repo.getAllKeys().mapNotNull { repo.loadPublicKeyRing(it.fingerprint) }
             }
             val result = withContext(Dispatchers.Default) {
-                verify.verifyClearSigned(s.inputText, publicRings)
+                verify.verifyClearSigned(armored, publicRings)
             }
 
             val outputText = when (result) {
@@ -2740,6 +2807,11 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     private fun decryptAndVerifyPath(s: DecryptUiState) {
         viewModelScope.launch {
             _decryptState.value = _decryptState.value.copy(isProcessing = true, errorMessage = null)
+            // §3 (#15): reuse a cached in-app passphrase for a repeat decrypt
+            // on the selected key; remember a freshly entered one on success.
+            val cacheFp = s.selectedKeyFingerprint
+            val effPass = s.passphrase.ifBlank { null }
+                ?: cacheFp?.let { com.pgpony.android.session.InAppPassphraseCache.get(it) }
             try {
                 // Put selected key first, then include the rest as fallbacks
                 // RC3 §N (#34): primary first, then its enabled fallbacks in
@@ -2769,7 +2841,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                             // through unchanged.
                             armoredMessage = effectiveDecryptInput(s.inputText),
                             secretKeyRings = rings,
-                            passphrase = s.passphrase.ifBlank { null },
+                            passphrase = effPass,
                             verificationKeys = verifyRings
                         )
                     }
@@ -2804,6 +2876,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 _events.tryEmit(Event.DecryptSuccess)
                 ingestAutocrypt(s.inputText, result.data)
                 recordDecryptUsage(s.selectedKeyFingerprint)
+                if (cacheFp != null && !effPass.isNullOrEmpty()) com.pgpony.android.session.InAppPassphraseCache.put(cacheFp, effPass)
             } catch (e: com.pgpony.android.crypto.PGPCryptoError.PassphraseRequired) {
                 _decryptState.value = _decryptState.value.copy(
                     isProcessing = false,
@@ -2811,6 +2884,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     errorMessage = null
                 )
             } catch (e: com.pgpony.android.crypto.PGPCryptoError.InvalidPassphrase) {
+                if (cacheFp != null) com.pgpony.android.session.InAppPassphraseCache.clear(cacheFp)
                 _decryptState.value = _decryptState.value.copy(
                     isProcessing = false,
                     errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase)
@@ -3434,10 +3508,130 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
         if (passphrase != null) {
             _decryptState.value = s.copy(passphrase = passphrase)
         }
+        // §5.6.3 (#31): unwrap a zip-wrapped ciphertext, then re-enter with the
+        // extracted PGP entry as the input.
+        val zipName = s.selectedFileName?.lowercase()
+        val looksZip = (zipName != null && zipName.endsWith(".zip")) ||
+            (bytes != null && com.pgpony.android.ui.util.ZipPackaging.looksLikeZip(bytes))
+        if (looksZip) {
+            unwrapZipAndReenter(passphrase)
+            return
+        }
+        // §5.6.10 (CertainBot): a signed-but-not-encrypted .asc (Thunderbird
+        // saves signed plain text this way) can't be decrypted. Detect a
+        // cleartext-signed file and verify it in place instead of erroring
+        // "not encrypted". Small files load inline (INLINE_FILE_LIMIT), which
+        // is where signed plain text lands; larger inputs are ciphertext for
+        // the streaming path.
+        if (bytes != null) {
+            val asText = signedFileTextOrNull(bytes)
+            if (asText != null) {
+                when (verify.detectInputType(asText)) {
+                    SignedInputType.CLEAR_SIGNED -> { verifyClearSignedFile(asText); return }
+                    SignedInputType.DETACHED_SIGNATURE -> {
+                        _decryptState.value = _decryptState.value.copy(
+                            errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_detached_signature)
+                        )
+                        return
+                    }
+                    else -> {}
+                }
+            }
+        }
         if (bytes != null) {
             decryptFileAndVerifyPath(_decryptState.value, bytes)
         } else {
             decryptFileStreamingPath(_decryptState.value, uri!!)
+        }
+    }
+
+    /**
+     * §5.6.10 — decode a small selected file to text if it is ASCII-armored
+     * PGP, so the signed-message classifier can run on it. Returns null for
+     * binary ciphertext (.gpg) or anything without armor, which routes to
+     * decrypt as before.
+     */
+    private fun signedFileTextOrNull(bytes: ByteArray): String? {
+        if (bytes.isEmpty()) return null
+        val head = String(bytes, 0, minOf(64, bytes.size), Charsets.US_ASCII)
+        if (!head.contains("-----BEGIN PGP")) return null
+        return try { String(bytes, Charsets.UTF_8) } catch (e: Exception) { null }
+    }
+
+    /**
+     * §5.6.3 (#31): the selected input is a zip. Scan it (streamed), extract
+     * the single PGP-ciphertext entry to a scratch file, and re-enter
+     * [decryptFile] with that entry as the input. Zero PGP entries, or
+     * several, are reported rather than guessed at.
+     */
+    private fun unwrapZipAndReenter(passphrase: String?) {
+        val s = _decryptState.value
+        fileOpJob = viewModelScope.launch(Dispatchers.IO) {
+            _decryptState.value = _decryptState.value.copy(isProcessing = true, errorMessage = null)
+            try {
+                val entryFile = com.pgpony.android.ui.util.ScratchFiles.allocate(
+                    PGPonyApp.instance, "zip-payload", "decrypt-zip"
+                )
+                var count = 0
+                var entryName: String? = null
+                val raw = if (s.selectedFileBytes != null) {
+                    java.io.ByteArrayInputStream(s.selectedFileBytes)
+                } else {
+                    PGPonyApp.instance.contentResolver.openInputStream(s.selectedFileUri!!)
+                }
+                raw?.use { input ->
+                    java.util.zip.ZipInputStream(input).use { zip ->
+                        var e = zip.nextEntry
+                        while (e != null) {
+                            val nm = e.name
+                            val isPgp = !e.isDirectory &&
+                                listOf(".gpg", ".pgp", ".asc").any { nm.lowercase().endsWith(it) }
+                            if (isPgp) {
+                                count++
+                                if (entryName == null) {
+                                    entryName = nm.substringAfterLast('/')
+                                    java.io.FileOutputStream(entryFile).use { zip.copyTo(it) }
+                                }
+                            }
+                            zip.closeEntry()
+                            e = zip.nextEntry
+                        }
+                    }
+                }
+                val finalName = entryName
+                val errorRes = when {
+                    finalName == null -> R.string.decrypt_zip_no_pgp
+                    count > 1 -> R.string.decrypt_zip_multiple
+                    else -> 0
+                }
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    fileOpJob = null
+                    if (errorRes != 0) {
+                        _decryptState.value = _decryptState.value.copy(
+                            isProcessing = false,
+                            errorMessage = PGPonyApp.instance.getString(errorRes)
+                        )
+                    } else {
+                        _decryptState.value = _decryptState.value.copy(
+                            isProcessing = false,
+                            errorMessage = null,
+                            selectedFileBytes = null,
+                            selectedFileUri = android.net.Uri.fromFile(entryFile),
+                            selectedFileName = finalName,
+                            selectedFileSize = entryFile.length()
+                        )
+                        decryptFile(passphrase)
+                    }
+                }
+            } catch (t: Throwable) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    fileOpJob = null
+                    _decryptState.value = _decryptState.value.copy(
+                        isProcessing = false,
+                        errorMessage = PGPonyApp.instance.getString(R.string.decrypt_zip_failed)
+                    )
+                }
+            }
         }
     }
 
@@ -3469,6 +3663,11 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 totalBytes = s.selectedFileSize ?: 0L,
             )
             var scratch: java.io.File? = null
+            // §3 (#15): reuse a cached in-app passphrase for a repeat decrypt
+            // on the selected key; remember a freshly entered one on success.
+            val cacheFp = s.selectedKeyFingerprint
+            val effPass = s.passphrase.ifBlank { null }
+                ?: cacheFp?.let { com.pgpony.android.session.InAppPassphraseCache.get(it) }
             try {
                 // RC3 §N (#34): primary first, then its enabled fallbacks in
                 // the user's order, then everything else (pre-#34 behavior as
@@ -3530,7 +3729,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                                 input = source,
                                 output = sink,
                                 secretKeyRings = secretRings,
-                                passphrase = s.passphrase.ifBlank { null },
+                                passphrase = effPass,
                                 verificationKeys = verifyRings
                             )
                         }
@@ -3608,6 +3807,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 )
                 _events.tryEmit(Event.DecryptSuccess)
                 recordDecryptUsage(s.selectedKeyFingerprint)
+                if (cacheFp != null && !effPass.isNullOrEmpty()) com.pgpony.android.session.InAppPassphraseCache.put(cacheFp, effPass)
             } catch (e: com.pgpony.android.crypto.PGPCryptoError.PassphraseRequired) {
                 ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
                 _decryptState.value = _decryptState.value.copy(
@@ -3618,6 +3818,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     errorMessage = null
                 )
             } catch (e: com.pgpony.android.crypto.PGPCryptoError.InvalidPassphrase) {
+                if (cacheFp != null) com.pgpony.android.session.InAppPassphraseCache.clear(cacheFp)
                 ScratchFiles.clearScope(PGPonyApp.instance, ScratchFiles.SCOPE_DECRYPT)
                 _decryptState.value = _decryptState.value.copy(
                     isProcessing = false,
@@ -3702,6 +3903,11 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
     private fun decryptFileAndVerifyPath(s: DecryptUiState, bytes: ByteArray) {
         viewModelScope.launch {
             _decryptState.value = _decryptState.value.copy(isProcessing = true, errorMessage = null)
+            // §3 (#15): reuse a cached in-app passphrase for a repeat decrypt
+            // on the selected key; remember a freshly entered one on success.
+            val cacheFp = s.selectedKeyFingerprint
+            val effPass = s.passphrase.ifBlank { null }
+                ?: cacheFp?.let { com.pgpony.android.session.InAppPassphraseCache.get(it) }
             try {
                 // RC3 §N (#34): primary first, then its enabled fallbacks in
                 // the user's order, then everything else (pre-#34 behavior as
@@ -3730,7 +3936,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                             // armored payload; binary/plain files pass through.
                             encryptedData = effectiveDecryptFileBytes(bytes),
                             secretKeyRings = rings,
-                            passphrase = s.passphrase.ifBlank { null },
+                            passphrase = effPass,
                             verificationKeys = verifyRings
                         )
                     }
@@ -3777,6 +3983,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                 )
                 _events.tryEmit(Event.DecryptSuccess)
                 recordDecryptUsage(s.selectedKeyFingerprint)
+                if (cacheFp != null && !effPass.isNullOrEmpty()) com.pgpony.android.session.InAppPassphraseCache.put(cacheFp, effPass)
             } catch (e: com.pgpony.android.crypto.PGPCryptoError.PassphraseRequired) {
                 _decryptState.value = _decryptState.value.copy(
                     isProcessing = false,
@@ -3784,6 +3991,7 @@ class EncryptDecryptViewModel(private val repo: KeyRepository) : ViewModel() {
                     errorMessage = null
                 )
             } catch (e: com.pgpony.android.crypto.PGPCryptoError.InvalidPassphrase) {
+                if (cacheFp != null) com.pgpony.android.session.InAppPassphraseCache.clear(cacheFp)
                 _decryptState.value = _decryptState.value.copy(
                     isProcessing = false,
                     errorMessage = PGPonyApp.instance.getString(R.string.encdec_error_incorrect_passphrase)

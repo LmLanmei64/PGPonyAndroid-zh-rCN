@@ -35,10 +35,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -49,6 +54,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import com.pgpony.android.R
 import com.pgpony.android.data.PGPKeyEntity
+import com.pgpony.android.qr.QrAnimation
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,6 +85,18 @@ fun KeyDetailQRSheet(
     onDismiss: () -> Unit
 ) {
     val qrBitmap: Bitmap? = qrFrames.getOrNull(qrIndex)
+    // §5.6.5 (#37): auto-rotate multi-part frames so the receiver can hold
+    // the camera up and let it cycle. Manual next/prev stay for now; tapping
+    // one pauses rotation so a specific part can be held.
+    var autoRotate by remember { mutableStateOf(true) }
+    LaunchedEffect(qrFrames.size, autoRotate) {
+        if (qrFrames.size > 1 && autoRotate) {
+            while (true) {
+                kotlinx.coroutines.delay(QrAnimation.FRAME_INTERVAL_MS)
+                onNextFrame()
+            }
+        }
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -136,20 +159,37 @@ fun KeyDetailQRSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedButton(onClick = onPrevFrame) {
-                        Text(stringResource(R.string.qr_part_previous))
+                    OutlinedButton(onClick = { autoRotate = false; onPrevFrame() }) {
+                        Icon(
+                            imageVector = Icons.Filled.FastRewind,
+                            contentDescription = stringResource(R.string.qr_part_previous)
+                        )
                     }
-                    Text(
-                        text = stringResource(
-                            R.string.qr_part_of_format,
-                            qrIndex + 1,
-                            qrFrames.size
-                        ),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    OutlinedButton(onClick = onNextFrame) {
-                        Text(stringResource(R.string.qr_part_next))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { autoRotate = !autoRotate }) {
+                            Icon(
+                                imageVector = if (autoRotate) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = stringResource(
+                                    if (autoRotate) R.string.qr_autorotate_pause_cd
+                                    else R.string.qr_autorotate_play_cd
+                                )
+                            )
+                        }
+                        Text(
+                            text = stringResource(
+                                R.string.qr_part_of_format,
+                                qrIndex + 1,
+                                qrFrames.size
+                            ),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    OutlinedButton(onClick = { autoRotate = false; onNextFrame() }) {
+                        Icon(
+                            imageVector = Icons.Filled.FastForward,
+                            contentDescription = stringResource(R.string.qr_part_next)
+                        )
                     }
                 }
                 Text(

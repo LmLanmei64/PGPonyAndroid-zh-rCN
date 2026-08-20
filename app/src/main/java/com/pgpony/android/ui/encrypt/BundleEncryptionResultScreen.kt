@@ -43,10 +43,12 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -62,6 +64,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.pgpony.android.MainActivity
@@ -107,6 +110,16 @@ fun BundleEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
     val writeAsc: (java.io.OutputStream) -> Unit = { out ->
         if (armored != null) out.write(armored.toByteArray(Charsets.UTF_8))
         else java.io.FileInputStream(armoredFile!!).use { it.copyTo(out) }
+    }
+    // §5.6.3 (#31): wrap the .asc ciphertext in a zip for transport. The .eml
+    // envelope is left as-is (mail clients expect .eml).
+    val prefs = remember { context.getSharedPreferences("pgpony_prefs", android.content.Context.MODE_PRIVATE) }
+    var wrapZip by remember { mutableStateOf(prefs.getBoolean("wrap_output_in_zip", false)) }
+    val ascName = if (wrapZip) "message.asc.zip" else "message.asc"
+    val ascMime = if (wrapZip) "application/zip" else "application/pgp-encrypted"
+    val writeAscOut: (java.io.OutputStream) -> Unit = { out ->
+        if (wrapZip) com.pgpony.android.ui.util.ZipPackaging.writeSingleEntryNoClose(out, "message.asc", writeAsc)
+        else writeAsc(out)
     }
     val exportCtl = ExportControl(
         begin = { exporting = true; exportNote = null },
@@ -158,6 +171,10 @@ fun BundleEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(4.dp))
 
+            // §5.6.3 (#31, Araaf RC3 retest): split into an email block and a
+            // file block so the Wrap-in-.zip toggle plainly scopes the .asc
+            // file, not the .eml envelope.
+            SectionLabel(stringResource(R.string.bundle_result_section_email))
             // 3.1.0 Phase 5 Fix1 — each format gets Share AND Save. Save
             // goes through the SAF document creator with octet-stream (the
             // Phase 2 Fix1 lesson: typed MIMEs get their canonical
@@ -213,6 +230,32 @@ fun BundleEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
                     )
                 }
             }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            SectionLabel(stringResource(R.string.bundle_result_section_file))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            ) {
+                Switch(
+                    checked = wrapZip,
+                    onCheckedChange = {
+                        wrapZip = it
+                        prefs.edit().putBoolean("wrap_output_in_zip", it).apply()
+                    }
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        stringResource(R.string.enc_result_wrap_zip_label),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        stringResource(R.string.enc_result_wrap_zip_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -221,7 +264,7 @@ fun BundleEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
                 OutlinedButton(
                     enabled = !exporting,
                     onClick = {
-                        shareBundleStream(context, scope, exportCtl, "message.asc", "application/pgp-encrypted", writeAsc)
+                        shareBundleStream(context, scope, exportCtl, ascName, ascMime, writeAscOut)
                     },
                     modifier = Modifier.weight(1f)
                 ) {
@@ -233,9 +276,9 @@ fun BundleEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
                     enabled = !exporting,
                     onClick = {
                         saveBundleStream(
-                            activity, context, scope, exportCtl, "message.asc",
-                            minExpectedBytes = armoredFile?.length() ?: 0L,
-                            write = writeAsc
+                            activity, context, scope, exportCtl, ascName,
+                            minExpectedBytes = if (wrapZip) 0L else (armoredFile?.length() ?: 0L),
+                            write = writeAscOut
                         )
                     }
                 ) {
@@ -378,6 +421,18 @@ private class CountingOutputStream : java.io.OutputStream() {
     }
     override fun flush() = delegate.flush()
     override fun close() = delegate.close()
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Start,
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 private tailrec fun Context.findBundleResultMainActivity(): MainActivity? = when (this) {

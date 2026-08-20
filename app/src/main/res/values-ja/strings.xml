@@ -232,8 +232,8 @@
     <string name="settings_about_reset_tips_subtitle">各タブのコンテキストヒントを再表示</string>
     <string name="settings_about_reset_tips_success">各画面を訪れたときにヒントが再表示されます</string>
     <string name="settings_about_footer">PGPony for Android
-NorseHorse (Kevin Stewart) 制作
-pgpony.norsehor.se</string>
+NorseHorse 制作
+pgpony.app</string>
 
     <!-- ════════════════════════════════════════════════════════════════
          MainActivity — small UI strings (tab labels, etc.)
@@ -883,6 +883,10 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="onboarding_page_keyring_hint">「鍵束」タブからいつでも管理できます。</string>
     <string name="onboarding_page_biometric_toggle_title">生体認証ロックを有効にする</string>
     <string name="onboarding_page_biometric_toggle_subtitle">PGPony を開くのに指紋または顔認証が必要になります</string>
+    <string name="onboarding_slide_updates_title">最新の状態に保つ</string>
+    <string name="onboarding_slide_updates_body">PGPony をアプリストア以外からインストールしたため、自動的には更新されません。PGPony は GitHub で新しいリリースを確認して通知できます。自動でダウンロードやインストールを行うことはありません。</string>
+    <string name="onboarding_page_updates_toggle_title">アップデートを確認</string>
+    <string name="onboarding_page_updates_toggle_subtitle">新しいバージョンがあるときに通知します。</string>
 
     <!-- ── OnboardingScreen — Skip / Next / Get Started ─────────────── -->
     <string name="onboarding_screen_skip">スキップ</string>
@@ -1123,6 +1127,12 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="sign_as_sheet_title">署名する鍵</string>
     <string name="sign_as_sheet_explainer">受信者はメッセージがこの鍵から送られたことを検証できます。その ID の公開鍵を持つ人には、署名者としてあなたの名前が表示されます。</string>
     <string name="sign_as_sheet_selected_cd">選択中</string>
+    <string name="sign_as_subkey_title">署名鍵</string>
+    <string name="sign_as_subkey_explainer">この鍵には署名鍵が複数あります。署名に使う鍵を選択してください。</string>
+    <string name="sign_as_subkey_automatic">自動</string>
+    <string name="sign_as_subkey_automatic_detail">%1$s · %2$s</string>
+    <string name="sign_as_subkey_primary_label">主鍵 (%1$s)</string>
+    <string name="sign_as_subkey_subkey_label">副鍵 (%1$s)</string>
     <string name="sign_as_sheet_default_badge">デフォルト</string>
     <string name="sign_as_sheet_empty">利用できる鍵ペアがありません。</string>
 
@@ -1272,6 +1282,11 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="settings_email_format_attachment">添付ファイル</string>
     <string name="settings_email_format_both">両方</string>
     <string name="settings_email_format_subtitle">インラインは暗号化ブロックをメール本文に入れ、PGP対応クライアントが自動で復号します。添付ファイルは.ascファイルを送信します。</string>
+    <string name="settings_section_sharing">共有</string>
+    <string name="settings_share_format_label">既定の共有方法</string>
+    <string name="settings_share_format_inline">インラインテキスト</string>
+    <string name="settings_share_format_file">.asc ファイル</string>
+    <string name="settings_share_format_subtitle">共有ボタンが暗号化または署名された結果をどのように扱うか。</string>
     <!-- 3.1.0 Phase 8 Fix1 — file import read error -->
     <string name="keyring_error_file_read">ファイルを読み取れませんでした。ローカルストレージ（ファイルアプリ）に保存してから、もう一度インポートしてください。</string>
     <!-- 3.1.0 Phase 8 Fix2 — file import diagnostic -->
@@ -1605,6 +1620,7 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="settings_biometric_sign_title">署名に指紋を要求</string>
     <string name="settings_card_pin_cache_held_until_cleared">PIN は消去するまで記憶されます。</string>
     <string name="settings_card_pin_cache_until_cleared">消去するまで</string>
+    <string name="settings_session_until_locked">端末がロックされるまで</string>
     <string name="settings_clear_inputs_subtitle">暗号化結果を閉じたときにメッセージ、ファイル、パスワードを消去します</string>
     <string name="settings_clear_inputs_title">暗号化後に入力を消去</string>
     <string name="settings_key_refresh_disclosure">オンにすると、PGPony は保有する鍵のフィンガープリントを有効な鍵サーバー（keys.pgpony.app を含む）に定期的に送信し、更新を取得します。Tor 経由に保つには、プロキシの onion オプションを使ってください。</string>
@@ -1670,6 +1686,8 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="qr_multipart_hint">すべてのパートを PGPony でスキャンしてください。他の QR リーダーは分割された鍵を再構成できません。</string>
     <string name="qr_part_previous">前のパート</string>
     <string name="qr_part_next">次のパート</string>
+    <string name="qr_autorotate_play_cd">自動切り替えを再開</string>
+    <string name="qr_autorotate_pause_cd">自動切り替えを一時停止</string>
     <string name="qr_scan_progress_format">%2$d 個中 %1$d 個のパートをスキャンしました。続けてください。</string>
     <string name="qr_scan_restarted">別の鍵です。最初からやり直します。</string>
     <string name="share_target_decrypt_passphrase_required">その鍵はパスフレーズで保護されています。パスフレーズを入力してもう一度お試しください。</string>
@@ -1685,12 +1703,26 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <!-- 4.2.0 RC3 workstream M: localization sweep for strings added by workstreams A-N. -->
     <string name="encdec_error_bundle_signing_key">このバンドルに署名できませんでした。選択した署名鍵のロックを解除できませんでした。別の署名鍵を選ぶか、署名をオフにしてください。</string>
     <string name="encrypt_mode_sign_file">ファイル署名</string>
-    <string name="key_delete_ack_label">元に戻せないことを理解しました</string>
+    <string name="key_delete_ack_label">復元期間の経過後に破棄されることを理解しています</string>
     <string name="key_delete_backup_button">先にバックアップを保存 (.asc)</string>
     <string name="key_delete_biometric_subtitle">この鍵ペアを削除するには認証してください</string>
     <string name="key_delete_biometric_title">鍵の削除を確認</string>
     <string name="key_delete_confirm_button">鍵ペアを削除</string>
-    <string name="key_delete_sheet_body">公開鍵と秘密鍵の両方が完全に削除されます。この鍵に対して暗号化されたものは、あなたを含め誰にも二度と復号できなくなります。</string>
+    <string name="key_delete_backed_up_on">%1$s のバックアップにあります</string>
+    <string name="key_delete_never_backed_up">バックアップされていません。必要になるかもしれない場合は、先にバックアップを保存してください。</string>
+    <string name="settings_section_keys">鍵</string>
+    <string name="settings_recycle_bin_title">最近削除した項目</string>
+    <string name="settings_recycle_bin_subtitle">削除した鍵を復元するか完全に削除します</string>
+    <string name="recycle_bin_title">最近削除した項目</string>
+    <string name="recycle_bin_empty_state">ここには何もありません。削除した鍵は破棄されるまで %1$d 日間保持されます。</string>
+    <string name="recycle_bin_empty_action">ゴミ箱を空にする</string>
+    <string name="recycle_bin_restore">復元</string>
+    <string name="recycle_bin_delete_now">完全に削除</string>
+    <string name="recycle_bin_deleted_on">削除日 %1$s</string>
+    <string name="recycle_bin_purge_confirm_body">この鍵を完全に削除しますか？元に戻せません。</string>
+    <string name="recycle_bin_empty_confirm_body">ゴミ箱内のすべての鍵を完全に削除しますか？元に戻せません。</string>
+    <string name="recycle_bin_restored">鍵を復元しました</string>
+    <string name="key_delete_sheet_body">この鍵は %1$d 日間「最近削除した項目」に移動され、その後完全に破棄されます。それまでは復元できます。破棄されると、これで暗号化されたものは二度と復号できなくなります。</string>
     <string name="key_delete_sheet_title">鍵ペアを削除しますか?</string>
     <string name="key_detail_add_subkey_apply">サブキーを追加</string>
     <string name="key_detail_add_subkey_expiry_label">有効期限</string>
@@ -1706,6 +1738,19 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="key_detail_add_subkey_type_rsa_4096_sign">RSA 4096（署名）</string>
     <string name="key_detail_add_subkey_type_x25519_encrypt">X25519（暗号化）</string>
     <string name="key_detail_add_userid_apply">ユーザーIDを追加</string>
+    <string name="key_detail_notations_title">ノーテーション</string>
+    <string name="key_detail_notations_empty">この鍵にはノーテーションがありません。</string>
+    <string name="key_detail_notations_edit_action">ノーテーションを編集</string>
+    <string name="key_detail_notations_sheet_title">ノーテーションを編集</string>
+    <string name="key_detail_notations_sheet_subtitle">%1$s のプライマリIDのノーテーション。</string>
+    <string name="key_detail_notations_sheet_empty">ノーテーションはまだありません。下から追加してください。</string>
+    <string name="key_detail_notations_name_label">名前</string>
+    <string name="key_detail_notations_value_label">値</string>
+    <string name="key_detail_notations_remove_row">削除</string>
+    <string name="key_detail_notations_add_row">ノーテーションを追加</string>
+    <string name="key_detail_notations_name_hint">各ノーテーション名には @ を含め、値を入力してください（例: use@example.com）。</string>
+    <string name="key_detail_notations_apply">ノーテーションを保存</string>
+    <string name="key_detail_notations_failed">ノーテーションを更新できませんでした</string>
     <string name="key_detail_add_userid_email_label">メールアドレス</string>
     <string name="key_detail_add_userid_failed">ユーザーIDを追加できませんでした。もう一度お試しください。</string>
     <string name="key_detail_add_userid_make_primary_label">これをプライマリユーザーIDにする</string>
@@ -1763,6 +1808,19 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="settings_more_passpony_subtitle">パスもパスフレーズも、ポケットの中に</string>
     <string name="settings_more_ponyfamily_subtitle">ファミリー全アプリは pony.norsehor.se で</string>
     <string name="settings_more_ponyfamily_title">Ponyアプリすべて</string>
+    <string name="settings_desktop_title">PGPony for Desktop</string>
+    <string name="settings_desktop_subtitle">macOS、Linux、Windows 向けの OpenPGP。</string>
+    <string name="update_channel_name">アップデート</string>
+    <string name="update_channel_description">新しいサイドロード版が利用可能になると通知します。</string>
+    <string name="update_available_title">アップデートがあります</string>
+    <string name="update_available_text">PGPony %1$s が利用可能です。タップしてリリースを開きます。</string>
+    <string name="settings_section_updates">アップデート</string>
+    <string name="settings_updates_toggle_title">アップデートを確認</string>
+    <string name="settings_updates_toggle_subtitle">GitHub で新しいリリースを確認して通知します。F-Droid の更新経路を経由せず、ダウンロードやインストールは行いません。</string>
+    <string name="settings_updates_check_now">今すぐ確認</string>
+    <string name="settings_updates_found">アップデートがあります: %1$s</string>
+    <string name="settings_updates_uptodate">最新です。</string>
+    <string name="settings_updates_failed">アップデートを確認できませんでした。</string>
     <string name="settings_more_quorumpony_subtitle">秘密をカードに分割。数枚あれば復元できます。</string>
     <string name="settings_more_relaypony_subtitle">電話から電話へ、暗号化ファイル転送</string>
     <string name="settings_more_vaultpony_subtitle">VeraCrypt互換の暗号化ボールトを、すべて端末内で</string>
@@ -1783,4 +1841,29 @@ PGPony は、古い OpenPGP 実装との相互運用性のために従来の RSA
     <string name="export_passphrase_confirm_label">エクスポート用パスフレーズを確認</string>
     <string name="export_passphrase_mismatch">パスフレーズが一致しません。</string>
     <string name="export_passphrase_already_protected_note">この鍵には既に独自のパスフレーズがあり、エクスポートにも引き継がれます。</string>
+    <!-- 4.3.0 (#26): change key passphrase -->
+    <string name="key_detail_action_change_passphrase">パスフレーズを変更</string>
+    <string name="change_passphrase_sheet_title">パスフレーズを変更</string>
+    <string name="change_passphrase_sheet_subtitle">この鍵をこの端末で保護するパスフレーズを設定、変更、または削除します。</string>
+    <string name="change_passphrase_current_label">現在のパスフレーズ</string>
+    <string name="change_passphrase_new_label">新しいパスフレーズ</string>
+    <string name="change_passphrase_remove_warning">保護を解除するには、新しいパスフレーズを空欄のままにします。鍵はパスフレーズなしでこの端末に保存され、端末を使用できる人は誰でも鍵を使用できます。</string>
+    <string name="change_passphrase_remove_ack">この鍵をパスフレーズなしで保存する</string>
+    <string name="change_passphrase_backup_note">既存のバックアップは、鍵を再度エクスポートするまで古いパスフレーズのままです。</string>
+    <string name="change_passphrase_apply">変更</string>
+    <string name="change_passphrase_failed">パスフレーズを変更できませんでした。</string>
+    <!-- 4.3.0 (#31): zip output packaging -->
+    <string name="enc_result_wrap_zip_label">.zip にまとめる</string>
+    <string name="enc_result_wrap_zip_note">転送用のパッケージであり、暗号化ではありません。.gpg や .asc ファイルが壊れる経路で役立ちます。</string>
+    <!-- 4.3.0 (#31): zip decrypt -->
+    <string name="decrypt_zip_no_pgp">この .zip に暗号化されたメッセージが見つかりませんでした。</string>
+    <string name="decrypt_zip_multiple">この .zip には複数の暗号化ファイルが含まれています。展開して一つずつ復号してください。</string>
+    <string name="decrypt_zip_failed">.zip を読み取れませんでした。</string>
+    <!-- 4.3.0 (#36): Key Detail top-bar content descriptions -->
+    <string name="key_detail_show_qr_cd">QRコードを表示</string>
+    <string name="key_detail_actions_menu_cd">その他の操作</string>
+    <!-- 4.3.0 (#36/§5.5.2): storage-level row -->
+    <string name="key_detail_detail_storage">保管場所</string>
+    <string name="key_detail_detail_storage_software">ソフトウェアキーストア</string>
+    <string name="key_detail_detail_storage_card">ハードウェアセキュリティカード</string>
 </resources>

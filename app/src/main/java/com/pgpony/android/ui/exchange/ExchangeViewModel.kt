@@ -19,7 +19,9 @@ import com.pgpony.android.network.KeyServerRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class ExchangeSection { SHOW_KEY, SCAN_KEY, KEY_SERVER }
 
@@ -86,24 +88,27 @@ class ExchangeViewModel(
     }
 
     private fun generateQR(key: PGPKeyEntity) {
-        val armored = repo.exportArmoredPublicKey(key.fingerprint) ?: return
-        _state.value = _state.value.copy(armoredPublicKey = armored)
-
-        // 4.1.0 Phase 9 (issue #3) — see qr/QrBitmap.kt. This block used to
-        // be a verbatim copy of KeyDetailViewModel.encodeQR.
-        try {
-            val frames = QrBitmap.encodeFrames(armored)
-            if (frames.isNullOrEmpty()) {
-                _state.value = _state.value.copy(
-                    qrFrames = emptyList(),
-                    qrIndex = 0,
-                    errorMessage = PGPonyApp.instance.getString(R.string.qr_too_large)
-                )
-                return
+        // §5.6.5 (#37): export + QR encode off the main thread so a large
+        // post-quantum key does not stall the Exchange tab on selection.
+        viewModelScope.launch {
+            val armored = withContext(Dispatchers.IO) {
+                repo.exportArmoredPublicKey(key.fingerprint)
+            } ?: return@launch
+            _state.value = _state.value.copy(armoredPublicKey = armored)
+            try {
+                val frames = withContext(Dispatchers.Default) { QrBitmap.encodeFrames(armored) }
+                if (frames.isNullOrEmpty()) {
+                    _state.value = _state.value.copy(
+                        qrFrames = emptyList(),
+                        qrIndex = 0,
+                        errorMessage = PGPonyApp.instance.getString(R.string.qr_too_large)
+                    )
+                    return@launch
+                }
+                _state.value = _state.value.copy(qrFrames = frames, qrIndex = 0)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(errorMessage = PGPonyApp.instance.getString(R.string.exchange_vm_error_qr_failed_format, e.message ?: ""))
             }
-            _state.value = _state.value.copy(qrFrames = frames, qrIndex = 0)
-        } catch (e: Exception) {
-            _state.value = _state.value.copy(errorMessage = PGPonyApp.instance.getString(R.string.exchange_vm_error_qr_failed_format, e.message ?: ""))
         }
     }
 

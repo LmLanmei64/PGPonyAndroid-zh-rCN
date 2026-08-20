@@ -155,3 +155,12 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
         )
     }
 }
+
+// §5.6.1 (#36 part 1) recycle bin + §4.3 last-backed-up: two nullable
+// columns on pgp_keys. Same additive shape as the earlier migrations.
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `pgp_keys` ADD COLUMN `deletedAt` INTEGER")
+        db.execSQL("ALTER TABLE `pgp_keys` ADD COLUMN `lastBackedUpAt` INTEGER")
+    }
+}

@@ -53,9 +53,23 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Password
+import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Report
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -249,6 +263,7 @@ fun KeyDetailScreen(
             // AlertDialog is rendered below alongside the other dialogs,
             // and confirms route through BiometricGate before the Intent.
             KeyDetailActionIds.EXPORT_PRIVATE_KEY -> viewModel.showExportPrivateConfirm()
+            KeyDetailActionIds.CHANGE_PASSPHRASE -> viewModel.showChangePassphraseSheet()
             // Fallback — non-routing IDs (shouldn't happen since the
             // action menu only emits known IDs, but kept for safety).
             // showComingSoon receives the raw ID rather than a localized
@@ -267,6 +282,86 @@ fun KeyDetailScreen(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.key_detail_back_cd)
                         )
+                    }
+                },
+                // §5.6.2 (#36): QR + overflow menu replace the QR/Actions/Danger
+                // scroll sections. Menu items reuse the same dispatchAction ids.
+                actions = {
+                    val menuKey = state.key
+                    var menuOpen by remember { mutableStateOf(false) }
+                    IconButton(onClick = { viewModel.showQR() }) {
+                        Icon(Icons.Filled.QrCode2, contentDescription = stringResource(R.string.key_detail_show_qr_cd))
+                    }
+                    if (menuKey != null) {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.key_detail_actions_menu_cd))
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            if (menuKey.isCardBacked) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.key_detail_action_change_card_pin)) },
+                                    leadingIcon = { Icon(Icons.Filled.Password, null) },
+                                    onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.CHANGE_CARD_PIN) }
+                                )
+                            }
+                            if (menuKey.isKeyPair) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.key_detail_action_export_private_key)) },
+                                    leadingIcon = { Icon(Icons.Filled.VpnKey, null) },
+                                    onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.EXPORT_PRIVATE_KEY) }
+                                )
+                            }
+                            if (menuKey.isKeyPair && !menuKey.isCardBacked) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.key_detail_action_change_passphrase)) },
+                                    leadingIcon = { Icon(Icons.Filled.Password, null) },
+                                    onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.CHANGE_PASSPHRASE) }
+                                )
+                            }
+                            if (menuKey.isKeyPair && !menuKey.isDefault) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.key_detail_action_set_as_default)) },
+                                    leadingIcon = { Icon(Icons.Filled.Star, null) },
+                                    onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.SET_AS_DEFAULT) }
+                                )
+                            }
+                            if (menuKey.isKeyPair && !menuKey.keyServerUploaded) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.key_detail_action_upload_to_key_server)) },
+                                    leadingIcon = { Icon(Icons.Filled.CloudUpload, null) },
+                                    onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.UPLOAD_TO_KEY_SERVER) }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.key_detail_action_check_key_server)) },
+                                leadingIcon = { Icon(Icons.Filled.CloudDownload, null) },
+                                onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.CHECK_KEY_SERVER) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.key_detail_action_refresh_key_server)) },
+                                leadingIcon = { Icon(Icons.Filled.Sync, null) },
+                                onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.REFRESH_KEY_SERVER) }
+                            )
+                            HorizontalDivider()
+                            if (menuKey.isKeyPair && menuKey.isRevoked) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.key_detail_action_export_revocation_cert)) },
+                                    leadingIcon = { Icon(Icons.Filled.IosShare, null) },
+                                    onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.EXPORT_REVOCATION_CERT) }
+                                )
+                            } else if (menuKey.isKeyPair) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.key_detail_action_revoke_key), color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = { Icon(Icons.Filled.Report, null, tint = MaterialTheme.colorScheme.error) },
+                                    onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.REVOKE_KEY) }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.key_detail_action_delete_key), color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Filled.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = { menuOpen = false; dispatchAction(KeyDetailActionIds.DELETE_KEY) }
+                            )
+                        }
                     }
                 }
             )
@@ -291,6 +386,7 @@ fun KeyDetailScreen(
                 onAddUserId = { viewModel.showAddUserIdSheet() },
                 onMakePrimaryUserId = { uid -> viewModel.requestUserIdAction(uid, UserIdActionRequest.Kind.MAKE_PRIMARY) },
                 onRevokeUserId = { uid -> viewModel.requestUserIdAction(uid, UserIdActionRequest.Kind.REVOKE) },
+                onEditNotations = { viewModel.showNotationsSheet() },
                 // RC3 §N (#34)
                 onToggleFallback = { fp -> viewModel.toggleFallback(fp) },
                 onMoveFallback = { fp, delta -> viewModel.moveFallback(fp, delta) },
@@ -418,6 +514,7 @@ fun KeyDetailScreen(
             DeleteKeySheet(
                 keyOwnerLabel = deleteOwnerLabel,
                 shortFingerprint = key.shortFingerprint,
+                lastBackedUpAt = key.lastBackedUpAt,
                 onSaveBackup = { backupPass ->
                     val armored = viewModel.armoredPrivateKeyForShare(backupPass)
                     if (armored == null) {
@@ -565,6 +662,37 @@ fun KeyDetailScreen(
                 viewModel.addUserId(userId, makePrimary, passphrase)
             },
             onDismiss = { viewModel.dismissAddUserIdSheet() }
+        )
+    }
+
+    if (state.showChangePassphraseSheet && state.key != null) {
+        ChangePassphraseSheet(
+            isProtected = state.privateKeyIsProtected,
+            isProcessing = state.changePassphraseInFlight,
+            errorMessage = state.changePassphraseError,
+            onApply = { oldPass, newPass ->
+                viewModel.changePassphrase(oldPass, newPass)
+            },
+            onDismiss = { viewModel.dismissChangePassphraseSheet() }
+        )
+    }
+
+    // ── §5.6.7 (Play review): edit key notations sheet ──────────────────
+    val keyForNotations = state.key
+    if (state.showNotationsSheet && keyForNotations != null) {
+        val notationsOwnerLabel = keyForNotations.userName.ifBlank {
+            keyForNotations.userEmail.ifBlank { keyForNotations.shortFingerprint }
+        }
+        EditNotationsSheet(
+            keyOwnerLabel = notationsOwnerLabel,
+            initialNotations = state.notations,
+            showPassphraseField = state.privateKeyIsProtected,
+            isProcessing = state.notationsInFlight,
+            errorMessage = state.notationsError,
+            onApply = { notations, passphrase ->
+                viewModel.saveNotations(notations, passphrase)
+            },
+            onDismiss = { viewModel.dismissNotationsSheet() }
         )
     }
 
@@ -1108,6 +1236,7 @@ private fun LoadedBody(
     onAddUserId: () -> Unit,
     onMakePrimaryUserId: (String) -> Unit,
     onRevokeUserId: (String) -> Unit,
+    onEditNotations: () -> Unit,
     // RC3 §N (#34)
     onToggleFallback: (String) -> Unit,
     onMoveFallback: (String, Int) -> Unit,
@@ -1132,7 +1261,8 @@ private fun LoadedBody(
             FingerprintSection(
                 key = key,
                 copiedRecently = state.copiedFingerprint,
-                onCopy = onCopyFingerprint
+                onCopy = onCopyFingerprint,
+                onShare = { onComingSoon(KeyDetailActionIds.SHARE_PUBLIC_KEY) }
             )
         }
         // 4.0.0 Phase 2 (iOS v7.1.1 F4) — every User ID on the key.
@@ -1148,6 +1278,18 @@ private fun LoadedBody(
                     onMakePrimary = onMakePrimaryUserId,
                     onRevoke = onRevokeUserId,
                     onAddUserId = onAddUserId
+                )
+            }
+        }
+        // §5.6.7 (Play review) — editable primary-UID notations.
+        // Same software-key-pair gating as the UID and subkey edit
+        // surfaces; the section self-hides when empty and read-only.
+        if (state.notations.isNotEmpty() || canEditUserIds) {
+            item {
+                NotationsSection(
+                    notations = state.notations,
+                    canEdit = canEditUserIds,
+                    onEdit = onEditNotations
                 )
             }
         }
@@ -1209,21 +1351,7 @@ private fun LoadedBody(
                 onComingSoon = onComingSoon
             )
         }
-        item { QRSection(onShowQR = onShowQR) }
-        item {
-            ActionsSection(
-                key = key,
-                onComingSoon = onComingSoon,
-                // 4.0.0 Phase 2 — inline spinners for the two keyserver rows.
-                isCheckingKeyServer = state.isCheckingKeyServer,
-                isRefreshingFromKeyServer = state.isRefreshingFromKeyServer
-            )
-        }
-        item {
-            DangerZoneSection(
-                key = key,
-                onComingSoon = onComingSoon
-            )
-        }
+        // §5.6.2 (#36): QR, Actions, and Danger Zone moved to the top-bar
+        // overflow menu; Share Public Key moved into the fingerprint card.
     }
 }

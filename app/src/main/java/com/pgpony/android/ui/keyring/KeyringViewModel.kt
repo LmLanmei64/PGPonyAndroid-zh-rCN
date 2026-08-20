@@ -65,6 +65,9 @@ data class DuplicateImportOutcome(
 
 data class KeyringUiState(
     val allKeys: List<PGPKeyEntity> = emptyList(),
+    // §5.6.1 recycle bin: soft-deleted keys, loaded on demand for the
+    // Recently Deleted screen.
+    val deletedKeys: List<PGPKeyEntity> = emptyList(),
     // Phase A1: subkey rows loaded alongside keys. Empty map means
     // either migration hasn't run yet or the keyring is empty. Keyed
     // by PGPKeyEntity.id (NOT fingerprint) for direct lookup from a
@@ -949,11 +952,43 @@ class KeyringViewModel(private val repo: KeyRepository) : ViewModel() {
         _state.value = _state.value.copy(keyToDelete = null)
     }
 
+    // ── §5.6.1 recycle bin ────────────────────────────────────────────
+    fun loadDeletedKeys() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(deletedKeys = repo.getDeletedKeys())
+        }
+    }
+
+    fun restoreDeletedKey(entity: PGPKeyEntity) {
+        viewModelScope.launch {
+            repo.restoreKey(entity.id)
+            loadKeys()
+            _state.value = _state.value.copy(
+                deletedKeys = repo.getDeletedKeys(),
+                successMessage = PGPonyApp.instance.getString(R.string.recycle_bin_restored)
+            )
+        }
+    }
+
+    fun purgeDeletedKey(entity: PGPKeyEntity) {
+        viewModelScope.launch {
+            repo.purgeKey(entity)
+            _state.value = _state.value.copy(deletedKeys = repo.getDeletedKeys())
+        }
+    }
+
+    fun emptyRecycleBin() {
+        viewModelScope.launch {
+            repo.emptyRecycleBin()
+            _state.value = _state.value.copy(deletedKeys = emptyList())
+        }
+    }
+
     fun deleteKey() {
         val key = _state.value.keyToDelete ?: return
         viewModelScope.launch {
             try {
-                repo.deleteKey(key)
+                repo.softDeleteKey(key)
                 _state.value = _state.value.copy(
                     keyToDelete = null,
                     successMessage = PGPonyApp.instance.getString(R.string.keyring_status_key_deleted)

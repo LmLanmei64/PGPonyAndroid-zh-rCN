@@ -228,8 +228,15 @@ android {
         // The real fix, streaming the ciphertext through via the
         // session-key handoff, is open work for this 4.2.0 line, not yet
         // done.
-        versionCode = 421
-        versionName = "4.2.1"
+        // 4.3.0, in progress: opens with the WKD import fix for issue
+        // #41. WkdService hand-rolled the ASCII-armor wrap for keys
+        // fetched over WKD (binary on the wire), and that wrap mis-framed
+        // some keys so they failed to import with "Couldn't parse key",
+        // even though the same key imported fine from a file. The fetched
+        // bytes now go through BC's ArmoredOutputStream (the export path),
+        // with an already-armored passthrough. versionCode moves to 430.
+        versionCode = 430
+        versionName = "4.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

@@ -39,6 +39,8 @@ import com.pgpony.android.R
 fun DeleteKeySheet(
     keyOwnerLabel: String,
     shortFingerprint: String,
+    // §4.3: when this key was last backed up (epoch ms), or null for never.
+    lastBackedUpAt: Long? = null,
     onSaveBackup: (exportPassphrase: String?) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
@@ -100,8 +102,30 @@ fun DeleteKeySheet(
                 }
             }
 
+            // §4.3: per-key backup status, so the user knows whether losing
+            // this key is recoverable from a backup they already have.
+            if (lastBackedUpAt != null) {
+                val date = java.text.DateFormat.getDateInstance().format(java.util.Date(lastBackedUpAt))
+                Text(
+                    text = stringResource(R.string.key_delete_backed_up_on, date),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.key_delete_never_backed_up),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            // §5.6.1: delete now moves to Recently Deleted for a window, so
+            // the language is a different promise than permanent destruction.
             Text(
-                text = stringResource(R.string.key_delete_sheet_body),
+                text = stringResource(
+                    R.string.key_delete_sheet_body,
+                    com.pgpony.android.data.repository.KeyRepository.RECYCLE_BIN_RETENTION_DAYS
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

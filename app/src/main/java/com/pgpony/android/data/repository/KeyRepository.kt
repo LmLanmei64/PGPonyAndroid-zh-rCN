@@ -125,6 +125,13 @@ class KeyRepository(
     private val userIdService: UserIdService = UserIdService.shared
 ) {
 
+    companion object {
+        /** §5.6.1 recycle-bin retention: a binned key is auto-purged after
+         *  this window. Manual empty removes them sooner. */
+        const val RECYCLE_BIN_RETENTION_DAYS = 14
+        const val RECYCLE_BIN_RETENTION_MS = RECYCLE_BIN_RETENTION_DAYS * 24L * 60 * 60 * 1000
+    }
+
     // 4.0.0 Phase 1 (iOS v7.1.1 F3) — fingerprint-identity guard for
     // every import path, plus the merge engine Phases 2/5/7 reuse.
     // Built on the same dao + store this repository already owns, so
@@ -747,6 +754,55 @@ class KeyRepository(
         dao.getByFingerprint(fingerprint)?.let { dao.delete(it) }
     }
 
+    // ── §5.6.1 (#36 part 1) recycle bin ─────────────────────────────────
+    /** Soft-delete: move [entity] to the bin. Secret material and related
+     *  rows stay put so a restore is lossless; the DAO clears the default
+     *  flag so a binned key can never remain the default. */
+    suspend fun softDeleteKey(entity: PGPKeyEntity) {
+        dao.softDelete(entity.id, System.currentTimeMillis())
+    }
+
+    suspend fun softDeleteByFingerprint(fingerprint: String) {
+        dao.getByFingerprint(fingerprint)?.let { dao.softDelete(it.id, System.currentTimeMillis()) }
+    }
+
+    suspend fun getDeletedKeys(): List<PGPKeyEntity> = dao.getDeletedKeys()
+    suspend fun deletedKeyCount(): Int = dao.deletedCount()
+
+    /** Restore a binned key to live. Its material was never removed. */
+    suspend fun restoreKey(id: String) = dao.restoreFromBin(id)
+
+    /** Permanently destroy a binned key: secret material, related rows, and
+     *  the DB row. Mirrors the old hard-delete cleanup. */
+    suspend fun purgeKey(entity: PGPKeyEntity) {
+        store.deleteKeys(entity.fingerprint)
+        fallbackDao?.deleteAllReferencing(entity.fingerprint)
+        signingDefaultsDao?.deleteFor(entity.fingerprint)
+        dao.purgeById(entity.id)
+    }
+
+    /** Empty the bin. */
+    suspend fun emptyRecycleBin() {
+        dao.getDeletedKeys().forEach { purgeKey(it) }
+    }
+
+    /** §5.6.1 retention: purge keys binned longer than [windowMs]. Called on
+     *  launch. Returns how many were purged. */
+    suspend fun purgeExpiredDeleted(windowMs: Long): Int {
+        val cutoff = System.currentTimeMillis() - windowMs
+        val expired = dao.getDeletedKeys().filter { (it.deletedAt ?: 0L) < cutoff }
+        expired.forEach { purgeKey(it) }
+        return expired.size
+    }
+
+    // ── §4.3 last-backed-up ─────────────────────────────────────────────
+    suspend fun markBackedUp(fingerprint: String) {
+        dao.setLastBackedUp(fingerprint, System.currentTimeMillis())
+    }
+
+    suspend fun lastBackedUpAt(fingerprint: String): Long? =
+        dao.getByFingerprint(fingerprint)?.lastBackedUpAt
+
     // ── Query ──────────────────────────────────────────────────────────
 
     suspend fun getAllKeys(): List<PGPKeyEntity> = dao.getAllKeys()
@@ -1131,6 +1187,40 @@ class KeyRepository(
         persistUserIdChange(entity, updated, newPrimaryUserId = if (makePrimary) userId else null)
     }
 
+    /** §5.6.7: read the primary UID's human-readable notations. */
+    fun readNotations(fingerprint: String): List<UserIdService.Notation> =
+        loadPublicKeyRing(fingerprint)?.let { userIdService.readNotations(it.publicKey) } ?: emptyList()
+
+    /**
+     * §5.6.7: replace the primary UID's notation set on a software key pair,
+     * re-signing the self-cert with [passphrase], then persist. Mirrors
+     * addUserId's gating and persistence.
+     */
+    suspend fun setNotations(
+        fingerprint: String,
+        notations: List<UserIdService.Notation>,
+        passphrase: String?
+    ) {
+        val entity = dao.getByFingerprint(fingerprint)
+            ?: throw KeyRepoError.NotFound(fingerprint)
+        if (!entity.isKeyPair) {
+            throw UserIdService.UserIdError.UnsupportedKey(
+                "Cannot edit notations on a public-only key — the private key is required to sign them"
+            )
+        }
+        if (entity.isCardBacked) {
+            throw UserIdService.UserIdError.UnsupportedKey(
+                "Notations can't be edited on a card-backed key from here"
+            )
+        }
+        val secRing = loadSecretKeyRing(fingerprint)
+            ?: throw UserIdService.UserIdError.UnsupportedKey("Secret key ring could not be loaded for $fingerprint")
+        val pubRing = loadPublicKeyRing(fingerprint)
+            ?: throw UserIdService.UserIdError.UnsupportedKey("Public key ring could not be loaded for $fingerprint")
+        val updated = userIdService.setNotations(secRing, pubRing, notations, passphrase)
+        persistUserIdChange(entity, updated, newPrimaryUserId = null)
+    }
+
     /** Revoke [userId] on a software key pair. See UserIdService.revokeUserId
      *  for the "can't revoke the last UID" guard. */
     suspend fun revokeUserId(
@@ -1313,5 +1403,32 @@ class KeyRepository(
         val it = ring.publicKeys
         while (it.hasNext()) ids.add(it.next().keyID)
         com.pgpony.android.provider.ProviderPassphraseCache.clearKeys(ids)
+    }
+
+    /**
+     * §1.1 (#26) Change [fingerprint]'s passphrase. Loads the software
+     * secret ring, re-protects it under [newPassphrase] via
+     * crypto.changePassphrase (which unlocks with [oldPassphrase]), stores
+     * the result in the same BC binary framing loadSecretKeyRing reads back
+     * (storePrivateKey, matching persistUserIdChange, NOT the toLibrePGPFormat
+     * export framing), then drops any provider-cached passphrase for the key
+     * so the old one can never be replayed.
+     *
+     * Returns false only when the key is not found. A wrong [oldPassphrase]
+     * makes BC throw PGPException, which the caller surfaces as a retry.
+     * Caller gates: software-backed keys only (card keys point at the card
+     * PIN instead), and the sheet says existing backups keep the old
+     * passphrase until re-exported.
+     */
+    suspend fun changePassphrase(
+        fingerprint: String,
+        oldPassphrase: String,
+        newPassphrase: String
+    ): Boolean {
+        val ring = loadSecretKeyRing(fingerprint) ?: return false
+        val changed = crypto.changePassphrase(ring, oldPassphrase, newPassphrase)
+        store.storePrivateKey(fingerprint, changed.encoded)
+        invalidateCachedPassphrases(fingerprint)
+        return true
     }
 }

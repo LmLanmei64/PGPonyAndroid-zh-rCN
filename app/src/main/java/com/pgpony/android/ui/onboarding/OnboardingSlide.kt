@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.WavingHand
 import androidx.compose.ui.graphics.Color
@@ -42,6 +43,9 @@ data class OnboardingSlide(
     // are intentionally short ("Language" / "Choose…") to leave vertical
     // room for the six-row picker beneath them.
     val showLanguagePicker: Boolean = false,
+    // §5.6.9 (Piotr): sideload-only "stay up to date" step. Filtered out
+    // of the carousel on F-Droid / Play installs (see OnboardingScreen).
+    val showUpdateToggle: Boolean = false,
 )
 
 object OnboardingSlides {
@@ -106,6 +110,19 @@ object OnboardingSlides {
             titleResId = R.string.onboarding_slide_privacy_title,
             bodyResId = R.string.onboarding_slide_privacy_body,
             showBiometricToggle = true
+        ),
+
+        // ── Slide 6 — Stay up to date (sideload only) ────────────────────
+        //
+        // §5.6.9 (Piotr): shown only when the build is a sideload; the
+        // carousel filters it out on F-Droid / Play installs, which update
+        // themselves. Opt-in, OFF until the user flips the toggle here.
+        OnboardingSlide(
+            icon = Icons.Filled.SystemUpdate,
+            iconTint = Color(0xFF8B5CF6),
+            titleResId = R.string.onboarding_slide_updates_title,
+            bodyResId = R.string.onboarding_slide_updates_body,
+            showUpdateToggle = true
         )
     )
 }

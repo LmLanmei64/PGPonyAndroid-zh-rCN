@@ -71,6 +71,9 @@ fun FileEncryptionResultScreen(state: EncryptUiState, onDismiss: () -> Unit) {
     val encryptedBytes = state.encryptedFileBytes
     val streamed = state.encryptedFile
     val encryptedSize = encryptedBytes?.size?.toLong() ?: streamed?.length() ?: 0L
+    // §5.6.3 (#31): wrap-in-zip toggle, remembered in pgpony_prefs.
+    val prefs = remember { context.getSharedPreferences("pgpony_prefs", android.content.Context.MODE_PRIVATE) }
+    var wrapZip by remember { mutableStateOf(prefs.getBoolean("wrap_output_in_zip", false)) }
 
     // Save-status banner state. Same one-shot UI flair pattern as the
     // text-mode sheet — kept local since it has no business value.
@@ -214,6 +217,30 @@ stringResource(R.string.file_enc_result_badge_can_decrypt),
             }
 
             // ── 5. Action buttons ────────────────────────────────────
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            ) {
+                Switch(
+                    checked = wrapZip,
+                    onCheckedChange = {
+                        wrapZip = it
+                        prefs.edit().putBoolean("wrap_output_in_zip", it).apply()
+                    }
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        stringResource(R.string.enc_result_wrap_zip_label),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        stringResource(R.string.enc_result_wrap_zip_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             Button(
                 onClick = {
                     activity?.startDocumentCreator(
@@ -227,23 +254,28 @@ stringResource(R.string.file_enc_result_badge_can_decrypt),
                         // kept verbatim. The text-result and file-decrypt
                         // sheets already save this way for the same reason.
                         mimeType = "application/octet-stream",
-                        suggestedName = encryptedName
+                        suggestedName = if (wrapZip) "$encryptedName.zip" else encryptedName
                     ) { uri ->
                         if (uri == null) {
                             // user cancelled — silent
                             return@startDocumentCreator
                         }
                         try {
-                            context.contentResolver.openOutputStream(uri)?.use { sink ->
-                                // 4.0.4 — chunked copy on the streamed branch.
-                                if (encryptedBytes != null) {
-                                    sink.write(encryptedBytes)
-                                } else if (streamed != null) {
-                                    streamed.inputStream().buffered().use { src ->
-                                        src.copyTo(sink)
+                            val out = context.contentResolver.openOutputStream(uri)
+                            if (out != null) {
+                                if (wrapZip) {
+                                    // ZipPackaging owns and closes `out`.
+                                    com.pgpony.android.ui.util.ZipPackaging.writeSingleEntry(out, encryptedName) { dst ->
+                                        if (encryptedBytes != null) dst.write(encryptedBytes)
+                                        else streamed?.inputStream()?.buffered()?.use { it.copyTo(dst) }
+                                    }
+                                } else {
+                                    out.use { sink ->
+                                        if (encryptedBytes != null) sink.write(encryptedBytes)
+                                        else streamed?.inputStream()?.buffered()?.use { it.copyTo(sink) }
+                                        sink.flush()
                                     }
                                 }
-                                sink.flush()
                             }
                             saveStatus = SaveStatus.Saved
                         } catch (e: Exception) {
@@ -270,10 +302,19 @@ stringResource(R.string.file_enc_result_badge_can_decrypt),
                         // 4.0.4 — the streamed ciphertext already lives in
                         // cacheDir/scratch, which file_paths.xml exposes, so
                         // it is shared in place rather than copied again.
-                        val shareUri = if (streamed != null) {
+                        val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
+                        val shareUri = if (wrapZip) {
+                            val zipFile = File(exportsDir, "$encryptedName.zip")
+                            com.pgpony.android.ui.util.ZipPackaging.writeSingleEntry(
+                                java.io.FileOutputStream(zipFile), encryptedName
+                            ) { dst ->
+                                if (encryptedBytes != null) dst.write(encryptedBytes)
+                                else streamed?.inputStream()?.buffered()?.use { it.copyTo(dst) }
+                            }
+                            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", zipFile)
+                        } else if (streamed != null) {
                             ScratchFiles.uriFor(context, streamed)
                         } else {
-                            val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
                             val outFile = File(exportsDir, encryptedName)
                             outFile.writeBytes(encryptedBytes ?: ByteArray(0))
                             FileProvider.getUriForFile(
@@ -283,7 +324,7 @@ stringResource(R.string.file_enc_result_badge_can_decrypt),
                             )
                         }
                         val send = Intent(Intent.ACTION_SEND).apply {
-                            type = "application/pgp-encrypted"
+                            type = if (wrapZip) "application/zip" else "application/pgp-encrypted"
                             putExtra(Intent.EXTRA_STREAM, shareUri)
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }

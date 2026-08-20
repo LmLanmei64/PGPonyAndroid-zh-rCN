@@ -42,6 +42,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
+import com.pgpony.android.update.UpdateCheckService
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -76,7 +78,8 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onReplayOnboarding: () -> Unit = {},
     onOpenPassStore: () -> Unit = {},
-    onKeysChanged: () -> Unit = {}
+    onKeysChanged: () -> Unit = {},
+    onOpenRecycleBin: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
     // RC3 §J (#20): which category sub-page is open; null = the top-level
@@ -374,6 +377,10 @@ fun SettingsScreen(
             SectionHeader(stringResource(R.string.settings_section_email))
             EmailFormatSection()
             Spacer(modifier = Modifier.height(16.dp))
+            // ── §5.5.1 (board t/1): default sharing method ──────────────
+            SectionHeader(stringResource(R.string.settings_section_sharing))
+            DefaultShareFormatSection()
+            Spacer(modifier = Modifier.height(16.dp))
             // ── PGP Output Section: customizable armor comment ─────────
             //
             // One setting with two parts:
@@ -658,6 +665,15 @@ fun SettingsScreen(
             SectionHeader(stringResource(R.string.settings_section_proxy))
             ProxySection()
             Spacer(modifier = Modifier.height(16.dp))
+            // ── §5.6.1 (#36 part 1): recycle bin ───────────────────────
+            SettingsAction(
+                title = stringResource(R.string.settings_recycle_bin_title),
+                subtitle = stringResource(R.string.settings_recycle_bin_subtitle),
+                icon = Icons.Filled.Delete,
+                iconTint = Color(0xFF8B5CF6),
+                onClick = onOpenRecycleBin
+            )
+            Spacer(modifier = Modifier.height(16.dp))
 
                 }
                 SettingsCategory.APPEARANCE -> {
@@ -816,6 +832,28 @@ fun SettingsScreen(
                 iconTint = Color(0xFF8B5CF6),
                 onClick = { showSecurityInfo = true }
             )
+            // §5.55 (Kevin): PGPony for Desktop. The same product, not a
+            // sibling app, so it sits ABOVE the More-from list rather than
+            // in it. Opens the product site in a Custom Tab.
+            SettingsAction(
+                title = stringResource(R.string.settings_desktop_title),
+                subtitle = stringResource(R.string.settings_desktop_subtitle),
+                icon = Icons.Filled.Computer,
+                iconTint = Color(0xFF8B5CF6),
+                trailingIcon = Icons.AutoMirrored.Filled.OpenInNew,
+                onClick = {
+                    try {
+                        CustomTabsIntent.Builder().build().launchUrl(
+                            context,
+                            android.net.Uri.parse("https://pgpony.app/desktop")
+                        )
+                    } catch (e: Exception) {
+                        viewModel.showError(
+                            context.getString(R.string.settings_support_browser_error)
+                        )
+                    }
+                }
+            )
             Spacer(modifier = Modifier.height(16.dp))
             // ── More from NorseHorse ───────────────────────────────────
             // Every sibling app links to its product site (see the list
@@ -838,6 +876,7 @@ fun SettingsScreen(
                 Triple(R.string.settings_more_vaultpony_title, R.string.settings_more_vaultpony_subtitle, "https://vaultpony.app"),
                 Triple(R.string.settings_more_passpony_title, R.string.settings_more_passpony_subtitle, "https://passpony.app"),
                 Triple(R.string.settings_more_relaypony_title, R.string.settings_more_relaypony_subtitle, "https://relaypony.app"),
+                Triple(R.string.settings_more_scrubpony_title, R.string.settings_more_scrubpony_subtitle, "https://scrubpony.app"),
             ).forEach { (titleRes, subtitleRes, url) ->
                 SettingsAction(
                     title = stringResource(titleRes),
@@ -903,6 +942,12 @@ fun SettingsScreen(
                     }
                 }
             )
+            // ── §5.6.9 (Piotr): update check, offered only on sideloads ──
+            if (UpdateCheckService.isEligible(context)) {
+                Spacer(modifier = Modifier.height(16.dp))
+                SectionHeader(stringResource(R.string.settings_section_updates))
+                UpdateCheckSection()
+            }
             Spacer(modifier = Modifier.height(16.dp))
             // ── About Section ──────────────────────────────────────────
             SectionHeader(stringResource(R.string.settings_section_about))
@@ -1197,6 +1242,56 @@ private fun SectionHeader(title: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
     )
+}
+
+// §5.6.9 (Piotr): sideload update-check control. Rendered only when the
+// build is a sideload (see UpdateCheckService.isEligible). Opt-in switch
+// plus a manual "Check now" that toasts the outcome. Notify-and-link only;
+// no download happens here or in the service.
+@Composable
+private fun UpdateCheckSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var enabled by remember { mutableStateOf(UpdateCheckService.isEnabled(context)) }
+    var checking by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        SettingsToggle(
+            title = stringResource(R.string.settings_updates_toggle_title),
+            subtitle = stringResource(R.string.settings_updates_toggle_subtitle),
+            icon = Icons.Filled.SystemUpdate,
+            iconTint = Color(0xFF8B5CF6),
+            checked = enabled,
+            onCheckedChange = {
+                enabled = it
+                UpdateCheckService.setEnabled(context, it)
+            }
+        )
+        if (enabled) {
+            TextButton(
+                onClick = {
+                    if (checking) return@TextButton
+                    checking = true
+                    scope.launch {
+                        val result = UpdateCheckService.checkForUpdate(context, force = true)
+                        val msg = when (result) {
+                            is UpdateCheckService.CheckResult.UpdateAvailable ->
+                                context.getString(R.string.settings_updates_found, result.version)
+                            UpdateCheckService.CheckResult.UpToDate ->
+                                context.getString(R.string.settings_updates_uptodate)
+                            else ->
+                                context.getString(R.string.settings_updates_failed)
+                        }
+                        android.widget.Toast.makeText(
+                            context, msg, android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        checking = false
+                    }
+                }
+            ) {
+                Text(stringResource(R.string.settings_updates_check_now))
+            }
+        }
+    }
 }
 
 @Composable
@@ -1554,7 +1649,9 @@ private fun PassphraseCacheSection() {
             900 to stringResource(R.string.settings_card_pin_cache_15min),
             3600 to stringResource(R.string.settings_card_pin_cache_1hr),
             com.pgpony.android.provider.ProviderPassphraseCache.DURATION_UNTIL_CLEARED to
-                stringResource(R.string.settings_card_pin_cache_until_cleared)
+                stringResource(R.string.settings_card_pin_cache_until_cleared),
+            com.pgpony.android.session.SessionPolicy.DURATION_UNTIL_LOCKED to
+                stringResource(R.string.settings_session_until_locked)
         )
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
@@ -1574,7 +1671,7 @@ private fun PassphraseCacheSection() {
         }
         Spacer(modifier = Modifier.height(8.dp))
         if (remainingMs > 0) {
-            if (com.pgpony.android.provider.ProviderPassphraseCache.isUntilCleared()) {
+            if (com.pgpony.android.session.SessionPolicy.isLifecycleHeld()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -1675,7 +1772,9 @@ private fun CardPinCacheSection() {
                 // timer. Wrong-PIN / manual Clear / process death still
                 // clear it; only the countdown goes away.
                 com.pgpony.android.crypto.card.CardPinCache.DURATION_UNTIL_CLEARED to
-                    stringResource(R.string.settings_card_pin_cache_until_cleared)
+                    stringResource(R.string.settings_card_pin_cache_until_cleared),
+                com.pgpony.android.session.SessionPolicy.DURATION_UNTIL_LOCKED to
+                    stringResource(R.string.settings_session_until_locked)
             )
             // 4.0.0 Phase 9 — five choices no longer fit a segmented row
             // ("1 hour" already ellipsized on narrow devices with four).
@@ -1705,7 +1804,7 @@ private fun CardPinCacheSection() {
                 // held PIN reports Long.MAX_VALUE, so show the held state
                 // instead of a (nonsense) countdown. Clear now works the
                 // same in both branches.
-                if (com.pgpony.android.crypto.card.CardPinCache.isUntilCleared()) {
+                if (com.pgpony.android.session.SessionPolicy.isLifecycleHeld()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1831,6 +1930,51 @@ private fun EmailFormatSection() {
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             stringResource(R.string.settings_email_format_subtitle),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+// §5.5.1 (board t/1): default packaging for the result Share button —
+// inline armored text vs a .asc file. Generalizes the email-format idea to
+// the general share sheet.
+@Composable
+private fun DefaultShareFormatSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember {
+        context.getSharedPreferences("pgpony_prefs", android.content.Context.MODE_PRIVATE)
+    }
+    var format by remember {
+        mutableStateOf(prefs.getString("default_share_format", "text") ?: "text")
+    }
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Text(
+            stringResource(R.string.settings_share_format_label),
+            style = MaterialTheme.typography.labelLarge
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        val choices = listOf(
+            "text" to stringResource(R.string.settings_share_format_inline),
+            "file" to stringResource(R.string.settings_share_format_file)
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            choices.forEachIndexed { index, (value, label) ->
+                SegmentedButton(
+                    selected = format == value,
+                    onClick = {
+                        format = value
+                        prefs.edit().putString("default_share_format", value).apply()
+                    },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = choices.size)
+                ) {
+                    Text(label, maxLines = 1)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            stringResource(R.string.settings_share_format_subtitle),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

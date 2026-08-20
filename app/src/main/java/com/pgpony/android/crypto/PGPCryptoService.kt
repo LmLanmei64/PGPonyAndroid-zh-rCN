@@ -228,6 +228,14 @@ data class ImportResult(
 
 // ── Crypto Service ─────────────────────────────────────────────────────
 
+/** §4.5 (#22): a signing-capable key the user can choose in SignAsSheet. */
+data class SigningKeyOption(
+    val keyId: Long,
+    val keyIdHex: String,
+    val isPrimary: Boolean,
+    val algorithmLabel: String
+)
+
 class PGPCryptoService private constructor() {
 
     companion object {
@@ -735,6 +743,93 @@ class PGPCryptoService private constructor() {
         return exportArmoredPrivateKey(protectedRing)
     }
 
+    /**
+     * §1.1 (#26) Change a key's passphrase. Returns a NEW ring re-encrypted
+     * under [newPassphrase]; the stored ring is left untouched until the
+     * caller persists the result, so a failure mid-change can never leave the
+     * key unreadable.
+     *
+     * Unlike exportArmoredPrivateKeyWithPassphrase (which re-encrypts an
+     * UNPROTECTED ring, decryptor = null), this unlocks with [oldPassphrase]
+     * first. An empty [oldPassphrase] means the ring is unprotected; an empty
+     * [newPassphrase] strips protection (stored cleartext). Both are
+     * deliberate directions the caller confirms before calling.
+     *
+     * Per-key on purpose. The ring-level copyWithNewPassword cannot be used
+     * here: it applies one encryptor to every key and re-encodes the whole
+     * ring, which breaks on the composite algo-35/36/8 subkeys (BC cannot
+     * parse that key material). Instead each secret key is re-protected on its
+     * own and re-inserted, exactly as CompositeKeyGen protects the composite
+     * subkey at generation:
+     *   - v6 keys (RFC 9580, including the IETF composite algos 35/36): AEAD
+     *     OCB + Argon2id, S2K usage 253.
+     *   - v4 keys and the v5 LibrePGP composite subkey (algo 8): CFB + SHA-1
+     *     checksum, S2K usage 254.
+     * copyWithNewPassword re-encrypts the raw secret material without parsing
+     * the composite key, the property the keygen path already relies on.
+     *
+     * A wrong [oldPassphrase] makes BC throw PGPException; the caller surfaces
+     * that as a retry, not a failure.
+     *
+     * NOTE (composite): the unlock direction here (a real decryptor on an
+     * algo-35/8 subkey) is exercised nowhere else in the tree, so the
+     * composite round trip must be proven on device (768 and 1024, both the
+     * v6 IETF and v5 LibrePGP forms) before this ships. See the RC matrix.
+     */
+    fun changePassphrase(
+        secretKeyRing: PGPSecretKeyRing,
+        oldPassphrase: String,
+        newPassphrase: String
+    ): PGPSecretKeyRing {
+        val oldDecryptor = if (oldPassphrase.isEmpty()) null else
+            org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyDecryptorBuilder(
+                org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider()
+            ).build(oldPassphrase.toCharArray())
+
+        val sha1 = org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider()
+            .get(org.bouncycastle.bcpg.HashAlgorithmTags.SHA1)
+        val random = SecureRandom()
+        val newChars = newPassphrase.toCharArray()
+        val strip = newPassphrase.isEmpty()
+
+        // Read the key list off the ORIGINAL ring; accumulate into a separate
+        // ring so insertSecretKey (replace-by-keyID) rebuilds it cleanly.
+        val keys = secretKeyRing.secretKeys.asSequence().toList()
+        var ring = secretKeyRing
+        for (key in keys) {
+            val reprotected = when {
+                // Strip: null encryptor removes protection (BC handles v4, v6,
+                // and composite alike; the round trip proves it).
+                strip ->
+                    org.bouncycastle.openpgp.PGPSecretKey.copyWithNewPassword(
+                        key, oldDecryptor, null
+                    )
+                key.publicKey.version == org.bouncycastle.bcpg.PublicKeyPacket.VERSION_6 -> {
+                    val encryptor = org.bouncycastle.openpgp.operator.bc.BcAEADSecretKeyEncryptorBuilder(
+                        org.bouncycastle.bcpg.AEADAlgorithmTags.OCB,
+                        org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags.AES_256,
+                        org.bouncycastle.bcpg.S2K.Argon2Params.memoryConstrainedParameters()
+                    ).setSecureRandom(random)
+                        .build(newChars, key.publicKey.publicKeyPacket)
+                    org.bouncycastle.openpgp.PGPSecretKey.copyWithNewPassword(
+                        key, oldDecryptor, encryptor
+                    )
+                }
+                else -> {
+                    val encryptor = org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyEncryptorBuilder(
+                        org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags.AES_256
+                    ).setSecureRandom(random)
+                        .build(newChars)
+                    org.bouncycastle.openpgp.PGPSecretKey.copyWithNewPassword(
+                        key, oldDecryptor, encryptor, sha1
+                    )
+                }
+            }
+            ring = PGPSecretKeyRing.insertSecretKey(ring, reprotected)
+        }
+        return ring
+    }
+
     fun exportArmoredPrivateKey(secretKeyRing: PGPSecretKeyRing): String {
         // Translate a v5 LibrePGP composite (algo-8) subkey from BC's internal
         // framing to the on-the-wire LibrePGP layout GnuPG / sq / PGPony-iOS
@@ -797,7 +892,9 @@ class PGPCryptoService private constructor() {
         cardPin: ByteArray? = null,
         cardSigningPublicKey: PGPPublicKey? = null,
         filename: String? = null,
-        armor: Boolean = true
+        armor: Boolean = true,
+        // §4.5 (#22): user-chosen signing subkey; null = automatic pick.
+        signingKeyId: Long? = null
     ): ByteArray {
         val outputStream = ByteArrayOutputStream()
         val armoredOut = if (armor) ArmoredOutputStream(outputStream).stripVersion() else null
@@ -922,7 +1019,7 @@ class PGPCryptoService private constructor() {
                 sigGen.setHashedSubpackets(cardSubpackets.generate())
                 sigGen.generateOnePassVersion(false).encode(compOut)
             } else if (signingSecretKey != null) {
-                val signingKey = pickSigningSecretKey(signingSecretKey)
+                val signingKey = pickSigningSecretKey(signingSecretKey, signingKeyId)
                     ?: throw SigningError.NoSigningKey()
                 val privateKey = try {
                     signingKey.extractPrivateKey(
@@ -1050,7 +1147,9 @@ class PGPCryptoService private constructor() {
         // large file instead of buffering it (issue #6); encryptSymmetric
         // takes and returns whole ByteArrays and cannot.
         messagePassword: String? = null,
-        useArgon2: Boolean = true
+        useArgon2: Boolean = true,
+        // §4.5 (#22): user-chosen signing subkey; null = automatic pick.
+        signingKeyId: Long? = null
     ) {
         // 1) Build the signer FIRST. Software: unlock up front (clean
         //    output guarantee). Card: the content-signer defers the tap
@@ -1069,7 +1168,7 @@ class PGPCryptoService private constructor() {
             cardSubpackets.setIssuerFingerprint(false, cardSigningPublicKey)
             sigGen.setHashedSubpackets(cardSubpackets.generate())
         } else if (signingSecretKey != null) {
-            val signingKey = pickSigningSecretKey(signingSecretKey)
+            val signingKey = pickSigningSecretKey(signingSecretKey, signingKeyId)
                 ?: throw SigningError.NoSigningKey()
             val privateKey = try {
                 signingKey.extractPrivateKey(
@@ -2473,7 +2572,13 @@ class PGPCryptoService private constructor() {
      * BC has no isSigningKey() (unlike isEncryptionKey), so capability comes from
      * SubkeyCapability, which reads each key's KEY_FLAGS self/binding signature.
      */
-    internal fun pickSigningSecretKey(ring: PGPSecretKeyRing): PGPSecretKey? {
+    internal fun pickSigningSecretKey(ring: PGPSecretKeyRing, preferredKeyId: Long? = null): PGPSecretKey? {
+        // §4.5 (#22): honor a user-chosen signing subkey when it is a
+        // signing-capable key on this ring; otherwise fall back to the
+        // automatic pick (first signing subkey, else the primary).
+        if (preferredKeyId != null) {
+            signingSecretKeys(ring).firstOrNull { it.keyID == preferredKeyId }?.let { return it }
+        }
         var primaryCandidate: PGPSecretKey? = null
         val iterator = ring.secretKeys
         while (iterator.hasNext()) {
@@ -2487,6 +2592,38 @@ class PGPCryptoService private constructor() {
         }
         return primaryCandidate
     }
+
+    /** §4.5 (#22): every signing-capable secret key in [ring], the first
+     *  entry being the one [pickSigningSecretKey] auto-selects (signing
+     *  subkeys in ring order, then the primary if it can sign). */
+    internal fun signingSecretKeys(ring: PGPSecretKeyRing): List<PGPSecretKey> {
+        val subs = mutableListOf<PGPSecretKey>()
+        var primary: PGPSecretKey? = null
+        val it = ring.secretKeys
+        while (it.hasNext()) {
+            val sk = it.next()
+            val pub = sk.publicKey
+            val caps = SubkeyCapability.fromPgpPublicKey(pub, detectAlgorithm(pub), pub.isMasterKey)
+            if (SubkeyCapability.hasCapability(caps, SubkeyCapability.Sign)) {
+                if (pub.isMasterKey) primary = sk else subs.add(sk)
+            }
+        }
+        return if (primary != null) subs + primary else subs
+    }
+
+    /** §4.5 (#22): display-ready signing-key choices for [ring]; first entry
+     *  is the automatic pick. Size < 2 for the common single-signing-key
+     *  case, where the UI shows no picker. */
+    internal fun signingKeyOptions(ring: PGPSecretKeyRing): List<SigningKeyOption> =
+        signingSecretKeys(ring).map { sk ->
+            val pub = sk.publicKey
+            SigningKeyOption(
+                keyId = pub.keyID,
+                keyIdHex = String.format("%016X", pub.keyID),
+                isPrimary = pub.isMasterKey,
+                algorithmLabel = detectAlgorithm(pub).displayName
+            )
+        }
 
     /** Find a secret key by key ID across multiple key rings. */
     /**
