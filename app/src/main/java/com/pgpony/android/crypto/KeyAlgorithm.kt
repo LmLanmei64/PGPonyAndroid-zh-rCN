@@ -54,7 +54,20 @@ enum class KeyAlgorithm(
     // ML-KEM-1024 + X448 on a v5 encryption subkey. Algorithm 8 is SHARED
     // with the 768 variant, so 768-vs-1024 is told apart by the curve OID
     // (X448 1.3.101.111) in detectAlgorithm, not by the algorithm id.
-    MLKEM1024_X448_LIBREPGP("ML-KEM-1024+X448 (LibrePGP)", "ML-KEM-1024 v5", 0);
+    MLKEM1024_X448_LIBREPGP("ML-KEM-1024+X448 (LibrePGP)", "ML-KEM-1024 v5", 0),
+
+    // 4.3.x (issue #2): ECDSA primary (algorithm 19), an import-only label.
+    // GnuPG 2.5.x LibrePGP PQC keys carry an ECDSA primary (for example on
+    // brainpoolP512r1 or a NIST curve). Without this entry such a primary fell
+    // through detectAlgorithm's catch-all and was mislabeled as RSA 4096. Not
+    // offered for generation; PGPony's own keys use an Ed25519 / EdDSA primary.
+    ECDSA("ECDSA", "ECDSA", 0),
+
+    // 4.3.x (issue #2): LibrePGP composite ML-KEM-1024 + brainpoolP384r1
+    // (algorithm 8), the pairing gpg 2.5.x / GPG4WIN 5.1 emits. Import and label
+    // supported; the KEM (encrypt/decrypt) is gated on gpg round-trip
+    // verification. Not offered for generation.
+    MLKEM1024_BP384_LIBREPGP("ML-KEM-1024+brainpoolP384r1 (LibrePGP)", "ML-KEM-1024 bp384 v5", 0);
 
     /**
      * Whether this algorithm uses native Curve25519 for encryption (ECDH subkey).
@@ -66,7 +79,8 @@ enum class KeyAlgorithm(
     /** The four ML-KEM composite (post-quantum) algorithms, either format. */
     val isComposite: Boolean
         get() = this == MLKEM768_X25519_V6 || this == MLKEM1024_X448_V6 ||
-            this == MLKEM768_X25519_LIBREPGP || this == MLKEM1024_X448_LIBREPGP
+            this == MLKEM768_X25519_LIBREPGP || this == MLKEM1024_X448_LIBREPGP ||
+            this == MLKEM1024_BP384_LIBREPGP
 
     companion object {
         /** Algorithms that can be selected in the key generation UI. */
@@ -91,6 +105,7 @@ enum class KeyAlgorithm(
                 when (algorithmID) {
                     35 -> MLKEM768_X25519_V6  // ML-KEM-768+X25519 composite
                     36 -> MLKEM1024_X448_V6   // ML-KEM-1024+X448 composite
+                    19 -> ECDSA            // ECDSA, unlikely in v6 but valid
                     27 -> V6_ED25519       // Ed25519 signing key
                     25 -> V6_X25519        // X25519 encryption subkey
                     28 -> V6_ED448         // Ed448 signing key
@@ -106,6 +121,7 @@ enum class KeyAlgorithm(
                     1, 2, 3 -> RSA_4096    // RSA — can't tell bit size from algo ID
                     22 -> ED25519_CV25519  // EdDSA (legacy OID-based Ed25519)
                     18 -> ED25519_CV25519  // ECDH (Cv25519 subkey)
+                    19 -> ECDSA            // ECDSA (NIST or brainpool signing primary)
                     else -> null
                 }
             }

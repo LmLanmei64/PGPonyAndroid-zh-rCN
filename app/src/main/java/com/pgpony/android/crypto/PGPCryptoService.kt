@@ -2485,11 +2485,24 @@ class PGPCryptoService private constructor() {
             return KeyAlgorithm.MLKEM1024_X448_V6
         }
         ring.publicKeys.asSequence().firstOrNull { it.algorithm == 8 && it.version == 5 }?.let { sub ->
-            // algo 8 is a shared code point: the curve OID (X25519 vs X448)
-            // says whether this is the 768 or the 1024 composite.
-            return if (com.pgpony.android.crypto.pqc.CompositeLibrePGPKeyMaterial
-                    .suiteOf(sub.encoded).curve == com.pgpony.android.crypto.pqc.EccCurve.X448
-            ) KeyAlgorithm.MLKEM1024_X448_LIBREPGP else KeyAlgorithm.MLKEM768_X25519_LIBREPGP
+            // algo 8 is a shared code point: the curve OID says which composite.
+            // issue #2: suiteOf throws on an unknown/unsupported curve OID, so
+            // catch it; a key we cannot model still imports and falls through to
+            // primary detection rather than failing the whole import (symptom A).
+            val curve = try {
+                com.pgpony.android.crypto.pqc.CompositeLibrePGPKeyMaterial.suiteOf(sub.encoded).curve
+            } catch (_: Exception) {
+                null
+            }
+            when (curve) {
+                com.pgpony.android.crypto.pqc.EccCurve.X448 ->
+                    return KeyAlgorithm.MLKEM1024_X448_LIBREPGP
+                com.pgpony.android.crypto.pqc.EccCurve.BRAINPOOL_P384R1 ->
+                    return KeyAlgorithm.MLKEM1024_BP384_LIBREPGP
+                com.pgpony.android.crypto.pqc.EccCurve.X25519 ->
+                    return KeyAlgorithm.MLKEM768_X25519_LIBREPGP
+                else -> {}
+            }
         }
         return detectAlgorithm(masterKey)
     }
