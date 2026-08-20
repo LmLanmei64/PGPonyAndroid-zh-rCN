@@ -863,12 +863,12 @@ fun KeyDetailScreen(
             shortFingerprint = keyForResultSheet.shortFingerprint,
             armoredLength = pendingPrivate.length,
             alreadyProtected = state.privateKeyIsProtected,
-            onCopy = { exportPass ->
+            onCopy = { exportPass, gpgCompat ->
                 // RC4 O5: re-export per action so the chosen passphrase
                 // lands on the delivered copy. Falls back to the cached
                 // plain armored on export failure (never silently drops
                 // the action).
-                val armoredForCopy = viewModel.armoredPrivateKeyForShare(exportPass) ?: pendingPrivate
+                val armoredForCopy = (if (gpgCompat) viewModel.armoredPrivateKeyGpgCompatForShare(exportPass) else viewModel.armoredPrivateKeyForShare(exportPass)) ?: pendingPrivate
                 val ok = KeyShareIntents.copyPrivateKeyToClipboard(
                     context = context,
                     armoredPrivate = armoredForCopy
@@ -882,12 +882,12 @@ fun KeyDetailScreen(
                 // Deliberately NOT dismissing the sheet — user may
                 // also want to save the file.
             },
-            onSaveFile = { exportPass ->
+            onSaveFile = { exportPass, gpgCompat ->
                 saveArmoredToFile(
                     context = context,
                     scope = scope,
                     snackbarHostState = snackbarHostState,
-                    armored = viewModel.armoredPrivateKeyForShare(exportPass) ?: pendingPrivate,
+                    armored = (if (gpgCompat) viewModel.armoredPrivateKeyGpgCompatForShare(exportPass) else viewModel.armoredPrivateKeyForShare(exportPass)) ?: pendingPrivate,
                     suggestedName = KeyShareIntents.buildExportFilename(
                         ownerLabel = ownerLabel,
                         shortFingerprint = keyForResultSheet.shortFingerprint,
@@ -895,10 +895,10 @@ fun KeyDetailScreen(
                     )
                 )
             },
-            onShare = { exportPass ->
+            onShare = { exportPass, gpgCompat ->
                 val launched = KeyShareIntents.shareArmoredPrivateKey(
                     context = context,
-                    armoredPrivate = viewModel.armoredPrivateKeyForShare(exportPass) ?: pendingPrivate,
+                    armoredPrivate = (if (gpgCompat) viewModel.armoredPrivateKeyGpgCompatForShare(exportPass) else viewModel.armoredPrivateKeyForShare(exportPass)) ?: pendingPrivate,
                     keyOwnerLabel = ownerLabel,
                     shortFingerprint = keyForResultSheet.shortFingerprint
                 )

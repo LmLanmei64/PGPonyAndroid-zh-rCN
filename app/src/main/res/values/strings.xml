@@ -843,6 +843,8 @@
     <string name="key_delete_biometric_subtitle">Authenticate to delete this key pair</string>
     <!-- RC4 O5 (#16, CertainBot): optional passphrase on exported/backed-up private keys. -->
     <string name="export_passphrase_label">Protect this export with a passphrase (optional)</string>
+    <string name="export_private_gpg_compat_label">GnuPG-compatible format</string>
+    <string name="export_private_gpg_compat_caption">Emit the composite key the way GnuPG (GPG4WIN) expects, so it can be imported there. Leave off for other apps.</string>
     <string name="export_passphrase_backup_label">Protect the backup with a passphrase (optional; ignored if the key already has one)</string>
     <string name="export_passphrase_confirm_label">Confirm export passphrase</string>
     <string name="export_passphrase_mismatch">Passphrases don\'t match.</string>

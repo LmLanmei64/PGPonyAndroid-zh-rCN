@@ -1546,6 +1546,17 @@ PGPonyApp.instance.getString(R.string.kd_vm_upload_verify_skipped)
         return repo.exportArmoredPrivateKey(key.fingerprint, exportPassphrase)
     }
 
+    /**
+     * issue #2 symptom D: same as [armoredPrivateKeyForShare] but emits
+     * GnuPG's native composite-secret format so GPG4WIN / gpg 2.5.x can
+     * import a PGPony composite key. [exportPassphrase] protects the copy.
+     */
+    fun armoredPrivateKeyGpgCompatForShare(exportPassphrase: String? = null): String? {
+        val key = _state.value.key ?: return null
+        if (!key.isKeyPair) return null
+        return repo.exportArmoredPrivateKeyGpgCompat(key.fingerprint, exportPassphrase)
+    }
+
     // ── Phase A7 Fix4: Export private key result sheet ────────────────
 
     /**
